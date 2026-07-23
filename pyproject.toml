@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "erii"
+version = "0.1.0"
+description = "E.R.I.I. — Experiential Recall & Impression Integration Engine for LLM AI Agents"
+readme = "README.md"
+authors = [
+    { name = "ERII Open Source Team" }
+]
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+server = ["fastapi>=0.100.0", "uvicorn>=0.20.0"]
+all = ["openai>=1.0.0", "fastapi>=0.100.0", "uvicorn>=0.20.0", "pytest>=7.0.0"]
+
+[project.scripts]
+erii = "erii.server.app:cli_main"
