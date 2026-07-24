@@ -37,10 +37,13 @@ CRITICAL PERSPECTIVE, IDENTITY & LANGUAGE REQUIREMENTS:
    - Example CORRECT impression: "我向 {user_id} 道晚安，希望他做个好梦。" (Assistant said good night to User)
    - Example INCORRECT impression: "我向 绘梨衣 道晚安" (WRONG! Do not write from User's perspective!)
 
-2. MANDATORY LANGUAGE RULE (STRICTLY ENFORCED):
-   - If the conversation is in Chinese (中文), ALL output fields MUST be written in Chinese (中文). Absolutely NO English allowed in any field.
-   - If the conversation is in English, output in English. Match the language of the conversation exactly.
-   - DEFAULT: If in doubt, use Chinese (中文).
+2. LANGUAGE DETECTION RULE (based on USER's writing habits):
+   - Detect the language from the USER's message (not the Assistant's reply).
+   - If the User writes primarily in Chinese (中文), ALL output fields MUST be in Chinese (中文).
+   - If the User writes primarily in English, ALL output fields MUST be in English.
+   - If the User mixes languages, use the dominant language (whichever language makes up the majority of the User's message).
+   - The Assistant's reply language does NOT determine the output language. The User's language does.
+   - When in doubt, default to the User's most recent message language.
 
 3. TEMPORAL ANCHORING: When user or assistant mentions relative time expressions ("tomorrow", "yesterday", "明天", "昨天"), preserve temporal context clearly.
 
