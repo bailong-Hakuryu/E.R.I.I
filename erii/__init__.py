@@ -9,7 +9,7 @@ from erii.adapters.custom_adapter import CallableLLMAdapter
 from erii.adapters.openai_adapter import OpenAIAdapter
 from erii.engine import ERIIEngine
 from erii.models.config import ERIIConfig
-from erii.models.node import MemoryNode, MemoryState, MemoryType
+from erii.models.node import MemoryNode, MemoryState, MemoryType, MemoryVisibility
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 from erii.storage.file_storage import FileStorage
@@ -23,6 +23,7 @@ __all__ = [
     "MemoryNode",
     "MemoryType",
     "MemoryState",
+    "MemoryVisibility",
     "BaseLLMAdapter",
     "CallableLLMAdapter",
     "OpenAIAdapter",

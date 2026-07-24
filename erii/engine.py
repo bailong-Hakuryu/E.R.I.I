@@ -4,7 +4,7 @@ Main entry point for AI Agent long-term memory integration.
 Follows Google Python Style Guide.
 """
 
-from typing import Callable, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from erii.adapters.base import BaseLLMAdapter
 from erii.adapters.custom_adapter import CallableLLMAdapter
@@ -13,7 +13,7 @@ from erii.core.budget import MemoryBudgetManager
 from erii.core.decay import MemoryDecayEvaluator
 from erii.core.retriever import MemoryRetriever
 from erii.models.config import ERIIConfig
-from erii.models.node import MemoryNode
+from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 from erii.storage.file_storage import FileStorage
@@ -204,7 +204,164 @@ class ERIIEngine:
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
         return self.storage.get_core_memory(clean_agent, clean_user)
 
+    def remember_thought(
+        self,
+        agent_id: str,
+        user_id: str,
+        content: str,
+        visibility: str = MemoryVisibility.PUBLIC_LOG.value,
+        is_unresolved: bool = False,
+        emotional_score: float = 0.0,
+        foreshadowing_tags: Optional[List[str]] = None,
+        created_at: Optional[str] = None,
+    ) -> MemoryNode:
+        """Explicitly records a first-person inner monologue or diary entry.
+
+        Args:
+            agent_id: Agent identifier.
+            user_id: User identifier.
+            content: Inner monologue or diary text.
+            visibility: MemoryVisibility string ("public_log" or "internal_monologue").
+            is_unresolved: True if this represents an active narrative suspense/unresolved thought.
+            emotional_score: Score between -1.0 and 1.0.
+            foreshadowing_tags: List of narrative tags.
+            created_at: Custom ISO/world timestamp.
+
+        Returns:
+            The created MemoryNode instance.
+        """
+        import uuid
+        from datetime import datetime
+
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+
+        if self.config.enable_security_sanitizer:
+            content = SecuritySanitizer.sanitize_text(content)
+        if self.config.enable_pii_scrubbing:
+            content = SecuritySanitizer.scrub_pii(content)
+
+        ts = created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        valid_visibility = (
+            visibility
+            if visibility in (MemoryVisibility.PUBLIC_LOG.value, MemoryVisibility.INTERNAL_MONOLOGUE.value)
+            else MemoryVisibility.PUBLIC_LOG.value
+        )
+
+        node = MemoryNode(
+            node_id=str(uuid.uuid4()),
+            user_id=clean_user,
+            agent_id=clean_agent,
+            node_type=MemoryType.THOUGHT,
+            content=content,
+            tags=foreshadowing_tags or [],
+            base_importance=0.8,
+            emotional_score=emotional_score,
+            visibility=valid_visibility,
+            is_unresolved=is_unresolved,
+            foreshadowing_tags=foreshadowing_tags or [],
+            created_at=ts,
+            last_accessed_at=ts,
+        )
+
+        nodes = self.storage.load_nodes(clean_agent, clean_user)
+        nodes.append(node)
+        self.storage.save_nodes(clean_agent, clean_user, nodes)
+        return node
+
+    def get_inner_monologue(
+        self,
+        agent_id: str,
+        user_id: str,
+        limit: int = 10,
+        unresolved_only: bool = False,
+        visibility: Optional[str] = MemoryVisibility.PUBLIC_LOG.value,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Retrieves psychological monologue and diary entries filtered by visibility and narrative suspense."""
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+
+        nodes = self.storage.load_nodes(clean_agent, clean_user)
+        filtered = []
+
+        for node in nodes:
+            if node.node_type not in (MemoryType.THOUGHT, MemoryType.DIARY):
+                continue
+
+            if visibility and node.visibility != visibility:
+                continue
+
+            if unresolved_only and not node.is_unresolved:
+                continue
+
+            if start_time and node.created_at < start_time:
+                continue
+
+            if end_time and node.created_at > end_time:
+                continue
+
+            filtered.append(node)
+
+        # Sort: unresolved suspense nodes first (1 > 0), then by created_at descending
+        filtered.sort(key=lambda n: (1 if n.is_unresolved else 0, n.created_at), reverse=True)
+
+        result = []
+        for node in filtered[:limit]:
+            d = node.to_dict()
+            d["effective_weight"] = node.calculate_effective_weight(
+                decay_rate=self.config.decay_rate,
+                max_weight_cap=self.config.max_weight_cap,
+            )
+            result.append(d)
+
+        return result
+
+    def get_diary_timeline(
+        self,
+        agent_id: str,
+        user_id: str,
+        limit: int = 10,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Retrieves formatted first-person public diary timeline entries for UI rendering."""
+        return self.get_inner_monologue(
+            agent_id=agent_id,
+            user_id=user_id,
+            limit=limit,
+            unresolved_only=False,
+            visibility=MemoryVisibility.PUBLIC_LOG.value,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+    def resolve_thought(
+        self,
+        agent_id: str,
+        user_id: str,
+        node_id: str,
+    ) -> bool:
+        """Marks a suspenseful/unresolved thought node as resolved."""
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+
+        nodes = self.storage.load_nodes(clean_agent, clean_user)
+        found = False
+        for node in nodes:
+            if node.node_id == node_id:
+                node.is_unresolved = False
+                found = True
+                break
+
+        if found:
+            self.storage.save_nodes(clean_agent, clean_user, nodes)
+
+        return found
+
     def close(self) -> None:
         """Gracefully shuts down background archiver thread."""
         if hasattr(self, "archiver_worker"):
             self.archiver_worker.shutdown()
+

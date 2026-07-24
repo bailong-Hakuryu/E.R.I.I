@@ -22,6 +22,14 @@ class MemoryType(str, Enum):
     RELATIONSHIP = "relationship"  # Interpersonal relation dynamic
     CORE = "core"                  # Core persona trait/rule
     INSTRUCTION = "instruction"    # Command directive (must never be persisted)
+    THOUGHT = "thought"            # First-person psychological monologue
+    DIARY = "diary"                # First-person timestamped diary entry
+
+
+class MemoryVisibility(str, Enum):
+    """Memory visibility scopes for privacy and UI exposure."""
+    PUBLIC_LOG = "public_log"                    # Publicly accessible for front-end diary/monologue view
+    INTERNAL_MONOLOGUE = "internal_monologue"    # Agent internal thought, restricted from public API
 
 
 class MemoryState(str, Enum):
@@ -50,6 +58,9 @@ class MemoryNode:
     superseded_by: Optional[str] = None
     state: MemoryState = MemoryState.ACTIVE
     timeline_entry: Optional[str] = None
+    visibility: str = MemoryVisibility.PUBLIC_LOG.value
+    is_unresolved: bool = False
+    foreshadowing_tags: List[str] = field(default_factory=list)
     created_at: str = field(
         default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
@@ -80,8 +91,20 @@ class MemoryNode:
         elapsed_seconds = (datetime.now() - last_time).total_seconds()
         elapsed_days = max(0.0, elapsed_seconds / 86400.0)
 
-        # Exponential decay: e^(-lambda * delta_t) if decayable
-        time_decay = math.exp(-decay_rate * elapsed_days) if self.decayable else 1.0
+        # Apply Zeigarnik Effect (Unresolved narrative hold-back) or Emotional Hangover Decay Curve
+        effective_decay_rate = decay_rate
+        if self.is_unresolved:
+            time_decay = 1.0  # Suspense holdback: active unresolved thoughts never decay
+        elif (
+            self.node_type in (MemoryType.THOUGHT, MemoryType.DIARY, MemoryType.EMOTION)
+            and abs(self.emotional_score) >= 0.5
+        ):
+            # Emotional hangover: slower decay rate for emotionally charged narrative thoughts
+            effective_decay_rate = decay_rate * 0.3
+            time_decay = math.exp(-effective_decay_rate * elapsed_days) if self.decayable else 1.0
+        else:
+            # Exponential decay: e^(-lambda * delta_t) if decayable
+            time_decay = math.exp(-effective_decay_rate * elapsed_days) if self.decayable else 1.0
 
         # Frequency boost (up to +0.2)
         frequency_boost = min(0.2, self.access_count * 0.03)
@@ -89,14 +112,16 @@ class MemoryNode:
         # Emotional boost factor
         emotional_boost = abs(self.emotional_score) * 0.15
 
-        # Relationship boost
+        # Relationship / Thought boost
         relationship_boost = 0.2 if self.node_type == MemoryType.RELATIONSHIP else 0.0
+        unresolved_boost = 0.15 if self.is_unresolved else 0.0
 
         raw_score = (
             (self.base_importance * time_decay)
             + frequency_boost
             + emotional_boost
             + relationship_boost
+            + unresolved_boost
         )
 
         final_weight = max(0.0, min(max_weight_cap, round(raw_score, 4)))
@@ -122,8 +147,12 @@ class MemoryNode:
     def to_dict(self) -> Dict[str, Any]:
         """Serializes memory node to dictionary representation."""
         data = asdict(self)
-        data["node_type"] = self.node_type.value
-        data["state"] = self.state.value
+        data["node_type"] = (
+            self.node_type.value if isinstance(self.node_type, MemoryType) else self.node_type
+        )
+        data["state"] = (
+            self.state.value if isinstance(self.state, MemoryState) else self.state
+        )
         return data
 
     @classmethod

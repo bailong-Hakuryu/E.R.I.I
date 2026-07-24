@@ -20,9 +20,9 @@ logger = logging.getLogger("erii")
 
 
 class AsyncArchiverWorker:
-    """Background worker for extracting impressions and timeline events via LLM."""
+    """Background worker for extracting impressions, inner monologue thoughts, and timeline events via LLM."""
 
-    EXTRACTION_PROMPT = """You are an AI Memory Extraction Engine. Analyze the following conversation turn and extract structured long-term memories and first-person experience timeline entries.
+    EXTRACTION_PROMPT = """You are an AI Memory Extraction Engine. Analyze the following conversation turn and extract structured long-term memories, first-person experience timeline entries, and first-person inner monologue/thought entries.
 
 Conversation Turn:
 User: {user_msg}
@@ -31,9 +31,16 @@ Assistant: {bot_reply}
 Output strictly valid JSON with no markdown block formatting:
 {{
   "timeline_entry": "First-person experiential summary of this interaction from Assistant's perspective (e.g. 'I discussed favorite tea with Bob.')",
+  "thought_entry": {{
+    "content": "First-person unspoken inner psychological monologue or reflection (e.g. 'Sakura promised to take me to the park tomorrow, I am so excited and hopeful!')",
+    "visibility": "public_log|internal_monologue",
+    "is_unresolved": false,
+    "emotional_score": 0.0,
+    "foreshadowing_tags": ["tag1", "tag2"]
+  }},
   "impressions": [
     {{
-      "type": "fact|preference|event|emotion|relationship",
+      "type": "fact|preference|event|emotion|relationship|thought|diary",
       "content": "Specific memory item content",
       "base_importance": 0.1 to 1.0,
       "emotional_score": -1.0 to 1.0,
@@ -140,15 +147,43 @@ Output strictly valid JSON with no markdown block formatting:
                     timeline_entry = SecuritySanitizer.scrub_pii(timeline_entry)
                 self.storage.add_timeline_entry(agent_id, user_id, timeline_entry)
 
-            # 2. Process Impressions Memory Nodes
-            impressions = parsed.get("impressions", [])
-            if not impressions:
-                return
-
             existing_nodes = self.storage.load_nodes(agent_id, user_id)
             new_nodes: List[MemoryNode] = []
 
+            # 2. Process Inner Monologue Thought Entry
+            thought_entry = parsed.get("thought_entry")
+            if thought_entry and isinstance(thought_entry, dict):
+                thought_content = thought_entry.get("content", "").strip()
+                if thought_content:
+                    if self.enable_sanitizer:
+                        thought_content = SecuritySanitizer.sanitize_text(thought_content)
+                    if self.enable_pii_scrubbing:
+                        thought_content = SecuritySanitizer.scrub_pii(thought_content)
+
+                    visibility = thought_entry.get("visibility", "public_log")
+                    if visibility not in ("public_log", "internal_monologue"):
+                        visibility = "public_log"
+
+                    thought_node = MemoryNode(
+                        node_id=str(uuid.uuid4()),
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        node_type=MemoryType.THOUGHT,
+                        content=thought_content,
+                        tags=thought_entry.get("foreshadowing_tags", []),
+                        base_importance=0.8,
+                        emotional_score=float(thought_entry.get("emotional_score", 0.0)),
+                        visibility=visibility,
+                        is_unresolved=bool(thought_entry.get("is_unresolved", False)),
+                        foreshadowing_tags=thought_entry.get("foreshadowing_tags", []),
+                    )
+                    new_nodes.append(thought_node)
+
+            # 3. Process Impressions Memory Nodes
+            impressions = parsed.get("impressions", [])
             for item in impressions:
+                if not isinstance(item, dict):
+                    continue
                 raw_type = item.get("type", "fact").lower()
                 # Security Guard: Intercept and drop INSTRUCTION type nodes
                 if raw_type == "instruction":
@@ -178,6 +213,9 @@ Output strictly valid JSON with no markdown block formatting:
                     tags=item.get("tags", []),
                     base_importance=float(item.get("base_importance", 0.5)),
                     emotional_score=float(item.get("emotional_score", 0.0)),
+                    visibility=item.get("visibility", "public_log"),
+                    is_unresolved=bool(item.get("is_unresolved", False)),
+                    foreshadowing_tags=item.get("foreshadowing_tags", []),
                 )
                 new_nodes.append(node)
 

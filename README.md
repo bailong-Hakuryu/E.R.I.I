@@ -39,6 +39,12 @@ $$\text{EffectiveWeight} = \min\left(\text{MaxCap}, \left(\text{BaseImportance} 
 
 当记忆在检索中被引用时，引擎会自动触发 **Recall Reinforcement**，提升其 Base Importance 并刷新活跃状态。
 
+### 3. 第一人称独白/日记与“未完待续”叙事悬念 (Inner Monologue & Narrative Tension)
+E.R.I.I. 允许暴露角色的第一人称心理独白与日记随笔（如 *“sakura要带我去公园我好开心”*）：
+- **蔡格尼克效应（悬念保鲜）**：带有未完结标记（`is_unresolved=True`）的心理状态会挂起时间衰减，优先在日记时间轴中顶置，维持剧情张力。
+- **情绪余温衰减**：具剧烈情绪/悲剧预兆的独白采用慢衰减曲线（$\lambda_{\text{narrative}} = 0.3 \lambda$）。
+- **双重可见性隔离**：`PUBLIC_LOG` 对前端日记 UI 开放；`INTERNAL_MONOLOGUE` 仅供 Agent 内省回忆，隔离防剧透。
+
 ---
 
 ## 🏛 架构设计图 (System Architecture)
@@ -46,7 +52,7 @@ $$\text{EffectiveWeight} = \min\left(\text{MaxCap}, \left(\text{BaseImportance} 
 ```mermaid
 graph TD
     subgraph Client Integration Layer
-        App[Python Agent / Custom App] -->|1. remember / recall| Engine[ERIIEngine Core]
+        App[Python Agent / Custom App] -->|1. remember / recall / monologue| Engine[ERIIEngine Core]
         REST[Node.js / Go / Rust / Java] -->|HTTP REST| Server[ERII REST API Server]
         Server --> Engine
     end
@@ -58,7 +64,7 @@ graph TD
         
         Retriever --> Decay[Time Decay & Weight Evaluator]
         Retriever --> Budget[Token Budget Manager]
-        Archiver --> Extractor[Impressions & Timeline Extractor]
+        Archiver --> Extractor[Impressions & Monologue Extractor]
     end
 
     subgraph Adapters & Storage Drivers
@@ -133,7 +139,38 @@ Bob 是一位追求优雅架构的高级软件工程师。
 
 ---
 
-### 2. 1 行代码通配任意 LLM (Custom Callable LLM Adapter)
+### 2. 角色心理所想与日记时间轴 (Inner Monologue & Public Diary Timeline)
+
+直接在前端/应用层渲染角色的第一人称心理随笔与未完待续悬念：
+
+```python
+from erii import ERIIEngine
+
+engine = ERIIEngine(storage_dir="./erii_memory")
+
+# 记录一条带时间戳与未完待续标记的日记随笔
+engine.remember_thought(
+    agent_id="sakura",
+    user_id="player_1",
+    content="sakura要带我去公园我好开心",
+    visibility="public_log",
+    is_unresolved=True,  # 悬念保鲜：不被时间衰减，置顶呈现
+    emotional_score=0.9,
+    created_at="2026-07-24 09:30:00"
+)
+
+# 获取用于前端 UI 展示的日记时间轴
+diary = engine.get_diary_timeline(agent_id="sakura", user_id="player_1")
+for entry in diary:
+    print(f"[{entry['created_at']}] {'【悬念】' if entry['is_unresolved'] else ''} {entry['content']}")
+
+# 当后续剧情推进、悬念解开时：
+# engine.resolve_thought("sakura", "player_1", node_id)
+```
+
+---
+
+### 3. 1 行代码通配任意 LLM (Custom Callable LLM Adapter)
 
 无需适配特定大模型 SDK，只需传入一个接收 `prompt` 返回 `str` 的函数即可：
 
@@ -147,6 +184,12 @@ def my_llm_function(prompt: str) -> str:
     # response = requests.post("http://localhost:11434/api/generate", ...)
     return json.dumps({
         "timeline_entry": "我得知了用户喜好暗黑模式 IDE 主题。",
+        "thought_entry": {
+            "content": "他工作很辛苦，希望能用暗黑模式减轻眼部疲劳...",
+            "visibility": "public_log",
+            "is_unresolved": False,
+            "emotional_score": 0.4
+        },
         "impressions": [
             {
                 "type": "preference",
@@ -167,7 +210,7 @@ engine = ERIIEngine(
 
 ---
 
-### 3. 使用单文件嵌入式 SQLite 存储 (`SQLiteStorage`)
+### 4. 使用单文件嵌入式 SQLite 存储 (`SQLiteStorage`)
 
 适合生产环境的高并发与单文件持久化：
 
@@ -181,7 +224,7 @@ engine = ERIIEngine(storage_driver=db_storage)
 
 ---
 
-### 4. 非 Python 环境跨语言调用 (REST API Server)
+### 5. 非 Python 环境跨语言调用 (REST API Server)
 
 E.R.I.I. 内置了独立的 REST API 服务，方便 Node.js, Go, Rust, Java, C# 等客户端接入：
 
@@ -190,27 +233,24 @@ E.R.I.I. 内置了独立的 REST API 服务，方便 Node.js, Go, Rust, Java, C#
 erii serve --host 0.0.0.0 --port 8000
 ```
 
+#### HTTP REST 端点：
+
+- `POST /api/v1/remember` - 记录对话交锋
+- `POST /api/v1/recall` - 召回 Format Context
+- `GET /api/v1/memory/monologue` - 获取心理独白/日记时间轴
+- `POST /api/v1/memory/thought` - 写入一条心理独白
+- `PATCH /api/v1/memory/thought/{node_id}/resolve` - 闭环/解开剧情悬念
+
 #### Node.js / cURL 示例：
 
 ```bash
-# 记录对话
-curl -X POST http://localhost:8000/api/v1/remember \
-  -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "alice",
-    "user_id": "bob",
-    "user_message": "我最喜欢的编程语言是 Rust",
-    "bot_reply": "Rust 的所有权机制非常出色！"
-  }'
+# 获取日记时间轴
+curl -X GET "http://localhost:8000/api/v1/memory/monologue?agent_id=sakura&user_id=player_1&visibility=public_log"
 
-# 检索记忆 Context
-curl -X POST http://localhost:8000/api/v1/recall \
+# 闭环/解开叙事悬念
+curl -X PATCH "http://localhost:8000/api/v1/memory/thought/NODE_ID_HERE/resolve" \
   -H "Content-Type: application/json" \
-  -d '{
-    "agent_id": "alice",
-    "user_id": "bob",
-    "query": "编程语言偏好"
-  }'
+  -d '{"agent_id": "sakura", "user_id": "player_1"}'
 ```
 
 ---
