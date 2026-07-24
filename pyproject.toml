@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "erii"
-version = "0.2.0"
+version = "0.3.0"
 description = "E.R.I.I. — Experiential Recall & Impression Integration Engine for LLM AI Agents"
 readme = "README.md"
 authors = [
