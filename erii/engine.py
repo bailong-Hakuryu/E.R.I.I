@@ -190,13 +190,14 @@ class ERIIEngine:
             clean_agent, clean_user, limit=4
         )
 
-        # Format dynamic nodes
+        # Format dynamic nodes with creation timestamp anchoring
         dynamic_lines = []
         for idx, node in enumerate(selected_nodes, 1):
             weight = self.decay_evaluator.evaluate_node(node)
             type_tag = f"[{node.node_type.value.upper()}]"
+            time_prefix = f"[{node.created_at}] " if hasattr(node, "created_at") and node.created_at else ""
             dynamic_lines.append(
-                f"{idx}. {type_tag} {node.content} (weight: {weight:.2f})"
+                f"{idx}. {time_prefix}{type_tag} {node.content} (weight: {weight:.2f})"
             )
         dynamic_formatted = "\n".join(dynamic_lines)
 
