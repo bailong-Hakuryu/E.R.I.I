@@ -136,33 +136,31 @@ pip install -e ".[all]"
 ```python
 from erii import ERIIEngine
 
-# 实例化引擎（开箱即用，默认使用 JSON 文件存储）
-engine = ERIIEngine(storage_dir="./erii_memory")
+# 使用 Python 上下文管理器语法，支持自动优雅回收资源与后台线程
+with ERIIEngine(storage_dir="./erii_memory") as engine:
+    # 1. 设置角色的核心人格记忆 (Core Persona)
+    engine.set_core_memory(
+        agent_id="alice",
+        user_id="bob",
+        content="Bob 是一位追求优雅架构的高级软件工程师。"
+    )
 
-# 1. 设置角色的核心人格记忆 (Core Persona)
-engine.set_core_memory(
-    agent_id="alice",
-    user_id="bob",
-    content="Bob 是一位追求优雅架构的高级软件工程师。"
-)
+    # 2. 记录单次对话交锋 (内部自动触发后台解耦归档)
+    engine.remember(
+        agent_id="alice",
+        user_id="bob",
+        user_message="我喜欢在下雨天的下午喝上一杯薰衣草伯爵红茶。",
+        bot_reply="那听起来太放松了！伯爵红茶配薰衣草是绝佳的调配。"
+    )
 
-# 2. 记录单次对话交锋 (内部自动触发后台解耦归档)
-engine.remember(
-    agent_id="alice",
-    user_id="bob",
-    user_message="我喜欢在下雨天的下午喝上一杯薰衣草伯爵红茶。",
-    bot_reply="那听起来太放松了！伯爵红茶配薰衣草是绝佳的调配。"
-)
+    # 3. 检索格式化的 Context 注入到 Prompt
+    prompt_context = engine.recall(
+        agent_id="alice",
+        user_id="bob",
+        query="我喜欢喝什么茶？"
+    )
 
-# 3. 检索格式化的 Context 注入到 Prompt
-prompt_context = engine.recall(
-    agent_id="alice",
-    user_id="bob",
-    query="我喜欢喝什么茶？"
-)
-
-print(prompt_context)
-engine.close()
+    print(prompt_context)
 ```
 
 **输出的 Prompt Context 内容：**
@@ -423,8 +421,14 @@ config = ERIIConfig(
   - `BaseTaskQueue` 与内置持久化任务队列（`PersistentTaskQueue`），支持大模型 API 调用失败指数退避重试；
   - `MemoryPack` 便携数据打包规范，提供 `export_memory()` 和 `import_memory()` 实现存储驱动与环境无缝迁移；
   - RRF (Reciprocal Rank Fusion) 倒数排名融合算法，结合纯 Python/Chroma 向量检索与关键词倒排。
-- [ ] **v0.3.0**：多 Agent 关系图谱与共享记忆网络 (Multi-Agent Shared Memory Graph)。
-- [ ] **v0.4.0**：Web UI 调试面板（可视化查看、修改和手动衰减 Agent 的记忆节点）。
+- [x] **v0.3.0**：生产级稳定与时空体验重磅更新：
+  - 🌐 全面 Unicode 跨语言 Key 支持与物理路径安全哈希隔离；
+  - ⏱️ 写入/召回双层绝对时空锚定（Temporal Anchoring），识别相对时间并拼接 `[YYYY-MM-DD (X天前)]`；
+  - 🔄 SQLite 事务级 Diff 物理全量同步，擦除废弃与淘汰节点；
+  - 🔒 规范化 ContextManager 语法 (`with ERIIEngine(...) as engine:`) 与优雅线程回收；
+  - 🔌 API 别名兼容装饰器（`remember(user_msg=...)` 平滑兼容）。
+- [ ] **v0.4.0**：多 Agent 关系图谱与共享记忆网络 (Multi-Agent Shared Memory Graph)。
+- [ ] **v0.5.0**：Web UI 调试面板（可视化查看、修改和手动衰减 Agent 的记忆节点）。
 
 ---
 
