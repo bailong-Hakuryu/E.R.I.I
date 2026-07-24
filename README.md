@@ -416,12 +416,12 @@ config = ERIIConfig(
 ## 🔮 路线图 (Roadmap)
 
 - [x] **v0.1.0**：双轨记忆（时间线+多维节点）、指数衰减与 Recall 强化、Callable 适配器、SQLite & File 驱动、REST API 服务。
-- [x] **v0.2.0**：工程化与混合召回重磅更新：
+- [x] **v0.2.0**：工程化与混合召回更新：
   - `(agent_id, user_id)` 细粒度并发读写隔离锁 + SQLite WAL 模式支持；
   - `BaseTaskQueue` 与内置持久化任务队列（`PersistentTaskQueue`），支持大模型 API 调用失败指数退避重试；
   - `MemoryPack` 便携数据打包规范，提供 `export_memory()` 和 `import_memory()` 实现存储驱动与环境无缝迁移；
   - RRF (Reciprocal Rank Fusion) 倒数排名融合算法，结合纯 Python/Chroma 向量检索与关键词倒排。
-- [x] **v0.3.0**：生产级稳定与时空体验重磅更新：
+- [x] **v0.3.0**：生产级稳定与时空体验更新：
   - 🌐 全面 Unicode 跨语言 Key 支持与物理路径安全哈希隔离；
   - ⏱️ 写入/召回双层绝对时空锚定（Temporal Anchoring），识别相对时间并拼接 `[YYYY-MM-DD (X天前)]`；
   - 🔄 SQLite 事务级 Diff 物理全量同步，擦除废弃与淘汰节点；
