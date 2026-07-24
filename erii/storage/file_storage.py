@@ -7,9 +7,11 @@ Follows Google Python Style Guide.
 """
 
 from datetime import datetime
+import hashlib
 import json
 import logging
 import os
+import re
 from typing import Dict, List, Optional
 
 from erii.models.node import MemoryNode
@@ -45,7 +47,14 @@ class FileStorage(BaseStorage):
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
 
-        path = os.path.join(self.root_dir, clean_agent, clean_user)
+        # Hash unicode keys to avoid OS filesystem encoding issues while preserving human-readable prefix
+        agent_hash = hashlib.sha256(clean_agent.encode("utf-8")).hexdigest()[:8]
+        user_hash = hashlib.sha256(clean_user.encode("utf-8")).hexdigest()[:8]
+        
+        safe_agent_dir = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', clean_agent)}_{agent_hash}"
+        safe_user_dir = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', clean_user)}_{user_hash}"
+
+        path = os.path.join(self.root_dir, safe_agent_dir, safe_user_dir)
         os.makedirs(path, exist_ok=True)
         return path
 

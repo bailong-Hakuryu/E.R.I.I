@@ -10,7 +10,7 @@ import queue
 import threading
 import time
 import uuid
-from typing import Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from erii.adapters.base import BaseLLMAdapter
 from erii.core.queue.base import ArchivalTask, BaseTaskQueue
@@ -27,8 +27,9 @@ class AsyncArchiverWorker:
 
     EXTRACTION_PROMPT = """You are an AI Memory Extraction Engine. Analyze the following conversation turn and extract structured long-term memories, first-person experience timeline entries, and first-person inner monologue/thought entries.
 
-CRITICAL LANGUAGE REQUIREMENT:
-You MUST output the extracted "timeline_entry", "thought_entry.content", and "impressions[].content" in the EXACT SAME LANGUAGE as the conversation turn (e.g. if the user and assistant are talking in Chinese, output all content in Chinese; do NOT translate into English).
+CRITICAL LANGUAGE & TEMPORAL REQUIREMENTS:
+1. LANGUAGE: You MUST output all extracted text ("timeline_entry", "thought_entry.content", "impressions[].content") in the EXACT SAME LANGUAGE and language habits as used in the conversation turn (e.g., if the conversation is in English, output English; if in Chinese, output Chinese; if in Japanese, output Japanese). Do NOT translate into a different language.
+2. TEMPORAL ANCHORING: When user or assistant mentions relative time expressions (such as "tomorrow", "yesterday", "next week", "明天", "昨天"), preserve the temporal context clearly so future recall correctly accounts for time progression across different days.
 
 Conversation Turn:
 User: {user_msg}
@@ -36,9 +37,9 @@ Assistant: {bot_reply}
 
 Output strictly valid JSON with no markdown block formatting:
 {{
-  "timeline_entry": "First-person experiential summary of this interaction from Assistant's perspective in the conversation's language (e.g. '我得知了用户喜好暗黑模式 IDE 主题')",
+  "timeline_entry": "First-person experiential summary of this interaction from Assistant's perspective in the conversation's language",
   "thought_entry": {{
-    "content": "First-person unspoken inner psychological monologue or reflection in the conversation's language (e.g. 'Sakura答应明天带我去公园，我好开心！')",
+    "content": "First-person unspoken inner psychological monologue or reflection in the conversation's language",
     "visibility": "public_log|internal_monologue",
     "is_unresolved": false,
     "emotional_score": 0.0,
@@ -47,7 +48,7 @@ Output strictly valid JSON with no markdown block formatting:
   "impressions": [
     {{
       "type": "fact|preference|event|emotion|relationship|thought|diary",
-      "content": "Specific memory item content in the conversation's language (e.g. '偏好使用暗黑模式 IDE')",
+      "content": "Specific memory item content in the conversation's language",
       "base_importance": 0.1 to 1.0,
       "emotional_score": -1.0 to 1.0,
       "tags": ["tag1", "tag2"]
@@ -102,6 +103,20 @@ Output strictly valid JSON with no markdown block formatting:
     def shutdown(self) -> None:
         """Stops worker thread gracefully."""
         self.running = False
+        if hasattr(self, "worker_thread") and self.worker_thread.is_alive():
+            self.worker_thread.join(timeout=1.0)
+
+    def close(self) -> None:
+        """Alias for shutdown()."""
+        self.shutdown()
+
+    def __enter__(self) -> "AsyncArchiverWorker":
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit."""
+        self.shutdown()
 
     def _worker_loop(self) -> None:
         """Main queue consumer loop running in background thread."""

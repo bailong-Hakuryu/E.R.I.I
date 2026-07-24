@@ -49,16 +49,10 @@ class SecuritySanitizer:
             raise ValueError(f"{key_name} must be a non-empty string.")
 
         sanitized = key_str.strip()
-        # Check for path traversal characters
-        if ".." in sanitized or "/" in sanitized or "\\" in sanitized:
+        # Check for path traversal characters & null bytes
+        if ".." in sanitized or "/" in sanitized or "\\" in sanitized or "\x00" in sanitized:
             raise ValueError(
                 f"Security Warning: Invalid {key_name} '{key_str}' contains path traversal characters."
-            )
-
-        # Allow alphanumeric, hyphens, underscores, and dots (not leading dot)
-        if not re.match(r"^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$", sanitized):
-            raise ValueError(
-                f"Security Warning: {key_name} '{key_str}' contains illegal characters."
             )
 
         return sanitized

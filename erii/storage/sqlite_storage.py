@@ -90,6 +90,7 @@ class SQLiteStorage(BaseStorage):
         with self.lock_manager.lock(clean_agent, clean_user):
             with self._get_connection() as conn:
                 cursor = conn.cursor()
+                keep_ids = set()
                 for node in nodes:
                     node_json = json.dumps(node.to_dict(), ensure_ascii=False)
                     cursor.execute(
@@ -99,6 +100,23 @@ class SQLiteStorage(BaseStorage):
                         ON CONFLICT(node_id) DO UPDATE SET data = excluded.data
                         """,
                         (node.node_id, clean_agent, clean_user, node_json),
+                    )
+                    keep_ids.add(node.node_id)
+
+                # Prune nodes that have been removed
+                if keep_ids:
+                    placeholders = ",".join(["?"] * len(keep_ids))
+                    cursor.execute(
+                        f"""
+                        DELETE FROM memory_nodes
+                        WHERE agent_id = ? AND user_id = ? AND node_id NOT IN ({placeholders})
+                        """,
+                        [clean_agent, clean_user] + list(keep_ids),
+                    )
+                else:
+                    cursor.execute(
+                        "DELETE FROM memory_nodes WHERE agent_id = ? AND user_id = ?",
+                        (clean_agent, clean_user),
                     )
                 conn.commit()
 

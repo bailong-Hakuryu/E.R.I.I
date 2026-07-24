@@ -106,8 +106,9 @@ class ERIIEngine:
         self,
         agent_id: str,
         user_id: str,
-        user_message: str,
-        bot_reply: str,
+        user_message: str = "",
+        bot_reply: str = "",
+        user_msg: str = "",
     ) -> None:
         """Records a conversation turn into memory and enqueues archival.
 
@@ -116,7 +117,9 @@ class ERIIEngine:
             user_id: User identifier.
             user_message: User message text string.
             bot_reply: Assistant response text string.
+            user_msg: Deprecated alias for user_message.
         """
+        user_message = user_message or user_msg
         if not user_message or not bot_reply:
             return
 
@@ -469,4 +472,16 @@ class ERIIEngine:
         """Gracefully shuts down background archiver thread."""
         if hasattr(self, "archiver_worker"):
             self.archiver_worker.shutdown()
+
+    def shutdown(self) -> None:
+        """Alias for close()."""
+        self.close()
+
+    def __enter__(self) -> "ERIIEngine":
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit, ensures close() is called."""
+        self.close()
 
