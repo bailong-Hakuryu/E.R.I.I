@@ -27,15 +27,18 @@ class AsyncArchiverWorker:
 
     EXTRACTION_PROMPT = """You are an AI Memory Extraction Engine. Analyze the following conversation turn and extract structured long-term memories, first-person experience timeline entries, and first-person inner monologue/thought entries.
 
+CRITICAL LANGUAGE REQUIREMENT:
+You MUST output the extracted "timeline_entry", "thought_entry.content", and "impressions[].content" in the EXACT SAME LANGUAGE as the conversation turn (e.g. if the user and assistant are talking in Chinese, output all content in Chinese; do NOT translate into English).
+
 Conversation Turn:
 User: {user_msg}
 Assistant: {bot_reply}
 
 Output strictly valid JSON with no markdown block formatting:
 {{
-  "timeline_entry": "First-person experiential summary of this interaction from Assistant's perspective (e.g. 'I discussed favorite tea with Bob.')",
+  "timeline_entry": "First-person experiential summary of this interaction from Assistant's perspective in the conversation's language (e.g. '我得知了用户喜好暗黑模式 IDE 主题')",
   "thought_entry": {{
-    "content": "First-person unspoken inner psychological monologue or reflection (e.g. 'Sakura promised to take me to the park tomorrow, I am so excited and hopeful!')",
+    "content": "First-person unspoken inner psychological monologue or reflection in the conversation's language (e.g. 'Sakura答应明天带我去公园，我好开心！')",
     "visibility": "public_log|internal_monologue",
     "is_unresolved": false,
     "emotional_score": 0.0,
@@ -44,7 +47,7 @@ Output strictly valid JSON with no markdown block formatting:
   "impressions": [
     {{
       "type": "fact|preference|event|emotion|relationship|thought|diary",
-      "content": "Specific memory item content",
+      "content": "Specific memory item content in the conversation's language (e.g. '偏好使用暗黑模式 IDE')",
       "base_importance": 0.1 to 1.0,
       "emotional_score": -1.0 to 1.0,
       "tags": ["tag1", "tag2"]
