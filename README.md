@@ -54,34 +54,34 @@ E.R.I.I. 允许暴露角色的第一人称心理独白与日记随笔（如 *“
 
 ```mermaid
 graph TD
-    subgraph Client Integration Layer
-        App[Python Agent / Custom App] -->|remember / recall / export_memory| Engine[ERIIEngine Core]
-        REST[Node.js / Go / Rust / Java] -->|HTTP REST| Server[ERII REST API Server]
+    subgraph ClientLayer["Client Integration Layer"]
+        App["Python Agent / Custom App"] -->|remember / recall / export_memory| Engine["ERIIEngine Core"]
+        REST["Node.js / Go / Rust / Java"] -->|HTTP REST| Server["ERII REST API Server"]
         Server --> Engine
     end
 
-    subgraph ERII Core Engine
-        Engine --> Guard[Security Sanitizer & Guardrails]
-        Guard --> Retriever[RRF Hybrid Retriever & Diversity Cap]
-        Guard --> Archiver[Async Archiver Worker Thread]
-        Archiver --> TaskQueue[BaseTaskQueue / PersistentTaskQueue]
+    subgraph CoreEngine["ERII Core Engine"]
+        Engine --> Guard["Security Sanitizer & Guardrails"]
+        Guard --> Retriever["RRF Hybrid Retriever & Diversity Cap"]
+        Guard --> Archiver["Async Archiver Worker Thread"]
+        Archiver --> TaskQueue["BaseTaskQueue / PersistentTaskQueue"]
         
-        Retriever --> Decay[Time Decay & Weight Evaluator]
-        Retriever --> Budget[Token Budget Manager]
-        Archiver --> Extractor[Impressions & Monologue Extractor]
+        Retriever --> Decay["Time Decay & Weight Evaluator"]
+        Retriever --> Budget["Token Budget Manager"]
+        Archiver --> Extractor["Impressions & Monologue Extractor"]
     end
 
-    subgraph Adapters, Vector & Storage Drivers
-        Extractor --> LLMAdapter[LLM Adapter Layer]
-        LLMAdapter -->|Callable / OpenAI / Ollama| ExternalLLM[LLM API / Local Model]
+    subgraph AdaptersLayer["Adapters, Vector & Storage Drivers"]
+        Extractor --> LLMAdapter["LLM Adapter Layer"]
+        LLMAdapter -->|Callable / OpenAI / Ollama| ExternalLLM["LLM API / Local Model"]
 
-        Retriever --> VectorAdapter[BaseVectorStore & EmbeddingProvider]
-        VectorAdapter -->|InMemory / Chroma / Qdrant| VectorStore[Vector Databases]
+        Retriever --> VectorAdapter["BaseVectorStore & EmbeddingProvider"]
+        VectorAdapter -->|InMemory / Chroma / Qdrant| VectorStore["Vector Databases"]
 
-        Engine --> Storage[Storage Abstraction Layer & KeyLockManager]
-        Storage --> FileDriver[FileStorage - JSON Default]
-        Storage --> SQLiteDriver[SQLiteStorage - Embedded DB WAL]
-        Engine --> MemoryPack[MemoryPack Export / Import Migration]
+        Engine --> Storage["Storage Abstraction Layer & KeyLockManager"]
+        Storage --> FileDriver["FileStorage - JSON Default"]
+        Storage --> SQLiteDriver["SQLiteStorage - Embedded DB WAL"]
+        Engine --> MemoryPack["MemoryPack Export / Import Migration"]
     end
 ```
 
@@ -89,7 +89,11 @@ graph TD
 
 ## 🚀 极速上手 (Quickstart)
 
-### 安装
+### 安装说明
+
+> **包名提示**：由于 PyPI 官方包名规范不允许包含点号 `.`，因此项目的 PyPI 发布包名与 Python import 模块名统一为全小写的 **`erii`**。
+
+#### 1. 通过 PyPI 安装官方发布版本：
 
 ```bash
 # 基础核心库安装 (开箱即用)
@@ -99,6 +103,18 @@ pip install erii
 pip install "erii[server]"  # 包含 FastAPI / Uvicorn HTTP 服务
 pip install "erii[vector]"  # 包含 ChromaDB 向量扩展
 pip install "erii[all]"     # 安装全量扩展包
+```
+
+#### 2. 通过 GitHub / 本地源码源码安装：
+
+```bash
+# 直接从 GitHub 仓库安装
+pip install "git+https://github.com/bailong-Hakuryu/E.R.I.I.git#egg=erii[all]"
+
+# 或克隆本地后以可编辑模式安装
+git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
+cd E.R.I.I.
+pip install -e ".[all]"
 ```
 
 > **注意**：E.R.I.I. 基础核心库仅需 Python 3.9+ 环境，开箱即用！按需选择 optional extra 包。
