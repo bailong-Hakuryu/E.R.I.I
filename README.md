@@ -42,7 +42,7 @@ $$\text{EffectiveWeight} = \min\left(\text{MaxCap}, \left(\text{BaseImportance} 
 ### 3. 第一人称独白/日记与“未完待续”叙事悬念 (Inner Monologue & Narrative Tension)
 E.R.I.I. 允许暴露角色的第一人称心理独白与日记随笔（如 *“sakura要带我去公园我好开心”*）：
 - **蔡格尼克效应（悬念保鲜）**：带有未完结标记（`is_unresolved=True`）的心理状态会挂起时间衰减，优先在日记时间轴中顶置，维持剧情张力。
-- **情绪余温衰减**：具剧烈情绪/悲剧预兆的独白采用慢衰减曲线（$\lambda_{\text{narrative}} = 0.3 \lambda$）。
+- **情绪余温衰减（Emotional Resonance）**：凡具备强烈情感共鸣（无论极度喜悦、深情感动还是剧情悬疑，`abs(emotional_score) >= 0.5`）的独白采用慢衰减曲线（$\lambda_{\text{narrative}} = 0.3 \lambda$），让情感时刻在心理留存更久。
 - **双重可见性隔离**：`PUBLIC_LOG` 对前端日记 UI 开放；`INTERNAL_MONOLOGUE` 仅供 Agent 内省回忆，隔离防剧透。
 
 ---

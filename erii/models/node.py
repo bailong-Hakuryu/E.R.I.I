@@ -91,7 +91,7 @@ class MemoryNode:
         elapsed_seconds = (datetime.now() - last_time).total_seconds()
         elapsed_days = max(0.0, elapsed_seconds / 86400.0)
 
-        # Apply Zeigarnik Effect (Unresolved narrative hold-back) or Emotional Hangover Decay Curve
+        # Apply Zeigarnik Effect (Unresolved narrative hold-back) or Emotional Resonance Decay Curve
         effective_decay_rate = decay_rate
         if self.is_unresolved:
             time_decay = 1.0  # Suspense holdback: active unresolved thoughts never decay
@@ -99,7 +99,7 @@ class MemoryNode:
             self.node_type in (MemoryType.THOUGHT, MemoryType.DIARY, MemoryType.EMOTION)
             and abs(self.emotional_score) >= 0.5
         ):
-            # Emotional hangover: slower decay rate for emotionally charged narrative thoughts
+            # Emotional Resonance: slower decay rate for intense emotional memories (both joyful & poignant)
             effective_decay_rate = decay_rate * 0.3
             time_decay = math.exp(-effective_decay_rate * elapsed_days) if self.decayable else 1.0
         else:

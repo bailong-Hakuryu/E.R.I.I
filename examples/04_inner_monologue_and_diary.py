@@ -7,13 +7,18 @@ Demonstrates:
 4. Resolving suspense nodes when story events complete.
 """
 
+import argparse
 import json
 import shutil
 import tempfile
 from erii import ERIIEngine
 
 
-def main():
+def main(mode: str = "AB"):
+    mode = mode.upper()
+    if mode not in ("A", "B", "AB", "BOTH"):
+        mode = "AB"
+
     tmp_dir = tempfile.mkdtemp()
     try:
         # Initialize E.R.I.I. Engine
@@ -22,9 +27,9 @@ def main():
         agent_id = "sakura"
         user_id = "player_1"
 
-        print("=== 1. Record Character Inner Monologue & Diary Entries ===")
+        print(f"=== 1. Record Character Inner Monologue & Diary Entries (Selected Mode: {mode}) ===")
 
-        # Entry 1: Public diary entry with timestamp & unresolved suspense (Zeigarnik effect)
+        # Base Entry: Public diary entry with timestamp & unresolved suspense (Zeigarnik effect)
         engine.remember_thought(
             agent_id=agent_id,
             user_id=user_id,
@@ -36,19 +41,33 @@ def main():
             created_at="2026-07-24 09:30:00",
         )
 
-        # Entry 2: Secret internal monologue (Anti-spoiler: hidden from public UI view)
-        engine.remember_thought(
-            agent_id=agent_id,
-            user_id=user_id,
-            content="（心里悄悄想：如果以后也能一直这样该多好，哪怕这只是悲剧的前夕…）",
-            visibility="internal_monologue",
-            is_unresolved=True,
-            emotional_score=-0.7,
-            foreshadowing_tags=["tragedy_subtext"],
-            created_at="2026-07-24 09:31:00",
-        )
+        # Style A: Warm Affection / Heartfelt Monologue
+        if "A" in mode or mode == "BOTH":
+            engine.remember_thought(
+                agent_id=agent_id,
+                user_id=user_id,
+                content="（心里悄悄想：无论未来如何，此刻能和你一起走在阳光下，就是我最珍视的宝物…）",
+                visibility="internal_monologue",
+                is_unresolved=True,
+                emotional_score=0.95,
+                foreshadowing_tags=["heartfelt_cherish", "deep_affection"],
+                created_at="2026-07-24 09:31:00",
+            )
 
-        # Entry 3: Resolved diary entry
+        # Style B: Dramatic Mystery / Secret Promise Monologue
+        if "B" in mode or mode == "BOTH":
+            engine.remember_thought(
+                agent_id=agent_id,
+                user_id=user_id,
+                content="（心里悄悄想：他今天送我的那个八音盒里，到底藏着什么不为人知的约定呢…）",
+                visibility="internal_monologue",
+                is_unresolved=True,
+                emotional_score=0.85,
+                foreshadowing_tags=["mystery_box", "promise"],
+                created_at="2026-07-24 09:32:00",
+            )
+
+        # Resolved public diary entry
         engine.remember_thought(
             agent_id=agent_id,
             user_id=user_id,
@@ -100,4 +119,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="E.R.I.I. Inner Monologue & Diary Example")
+    parser.add_argument(
+        "--mode",
+        choices=["A", "B", "AB"],
+        default="AB",
+        help="Select monologue style: A (Warm Affection), B (Dramatic Mystery), AB (Both)",
+    )
+    args = parser.parse_args()
+    main(mode=args.mode)
