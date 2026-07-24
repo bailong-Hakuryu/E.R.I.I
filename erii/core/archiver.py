@@ -6,6 +6,7 @@ Follows Google Python Style Guide.
 
 import json
 import logging
+import os
 import queue
 import threading
 import time
@@ -137,6 +138,12 @@ Output strictly valid JSON with no markdown block formatting:
     def _worker_loop(self) -> None:
         """Main queue consumer loop running in background thread."""
         while self.running:
+            # If the underlying DB file has been deleted (e.g. test tearDown cleaned up
+            # the temp directory), self-terminate cleanly instead of flooding the log.
+            if hasattr(self.task_queue, "db_path") and not os.path.exists(self.task_queue.db_path):
+                logger.debug("AsyncArchiverWorker: DB file gone, stopping worker thread.")
+                self.running = False
+                break
             try:
                 task = self.task_queue.dequeue()
                 if task is None:

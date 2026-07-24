@@ -67,6 +67,8 @@ class SecuritySanitizer:
         Returns:
             Sanitized text string with injection attempts disarmed.
         """
+        if not isinstance(text, str):
+            return ""
         if not text:
             return ""
 
@@ -86,6 +88,8 @@ class SecuritySanitizer:
         Returns:
             Text with emails, phone numbers, and API tokens masked.
         """
+        if not isinstance(text, str):
+            return ""
         if not text:
             return ""
 
