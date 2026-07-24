@@ -45,7 +45,7 @@ class TestRFCFullVerification(unittest.TestCase):
         try:
             # 检查 prompt 包含语言与时间锚定说明
             prompt = engine.archiver_worker.EXTRACTION_PROMPT
-            self.assertIn("CRITICAL LANGUAGE & TEMPORAL REQUIREMENTS", prompt)
+            self.assertTrue("CRITICAL PERSPECTIVE, IDENTITY & LANGUAGE REQUIREMENTS" in prompt or "CRITICAL LANGUAGE & TEMPORAL REQUIREMENTS" in prompt)
             self.assertIn("TEMPORAL ANCHORING", prompt)
         finally:
             engine.close()

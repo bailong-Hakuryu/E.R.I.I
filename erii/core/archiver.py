@@ -27,19 +27,29 @@ class AsyncArchiverWorker:
 
     EXTRACTION_PROMPT = """You are an AI Memory Extraction Engine. Analyze the following conversation turn and extract structured long-term memories, first-person experience timeline entries, and first-person inner monologue/thought entries.
 
-CRITICAL LANGUAGE & TEMPORAL REQUIREMENTS:
-1. STRICT LANGUAGE MATCHING (DYNAMIC MULTI-LINGUAL): You MUST detect the language used in the conversation turn (English, Chinese, Japanese, Spanish, etc.) and output all extracted text ("timeline_entry", "thought_entry.content", "impressions[].content") in THAT EXACT SAME LANGUAGE. Never default to English if the user is speaking another language.
-2. TEMPORAL ANCHORING: When user or assistant mentions relative time expressions (such as "tomorrow", "yesterday", "next week", "明天", "昨天"), preserve the temporal context clearly so future recall correctly accounts for time progression across different days.
+CRITICAL PERSPECTIVE, IDENTITY & LANGUAGE REQUIREMENTS:
+1. STRICT FIRST-PERSON PERSPECTIVE (MANDATORY):
+   - The Assistant in this turn is the AI Character/Agent '{agent_id}'.
+   - The User in this turn is the Human User '{user_id}'.
+   - All extracted memory items ("impressions[].content", "timeline_entry", "thought_entry.content") MUST be written strictly from Assistant's ('{agent_id}') FIRST-PERSON PERSPECTIVE.
+   - When referring to Assistant herself, use '我' (I/me) or her character name '{agent_id}'.
+   - When referring to User, use '{user_id}' or '用户' or 'Sakura'. NEVER use '我' to refer to User!
+   - Example CORRECT impression: "我向 {user_id} 道晚安，希望他做个好梦。" (Assistant said good night to User)
+   - Example INCORRECT impression: "我向 绘梨衣 道晚安" (WRONG! Do not write from User's perspective!)
+
+2. STRICT LANGUAGE MATCHING: You MUST detect the language used in the conversation turn and output all extracted text in THAT EXACT SAME LANGUAGE (default to Chinese if Chinese is used).
+
+3. TEMPORAL ANCHORING: When user or assistant mentions relative time expressions ("tomorrow", "yesterday", "明天", "昨天"), preserve temporal context clearly.
 
 Conversation Turn:
-User: {user_msg}
-Assistant: {bot_reply}
+User ({user_id}): {user_msg}
+Assistant ({agent_id}): {bot_reply}
 
 Output strictly valid JSON with no markdown block formatting:
 {{
-  "timeline_entry": "First-person experiential summary of this interaction from Assistant's perspective in the conversation's language",
+  "timeline_entry": "First-person experiential summary of this interaction strictly from Assistant's ('{agent_id}') perspective in the conversation's language",
   "thought_entry": {{
-    "content": "First-person unspoken inner psychological monologue or reflection in the conversation's language",
+    "content": "First-person unspoken inner psychological monologue or reflection strictly from Assistant's ('{agent_id}') perspective in the conversation's language",
     "visibility": "public_log|internal_monologue",
     "is_unresolved": false,
     "emotional_score": 0.0,
@@ -48,7 +58,7 @@ Output strictly valid JSON with no markdown block formatting:
   "impressions": [
     {{
       "type": "fact|preference|event|emotion|relationship|thought|diary",
-      "content": "Specific memory item content in the conversation's language",
+      "content": "Memory item content strictly from Assistant's ('{agent_id}') perspective ('我' = Assistant '{agent_id}', '{user_id}' = User)",
       "base_importance": 0.1 to 1.0,
       "emotional_score": -1.0 to 1.0,
       "tags": ["tag1", "tag2"]
@@ -149,7 +159,12 @@ Output strictly valid JSON with no markdown block formatting:
             user_msg = task["user_msg"]
             bot_reply = task["bot_reply"]
 
-        prompt = self.EXTRACTION_PROMPT.format(user_msg=user_msg, bot_reply=bot_reply)
+        prompt = self.EXTRACTION_PROMPT.format(
+            agent_id=agent_id,
+            user_id=user_id,
+            user_msg=user_msg,
+            bot_reply=bot_reply
+        )
 
         try:
             raw_response = self.llm_adapter.generate(prompt)
