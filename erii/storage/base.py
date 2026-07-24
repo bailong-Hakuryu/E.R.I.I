@@ -4,12 +4,41 @@ Follows Google Python Style Guide.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from contextlib import contextmanager
+import threading
+from typing import Dict, List, Optional
 from erii.models.node import MemoryNode
+
+
+class KeyLockManager:
+    """Manages thread-safe locks per (agent_id, user_id) key pair."""
+
+    def __init__(self) -> None:
+        self._locks: Dict[str, threading.RLock] = {}
+        self._global_lock = threading.Lock()
+
+    def get_lock(self, agent_id: str, user_id: str) -> threading.RLock:
+        key = f"{agent_id}:{user_id}"
+        with self._global_lock:
+            if key not in self._locks:
+                self._locks[key] = threading.RLock()
+            return self._locks[key]
+
+    @contextmanager
+    def lock(self, agent_id: str, user_id: str):
+        lock = self.get_lock(agent_id, user_id)
+        lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
 
 
 class BaseStorage(ABC):
     """Abstract interface for memory persistence drivers."""
+
+    def __init__(self) -> None:
+        self.lock_manager = KeyLockManager()
 
     @abstractmethod
     def save_nodes(

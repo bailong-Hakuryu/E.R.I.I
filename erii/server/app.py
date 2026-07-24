@@ -59,6 +59,25 @@ try:
         agent_id: str = "default_agent"
         user_id: str
 
+    class ExportRequest(BaseModel):
+        agent_id: str = "default_agent"
+        user_id: str
+
+    class ImportRequest(BaseModel):
+        pack_data: dict
+        agent_id: Optional[str] = None
+        user_id: Optional[str] = None
+        overwrite: bool = False
+
+    @app.get("/api/v1/health")
+    def api_health():
+        """Health check endpoint returning engine and version status."""
+        return {
+            "status": "healthy",
+            "version": "0.2.0",
+            "archiver_running": getattr(engine.archiver_worker, "running", False),
+        }
+
     @app.post("/api/v1/remember")
     def api_remember(req: RememberRequest):
         """Records a conversation turn into memory."""
@@ -168,6 +187,47 @@ try:
             return {"status": "success", "message": "Thought resolved successfully."}
         except HTTPException:
             raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/v1/memory/export")
+    def api_export_memory(req: ExportRequest):
+        """Exports memory into a MemoryPack object."""
+        try:
+            pack = engine.export_memory(agent_id=req.agent_id, user_id=req.user_id)
+            return {"status": "success", "pack": pack.to_dict()}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/v1/memory/import")
+    def api_import_memory(req: ImportRequest):
+        """Imports a MemoryPack object."""
+        try:
+            pack = engine.import_memory(
+                pack_or_path=req.pack_data,
+                agent_id=req.agent_id,
+                user_id=req.user_id,
+                overwrite=req.overwrite,
+            )
+            return {"status": "success", "message": "Memory imported successfully.", "pack": pack.to_dict()}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/api/v1/tasks/status")
+    def api_get_tasks_status():
+        """Retrieves background archival task counts by status."""
+        try:
+            summary = engine.archiver_worker.task_queue.get_status_summary()
+            return {"status": "success", "summary": summary}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/v1/tasks/retry-failed")
+    def api_retry_failed_tasks():
+        """Resets FAILED tasks back to PENDING."""
+        try:
+            count = engine.archiver_worker.task_queue.retry_failed()
+            return {"status": "success", "reset_count": count}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 

@@ -14,12 +14,15 @@
 
 ## ⚡ 为什么选择 E.R.I.I.
 
-| 维度 | 传统 Vector / RAG 记忆库 | E.R.I.I. 经验整合引擎 |
+| 维度 | 传统 Vector / RAG 记忆库 | E.R.I.I. 经验整合引擎 (v0.2.0) |
 | :--- | :--- | :--- |
 | **记忆表达机制** | 纯片段文本相似度匹配（无时间感，易失去角色人设） | **双轨制**：第一人称体验时间线 + 多维加权印象节点 |
 | **遗忘与强化算法** | 无时间衰减，旧对话/垃圾数据永久占用 Context | **指数级时间衰减** (`e^(-λ·Δt)`) + **Recall 自动强化重现** |
+| **召回匹配机制** | 依赖单一语义向量，易对同义词/关键词匹配失效 | **RRF 混合双路召回**（倒排关键词 + 语义向量 + 衰减权重合成） |
 | **话题垄断防御** | 相似向量容易挤爆 Token 预算（单一话题刷屏） | **Diversity Cap 分类熔断机制**（自动保证多样性配额） |
-| **框架与环境依赖** | 强绑定 LangChain/LlamaIndex 或大型向量数据库 | **零强制依赖**（采用 Python 原生 `dataclasses`，开箱即用） |
+| **可靠性与任务队列** | 异步任务内存排队，进程崩溃即丢任务 | **PersistentTaskQueue** 持久化队列 + 大模型 API 自动退避重试 |
+| **数据迁移与备份** | 锁定数据库格式，难以跨驱动/环境迁移 | **MemoryPack** 统一标准快照，支持无缝导出/导入迁移 |
+| **框架与环境依赖** | 强绑定 LangChain/LlamaIndex 或大型向量数据库 | **渐进式依赖**：默认零强制配置开箱即用，可按需选配向量扩展包 |
 | **LLM 端适配性** | 需要复杂的 SDK 或特定的 OpenAI 接口封装 | **1 行代码通配**：支持任意 Python Callable / 私有 API / Local LLM |
 | **安全与隐私** | 易受注入攻击篡改 Agent 行为，暴露隐私数据 | **Security Sanitizer** 自动防 Prompt 注入与 PII 敏感信息掩码 |
 
@@ -32,17 +35,17 @@ E.R.I.I. 将记忆拆分为互补的两个维度：
 - **第一人称体验时间线 (Experiential Timeline)**：记录 Agent 站在“我”的角度对交互事件的归纳（例如：*“2026-07-23 我了解了 Bob 偏好暗黑模式 IDE”*）。
 - **多维动态印象节点 (Impression Nodes)**：提取分类节点（`FACT` 客观事实、`PREFERENCE` 偏好、`EVENT` 事件、`EMOTION` 情绪、`RELATIONSHIP` 关系 dynamic）。
 
-### 2. 动态权重衰减与强化公式
-记忆节点的有效权重根据时间流逝指数级衰减，同时叠加访问频次、情绪烈度与关系 boost：
+### 2. 动态权重衰减与 RRF 混合召回公式
+记忆节点的有效权重根据时间流逝指数级衰减，并与 **RRF (Reciprocal Rank Fusion) 倒数排名融合算法** 结合：
 
-$$\text{EffectiveWeight} = \min\left(\text{MaxCap}, \left(\text{BaseImportance} \times e^{-\lambda \cdot \Delta t}\right) + \text{FreqBoost} + \text{EmotionalBoost} + \text{RelBoost}\right)$$
+$$\text{FinalScore} = \left( \frac{w_{\text{bm25}}}{60 + \text{Rank}_{\text{bm25}}} + \frac{w_{\text{vec}}}{60 + \text{Rank}_{\text{vec}}} \right) \times \text{EffectiveWeight}$$
 
 当记忆在检索中被引用时，引擎会自动触发 **Recall Reinforcement**，提升其 Base Importance 并刷新活跃状态。
 
 ### 3. 第一人称独白/日记与“未完待续”叙事悬念 (Inner Monologue & Narrative Tension)
 E.R.I.I. 允许暴露角色的第一人称心理独白与日记随笔（如 *“sakura要带我去公园我好开心”*）：
 - **蔡格尼克效应（悬念保鲜）**：带有未完结标记（`is_unresolved=True`）的心理状态会挂起时间衰减，优先在日记时间轴中顶置，维持剧情张力。
-- **情绪余温衰减（Emotional Resonance）**：凡具备强烈情感共鸣（无论极度喜悦、深情感动还是剧情悬疑，`abs(emotional_score) >= 0.5`）的独白采用慢衰减曲线（`λ_narrative = 0.3λ`），让情感时刻在心理留存更久。
+- **情绪余温衰减（Emotional Resonance）**：凡具备强烈情感共鸣（`abs(emotional_score) >= 0.5`）的独白采用慢衰减曲线（`λ_narrative = 0.3λ`），让情感时刻在心理留存更久。
 - **双重可见性隔离**：`PUBLIC_LOG` 对前端日记 UI 开放；`INTERNAL_MONOLOGUE` 仅供 Agent 内省回忆，隔离防剧透。
 
 ---
@@ -52,28 +55,33 @@ E.R.I.I. 允许暴露角色的第一人称心理独白与日记随笔（如 *“
 ```mermaid
 graph TD
     subgraph Client Integration Layer
-        App[Python Agent / Custom App] -->|1. remember / recall / monologue| Engine[ERIIEngine Core]
+        App[Python Agent / Custom App] -->|remember / recall / export_memory| Engine[ERIIEngine Core]
         REST[Node.js / Go / Rust / Java] -->|HTTP REST| Server[ERII REST API Server]
         Server --> Engine
     end
 
     subgraph ERII Core Engine
         Engine --> Guard[Security Sanitizer & Guardrails]
-        Guard --> Retriever[Retriever & Diversity Cap Engine]
+        Guard --> Retriever[RRF Hybrid Retriever & Diversity Cap]
         Guard --> Archiver[Async Archiver Worker Thread]
+        Archiver --> TaskQueue[BaseTaskQueue / PersistentTaskQueue]
         
         Retriever --> Decay[Time Decay & Weight Evaluator]
         Retriever --> Budget[Token Budget Manager]
         Archiver --> Extractor[Impressions & Monologue Extractor]
     end
 
-    subgraph Adapters & Storage Drivers
+    subgraph Adapters, Vector & Storage Drivers
         Extractor --> LLMAdapter[LLM Adapter Layer]
         LLMAdapter -->|Callable / OpenAI / Ollama| ExternalLLM[LLM API / Local Model]
 
-        Engine --> Storage[Storage Abstraction Layer]
+        Retriever --> VectorAdapter[BaseVectorStore & EmbeddingProvider]
+        VectorAdapter -->|InMemory / Chroma / Qdrant| VectorStore[Vector Databases]
+
+        Engine --> Storage[Storage Abstraction Layer & KeyLockManager]
         Storage --> FileDriver[FileStorage - JSON Default]
-        Storage --> SQLiteDriver[SQLiteStorage - Embedded DB]
+        Storage --> SQLiteDriver[SQLiteStorage - Embedded DB WAL]
+        Engine --> MemoryPack[MemoryPack Export / Import Migration]
     end
 ```
 
@@ -84,10 +92,16 @@ graph TD
 ### 安装
 
 ```bash
+# 基础核心库安装 (开箱即用)
 pip install erii
+
+# 安装可选组件包 (向量扩展/REST服务端)
+pip install "erii[server]"  # 包含 FastAPI / Uvicorn HTTP 服务
+pip install "erii[vector]"  # 包含 ChromaDB 向量扩展
+pip install "erii[all]"     # 安装全量扩展包
 ```
 
-> **注意**：E.R.I.I. 核心库仅需 Python 3.9+ 环境，**零第三方库依赖**！
+> **注意**：E.R.I.I. 基础核心库仅需 Python 3.9+ 环境，开箱即用！按需选择 optional extra 包。
 
 ---
 
@@ -217,14 +231,78 @@ engine = ERIIEngine(
 
 ### 4. 使用单文件嵌入式 SQLite 存储 (`SQLiteStorage`)
 
-适合生产环境的高并发与单文件持久化：
+适合生产环境的高并发与单文件持久化，强制开启 WAL 模式与按用户粒度的并发锁：
 
 ```python
 from erii import ERIIEngine, SQLiteStorage
 
-# 使用内置 SQLite 驱动
+# 使用内置 SQLite 驱动 (支持高并发 WAL 模式)
 db_storage = SQLiteStorage(db_path="./agent_memory.db")
 engine = ERIIEngine(storage_driver=db_storage)
+```
+
+---
+
+### 5. 开启 RRF 混合双路向量召回 (`InMemoryVectorStore` / `ChromaVectorStore`)
+
+零依赖内存向量或一键挂载 ChromaDB 数据库，融合“倒排关键词 + 语义向量 + 指数衰减”：
+
+```python
+from erii import ERIIEngine, InMemoryVectorStore
+
+# 1. 挂载内置纯 Python / NumPy 向量存储（开箱即用，无需配置数据库）
+vector_store = InMemoryVectorStore()
+
+engine = ERIIEngine(
+    storage_dir="./erii_memory",
+    vector_store=vector_store,
+    # 可选：传入自定义嵌入模型，如 lambda text: get_openai_embedding(text)
+)
+
+# 执行 RRF 混合召回
+context = engine.recall(agent_id="alice", user_id="bob", query="IDE 主题偏好")
+```
+
+---
+
+### 6. MemoryPack 记忆快照导出与跨驱动导入迁移
+
+无缝将 Agent 记忆导出为便携 JSON 快照，轻松实现冷热备份或从 JSON 迁移到 SQLite：
+
+```python
+from erii import ERIIEngine, SQLiteStorage
+
+engine_json = ERIIEngine(storage_dir="./old_json_memory")
+
+# 1. 导出指定用户的完整记忆包
+pack = engine_json.export_memory(
+    agent_id="sakura",
+    user_id="player_1",
+    export_path="./sakura_backup.json"
+)
+
+# 2. 在全新的 SQLite 存储引擎中一键导入
+engine_sqlite = ERIIEngine(storage_driver=SQLiteStorage(db_path="./new_agent.db"))
+engine_sqlite.import_memory("./sakura_backup.json", overwrite=True)
+```
+
+---
+
+### 7. 配置持久化任务队列与大模型 API 重试 (`PersistentTaskQueue`)
+
+防止进程崩溃丢任务，自动处理 LLM API 的网络超时与 Rate Limit 429 异常：
+
+```python
+from erii import ERIIEngine, PersistentTaskQueue
+
+# 自定义持久化队列（设置基础重试延迟与最大尝试次数）
+task_queue = PersistentTaskQueue(
+    db_path="./tasks.db",
+    base_delay_seconds=2.0,
+    max_attempts=3
+)
+
+engine = ERIIEngine(task_queue=task_queue)
 ```
 
 ---
@@ -238,24 +316,41 @@ E.R.I.I. 内置了独立的 REST API 服务，方便 Node.js, Go, Rust, Java, C#
 erii serve --host 0.0.0.0 --port 8000
 ```
 
-#### HTTP REST 端点：
+#### HTTP REST 端点大览：
 
-- `POST /api/v1/remember` - 记录对话交锋
-- `POST /api/v1/recall` - 召回 Format Context
-- `GET /api/v1/memory/monologue` - 获取心理独白/日记时间轴
-- `POST /api/v1/memory/thought` - 写入一条心理独白
+- `GET /api/v1/health` - 服务健康检查与组件运行状态
+- `POST /api/v1/remember` - 记录对话交锋 (触发后台异步归档)
+- `POST /api/v1/recall` - 召回格式化的 Prompt Context
+- `GET /api/v1/core_memory` / `POST /api/v1/core_memory` - 读取/设置核心人设记忆
+- `GET /api/v1/memory/monologue` - 获取第一人称心理独白/日记时间轴
+- `POST /api/v1/memory/thought` - 手动写入一条心理独白
 - `PATCH /api/v1/memory/thought/{node_id}/resolve` - 闭环/解开剧情悬念
+- `POST /api/v1/memory/export` - 导出 MemoryPack 数据快照
+- `POST /api/v1/memory/import` - 导入恢复 MemoryPack 数据
+- `GET /api/v1/tasks/status` - 查询后台归档任务队列各状态数量
+- `POST /api/v1/tasks/retry-failed` - 将失败死信任务重置恢复为 PENDING
 
-#### Node.js / cURL 示例：
+#### cURL 示例：
 
 ```bash
-# 获取日记时间轴
+# 1. 检查服务健康状态
+curl -X GET "http://localhost:8000/api/v1/health"
+
+# 2. 获取日记时间轴
 curl -X GET "http://localhost:8000/api/v1/memory/monologue?agent_id=sakura&user_id=player_1&visibility=public_log"
 
-# 闭环/解开叙事悬念
+# 3. 闭环/解开叙事悬念
 curl -X PATCH "http://localhost:8000/api/v1/memory/thought/NODE_ID_HERE/resolve" \
   -H "Content-Type: application/json" \
   -d '{"agent_id": "sakura", "user_id": "player_1"}'
+
+# 4. 导出 MemoryPack 备份
+curl -X POST "http://localhost:8000/api/v1/memory/export" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "sakura", "user_id": "player_1"}'
+
+# 5. 查询后台任务队列状态
+curl -X GET "http://localhost:8000/api/v1/tasks/status"
 ```
 
 ---
@@ -297,7 +392,11 @@ config = ERIIConfig(
 ## 🔮 路线图 (Roadmap)
 
 - [x] **v0.1.0**：双轨记忆（时间线+多维节点）、指数衰减与 Recall 强化、Callable 适配器、SQLite & File 驱动、REST API 服务。
-- [ ] **v0.2.0**：集成轻量向量插件（Chroma / Qdrant Adapter），实现“倒排关键词 + 语义向量”混合双路召回。
+- [x] **v0.2.0**：工程化与混合召回重磅更新：
+  - `(agent_id, user_id)` 细粒度并发读写隔离锁 + SQLite WAL 模式支持；
+  - `BaseTaskQueue` 与内置持久化任务队列（`PersistentTaskQueue`），支持大模型 API 调用失败指数退避重试；
+  - `MemoryPack` 便携数据打包规范，提供 `export_memory()` 和 `import_memory()` 实现存储驱动与环境无缝迁移；
+  - RRF (Reciprocal Rank Fusion) 倒数排名融合算法，结合纯 Python/Chroma 向量检索与关键词倒排。
 - [ ] **v0.3.0**：多 Agent 关系图谱与共享记忆网络 (Multi-Agent Shared Memory Graph)。
 - [ ] **v0.4.0**：Web UI 调试面板（可视化查看、修改和手动衰减 Agent 的记忆节点）。
 

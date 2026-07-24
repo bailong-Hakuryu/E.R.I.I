@@ -12,11 +12,15 @@ from erii.core.archiver import AsyncArchiverWorker
 from erii.core.budget import MemoryBudgetManager
 from erii.core.decay import MemoryDecayEvaluator
 from erii.core.retriever import MemoryRetriever
+from erii.core.queue.base import BaseTaskQueue
 from erii.models.config import ERIIConfig
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
+from erii.models.pack import MemoryPack
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 from erii.storage.file_storage import FileStorage
+from erii.vector.base import BaseEmbeddingProvider, BaseVectorStore
+from erii.vector.in_memory_vector import CallableEmbeddingAdapter, DummyEmbeddingProvider
 
 
 class DummyMockLLMAdapter(BaseLLMAdapter):
@@ -35,6 +39,9 @@ class ERIIEngine:
         llm: Optional[Union[BaseLLMAdapter, Callable[[str], str]]] = None,
         storage_driver: Optional[BaseStorage] = None,
         config: Optional[ERIIConfig] = None,
+        task_queue: Optional[BaseTaskQueue] = None,
+        vector_store: Optional[BaseVectorStore] = None,
+        embedding_provider: Optional[Union[BaseEmbeddingProvider, Callable[[str], List[float]]]] = None,
     ) -> None:
         """Initializes ERIIEngine.
 
@@ -43,6 +50,9 @@ class ERIIEngine:
             llm: LLM provider adapter or Python callable function.
             storage_driver: Custom storage driver instance (optional).
             config: ERIIConfig instance (optional).
+            task_queue: Custom BaseTaskQueue implementation (optional).
+            vector_store: BaseVectorStore instance for hybrid vector search (optional).
+            embedding_provider: BaseEmbeddingProvider or callable function (optional).
         """
         self.config = config or ERIIConfig(storage_dir=storage_dir)
 
@@ -60,7 +70,18 @@ class ERIIEngine:
         else:
             self.storage = FileStorage(root_dir=self.config.storage_dir)
 
-        # 3. Instantiate Sub-engines
+        # 3. Resolve Vector & Embedding Components
+        self.vector_store = vector_store
+        if callable(embedding_provider) and not isinstance(embedding_provider, BaseEmbeddingProvider):
+            self.embedding_provider: Optional[BaseEmbeddingProvider] = CallableEmbeddingAdapter(embedding_provider)
+        elif isinstance(embedding_provider, BaseEmbeddingProvider):
+            self.embedding_provider = embedding_provider
+        elif self.vector_store is not None:
+            self.embedding_provider = DummyEmbeddingProvider()
+        else:
+            self.embedding_provider = None
+
+        # 4. Instantiate Sub-engines
         self.decay_evaluator = MemoryDecayEvaluator(
             decay_rate=self.config.decay_rate,
             max_weight_cap=self.config.max_weight_cap,
@@ -72,12 +93,13 @@ class ERIIEngine:
             dynamic_budget=self.config.dynamic_budget,
         )
 
-        # 4. Instantiate Background Archiver Worker
+        # 5. Instantiate Background Archiver Worker
         self.archiver_worker = AsyncArchiverWorker(
             storage=self.storage,
             llm_adapter=self.llm_adapter,
             enable_sanitizer=self.config.enable_security_sanitizer,
             enable_pii_scrubbing=self.config.enable_pii_scrubbing,
+            task_queue=task_queue,
         )
 
     def remember(
@@ -149,9 +171,13 @@ class ERIIEngine:
         nodes = self.storage.load_nodes(clean_agent, clean_user)
         nodes = self.decay_evaluator.sweep_nodes(nodes)
 
-        # 2. Retrieve relevant nodes via Diversity Cap
+        # 2. Retrieve relevant nodes via RRF Hybrid Search & Diversity Cap
         selected_nodes = self.retriever.retrieve_relevant_nodes(
-            query=query, all_nodes=nodes, top_k=top_k
+            query=query,
+            all_nodes=nodes,
+            top_k=top_k,
+            vector_store=self.vector_store,
+            embedding_provider=self.embedding_provider,
         )
 
         # 3. Persist updated node access counts & reinforced scores
@@ -359,6 +385,84 @@ class ERIIEngine:
             self.storage.save_nodes(clean_agent, clean_user, nodes)
 
         return found
+
+    def export_memory(
+        self, agent_id: str, user_id: str, export_path: Optional[str] = None
+    ) -> MemoryPack:
+        """Exports memory for specified agent and user into a MemoryPack object."""
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+
+        nodes = self.storage.load_nodes(clean_agent, clean_user)
+        core_mem = self.storage.get_core_memory(clean_agent, clean_user)
+        timeline = self.storage.get_recent_timeline(clean_agent, clean_user, limit=1000)
+
+        raw_timeline = []
+        for line in timeline:
+            if line.startswith("[") and "]" in line:
+                idx = line.index("]")
+                ts = line[1:idx]
+                content = line[idx + 2 :]
+                raw_timeline.append({"timestamp": ts, "content": content})
+            else:
+                raw_timeline.append({"timestamp": "", "content": line})
+
+        pack = MemoryPack(
+            agent_id=clean_agent,
+            user_id=clean_user,
+            core_memory=core_mem,
+            nodes=nodes,
+            timeline=raw_timeline,
+        )
+
+        if export_path:
+            with open(export_path, "w", encoding="utf-8") as f:
+                f.write(pack.to_json())
+
+        return pack
+
+    def import_memory(
+        self,
+        pack_or_path: Union[MemoryPack, str, Dict[str, Any]],
+        agent_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        overwrite: bool = False,
+    ) -> MemoryPack:
+        """Imports a MemoryPack object or JSON file into storage."""
+        if isinstance(pack_or_path, str):
+            with open(pack_or_path, "r", encoding="utf-8") as f:
+                pack = MemoryPack.from_json(f.read())
+        elif isinstance(pack_or_path, dict):
+            pack = MemoryPack.from_dict(pack_or_path)
+        else:
+            pack = pack_or_path
+
+        target_agent = agent_id or pack.agent_id
+        target_user = user_id or pack.user_id
+
+        clean_agent = SecuritySanitizer.validate_key(target_agent, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(target_user, "user_id")
+
+        if overwrite:
+            existing_nodes = []
+        else:
+            existing_nodes = self.storage.load_nodes(clean_agent, clean_user)
+
+        node_map = {n.node_id: n for n in existing_nodes}
+        for n in pack.nodes:
+            node_map[n.node_id] = n
+
+        self.storage.save_nodes(clean_agent, clean_user, list(node_map.values()))
+
+        if pack.core_memory and (overwrite or not self.storage.get_core_memory(clean_agent, clean_user)):
+            self.storage.save_core_memory(clean_agent, clean_user, pack.core_memory)
+
+        for entry in pack.timeline:
+            self.storage.add_timeline_entry(
+                clean_agent, clean_user, entry.get("content", ""), entry.get("timestamp")
+            )
+
+        return pack
 
     def close(self) -> None:
         """Gracefully shuts down background archiver thread."""

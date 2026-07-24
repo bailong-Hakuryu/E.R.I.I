@@ -8,10 +8,13 @@ import json
 import logging
 import queue
 import threading
+import time
 import uuid
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Union
 
 from erii.adapters.base import BaseLLMAdapter
+from erii.core.queue.base import ArchivalTask, BaseTaskQueue
+from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.models.node import MemoryNode, MemoryState, MemoryType
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
@@ -56,6 +59,7 @@ Output strictly valid JSON with no markdown block formatting:
         llm_adapter: BaseLLMAdapter,
         enable_sanitizer: bool = True,
         enable_pii_scrubbing: bool = True,
+        task_queue: Optional[BaseTaskQueue] = None,
     ) -> None:
         """Initializes AsyncArchiverWorker.
 
@@ -64,20 +68,21 @@ Output strictly valid JSON with no markdown block formatting:
             llm_adapter: LLM adapter instance.
             enable_sanitizer: Anti-injection flag.
             enable_pii_scrubbing: PII scrubbing flag.
+            task_queue: BaseTaskQueue instance (optional).
         """
         self.storage = storage
         self.llm_adapter = llm_adapter
         self.enable_sanitizer = enable_sanitizer
         self.enable_pii_scrubbing = enable_pii_scrubbing
+        self.task_queue = task_queue or PersistentTaskQueue()
 
-        self.queue: queue.Queue = queue.Queue()
         self.running = True
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
 
     def push_task(
         self, agent_id: str, user_id: str, user_msg: str, bot_reply: str
-    ) -> None:
+    ) -> str:
         """Enqueues conversation turn for background archival.
 
         Args:
@@ -85,39 +90,46 @@ Output strictly valid JSON with no markdown block formatting:
             user_id: User identifier.
             user_msg: User message text.
             bot_reply: Bot response text.
+
+        Returns:
+            String task_id.
         """
-        self.queue.put({
-            "agent_id": agent_id,
-            "user_id": user_id,
-            "user_msg": user_msg,
-            "bot_reply": bot_reply,
-        })
+        return self.task_queue.enqueue(agent_id, user_id, user_msg, bot_reply)
 
     def shutdown(self) -> None:
         """Stops worker thread gracefully."""
         self.running = False
-        self.queue.put(None)
 
     def _worker_loop(self) -> None:
         """Main queue consumer loop running in background thread."""
         while self.running:
             try:
-                task = self.queue.get(timeout=1.0)
+                task = self.task_queue.dequeue()
                 if task is None:
-                    break
-                self._process_archival(task)
-                self.queue.task_done()
-            except queue.Empty:
-                continue
+                    time.sleep(0.2)
+                    continue
+                try:
+                    self._process_archival(task)
+                    self.task_queue.complete(task.task_id)
+                except Exception as ex:
+                    logger.error("Error processing archival task %s: %s", task.task_id, str(ex))
+                    self.task_queue.fail(task.task_id, str(ex))
             except Exception as e:
                 logger.error("Error in AsyncArchiverWorker loop: %s", str(e))
+                time.sleep(0.5)
 
-    def _process_archival(self, task: Dict[str, str]) -> None:
+    def _process_archival(self, task: Union[ArchivalTask, Dict[str, str]]) -> None:
         """Executes LLM extraction and persists memory nodes & timeline entries."""
-        agent_id = task["agent_id"]
-        user_id = task["user_id"]
-        user_msg = task["user_msg"]
-        bot_reply = task["bot_reply"]
+        if isinstance(task, ArchivalTask):
+            agent_id = task.agent_id
+            user_id = task.user_id
+            user_msg = task.user_msg
+            bot_reply = task.bot_reply
+        else:
+            agent_id = task["agent_id"]
+            user_id = task["user_id"]
+            user_msg = task["user_msg"]
+            bot_reply = task["bot_reply"]
 
         prompt = self.EXTRACTION_PROMPT.format(user_msg=user_msg, bot_reply=bot_reply)
 
