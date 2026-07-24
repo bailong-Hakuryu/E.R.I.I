@@ -28,13 +28,13 @@
 
 ---
 
-## 🌟 What's New in v0.3.0
+## What's New in v0.3.0
 
-- **🌐 全面 Unicode 国际化与双重安全屏障**：`SecuritySanitizer` 完美支持中文、日文等跨语言 Key 校验；底层持久化自动引入 SHA256 哈希目录隔离，规避文件系统编码异常。
-- **⏱️ 写入/召回双层绝对时空锚定 (Temporal Anchoring)**：后台归档自动识别“明天”、“昨天”等相对时间并锚定为绝对日期；召回 Prompt 自动格式化带有 `[YYYY-MM-DD (X天前)]` 相对时差，彻底解决时间感知断层。
-- **🔄 SQLite 事务级 Diff 物理全量同步**：`save_nodes` 重构为单事务全量清理，节点删改 100% 物理落盘与物理清除，解决废弃节点复活问题。
-- **🔒 规范化 ContextManager 生命周期管理**：支持 `with ERIIEngine(...)` 语法及显式 `close()` / `shutdown()`，后台 Worker 线程自动超时优雅回收。
-- **🔌 签名别名兼容装饰器**：`remember()` 方法支持 `user_msg` 等历史别名参数的平滑 fallback 兼容，极大地增强了接入容错率。
+- **Unicode 国际化与存储路径隔离**：`SecuritySanitizer` 支持中文、日文等多语言 Key 校验；文件存储增加 SHA256 哈希隔离，规避不同操作系统文件编码异常。
+- **双层绝对时空锚定 (Temporal Anchoring)**：归档提取自动识别相对时间并锚定为绝对日期；召回 Prompt 格式化带有 `[YYYY-MM-DD (X天前)]` 相对时差。
+- **SQLite 事务级 Diff 物理全量同步**：`save_nodes` 重构为单事务全量清理，节点删改同步物理落盘与物理擦除。
+- **ContextManager 生命周期管理**：支持 `with ERIIEngine(...) as engine:` 语法及显式 `close()` / `shutdown()` 资源回收。
+- **API 兼容扩展**：`remember()` 支持 `user_msg` 历史别名参数兼容。
 
 ---
 
@@ -422,11 +422,11 @@ config = ERIIConfig(
   - `MemoryPack` 便携数据打包规范，提供 `export_memory()` 和 `import_memory()` 实现存储驱动与环境无缝迁移；
   - RRF (Reciprocal Rank Fusion) 倒数排名融合算法，结合纯 Python/Chroma 向量检索与关键词倒排。
 - [x] **v0.3.0**：生产级稳定与时空体验更新：
-  - 🌐 全面 Unicode 跨语言 Key 支持与物理路径安全哈希隔离；
-  - ⏱️ 写入/召回双层绝对时空锚定（Temporal Anchoring），识别相对时间并拼接 `[YYYY-MM-DD (X天前)]`；
-  - 🔄 SQLite 事务级 Diff 物理全量同步，擦除废弃与淘汰节点；
-  - 🔒 规范化 ContextManager 语法 (`with ERIIEngine(...) as engine:`) 与优雅线程回收；
-  - 🔌 API 别名兼容装饰器（`remember(user_msg=...)` 平滑兼容）。
+  - 全面 Unicode 跨语言 Key 支持与物理路径安全哈希隔离；
+  - 写入/召回双层绝对时空锚定（Temporal Anchoring），识别相对时间并拼接 `[YYYY-MM-DD (X天前)]`；
+  - SQLite 事务级 Diff 物理全量同步，擦除废弃与淘汰节点；
+  - 规范化 ContextManager 语法 (`with ERIIEngine(...) as engine:`) 与优雅线程回收；
+  - API 别名兼容装饰器（`remember(user_msg=...)` 平滑兼容）。
 - [ ] **v0.4.0**：多 Agent 关系图谱与共享记忆网络 (Multi-Agent Shared Memory Graph)。
 - [ ] **v0.5.0**：Web UI 调试面板（可视化查看、修改和手动衰减 Agent 的记忆节点）。
 
