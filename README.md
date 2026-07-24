@@ -168,6 +168,11 @@ for entry in diary:
 # engine.resolve_thought("sakura", "player_1", node_id)
 ```
 
+> **提示**：运行内置范例支持通过 `--mode` 选项体验不同类型的心理独白：
+> - `python -m examples.04_inner_monologue_and_diary --mode A` （温馨治愈/深情感动）
+> - `python -m examples.04_inner_monologue_and_diary --mode B` （剧情悬疑/隐秘约定）
+> - `python -m examples.04_inner_monologue_and_diary --mode AB` （同时展现 A 与 B，默认）
+
 ---
 
 ### 3. 1 行代码通配任意 LLM (Custom Callable LLM Adapter)
