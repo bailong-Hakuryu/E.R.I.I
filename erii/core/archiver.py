@@ -28,7 +28,7 @@ class AsyncArchiverWorker:
     EXTRACTION_PROMPT = """You are an AI Memory Extraction Engine. Analyze the following conversation turn and extract structured long-term memories, first-person experience timeline entries, and first-person inner monologue/thought entries.
 
 CRITICAL LANGUAGE & TEMPORAL REQUIREMENTS:
-1. LANGUAGE: You MUST output all extracted text ("timeline_entry", "thought_entry.content", "impressions[].content") in the EXACT SAME LANGUAGE and language habits as used in the conversation turn (e.g., if the conversation is in English, output English; if in Chinese, output Chinese; if in Japanese, output Japanese). Do NOT translate into a different language.
+1. STRICT LANGUAGE MATCHING (DYNAMIC MULTI-LINGUAL): You MUST detect the language used in the conversation turn (English, Chinese, Japanese, Spanish, etc.) and output all extracted text ("timeline_entry", "thought_entry.content", "impressions[].content") in THAT EXACT SAME LANGUAGE. Never default to English if the user is speaking another language.
 2. TEMPORAL ANCHORING: When user or assistant mentions relative time expressions (such as "tomorrow", "yesterday", "next week", "明天", "昨天"), preserve the temporal context clearly so future recall correctly accounts for time progression across different days.
 
 Conversation Turn:
