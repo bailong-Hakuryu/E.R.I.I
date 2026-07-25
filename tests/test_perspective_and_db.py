@@ -72,5 +72,43 @@ class TestPerspectiveAndDatabaseAutoCreation(unittest.TestCase):
         self.assertTrue(len(saved_nodes) > 0)
         self.assertIn("白龙", saved_nodes[0].content)
 
+    def test_extraction_with_think_tags_and_markdown_blocks(self):
+        """Verify archiver correctly parses JSON when LLM output contains <think> tags and markdown blocks."""
+        worker = AsyncArchiverWorker.__new__(AsyncArchiverWorker)
+        worker.enable_sanitizer = False
+        worker.enable_pii_scrubbing = False
+        worker.storage = MagicMock()
+        worker.storage.load_nodes.return_value = []
+        worker.llm_adapter = MagicMock()
+
+        raw_llm_response = """<think>
+Reasoning chain from DeepSeek-V3.2...
+User said good night.
+</think>
+```json
+{
+  "timeline_entry": "我向 白龙 道晚安。",
+  "thought_entry": {
+    "content": "希望 白龙 做个好梦。",
+    "visibility": "public_log"
+  },
+  "impressions": []
+}
+```"""
+        worker.llm_adapter.generate.return_value = raw_llm_response
+
+        task = {
+            "agent_id": "Uesugi_Erii",
+            "user_id": "白龙",
+            "user_msg": "晚安",
+            "bot_reply": "晚安"
+        }
+
+        worker._process_archival(task)
+
+        worker.storage.add_timeline_entry.assert_called_once_with(
+            "Uesugi_Erii", "白龙", "我向 白龙 道晚安。"
+        )
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 import uuid
@@ -184,15 +185,20 @@ Output strictly valid JSON with no markdown block formatting:
             if not raw_response:
                 return
 
-            # Clean JSON markdown fences if present
-            clean_json_str = raw_response.strip()
-            if clean_json_str.startswith("```json"):
-                clean_json_str = clean_json_str[7:]
-            if clean_json_str.startswith("```"):
-                clean_json_str = clean_json_str[3:]
-            if clean_json_str.endswith("```"):
-                clean_json_str = clean_json_str[:-3]
-            clean_json_str = clean_json_str.strip()
+            # Clean reasoning <think> tags and JSON markdown fences
+            clean_json_str = re.sub(r"<think>.*?</think>", "", raw_response, flags=re.DOTALL).strip()
+            if "```" in clean_json_str:
+                match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", clean_json_str, flags=re.DOTALL)
+                if match:
+                    clean_json_str = match.group(1).strip()
+                else:
+                    match_obj = re.search(r"(\{.*\})", clean_json_str, flags=re.DOTALL)
+                    if match_obj:
+                        clean_json_str = match_obj.group(1).strip()
+            else:
+                match_obj = re.search(r"(\{.*\})", clean_json_str, flags=re.DOTALL)
+                if match_obj:
+                    clean_json_str = match_obj.group(1).strip()
 
             parsed = json.loads(clean_json_str)
 
