@@ -7,12 +7,25 @@ dataclasses represent the validated records that may be persisted and exported.
 from dataclasses import dataclass, field
 from enum import Enum
 import json
+import math
 from types import MappingProxyType
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from erii.models.relationship import RelationshipEvent, RelationshipEventType, utc_now
+from erii.models.temporal import (
+    OpenLoopResolution,
+    OpenLoopResolutionKind,
+    OpenLoopSpec,
+    PromiseCondition,
+    PromiseConditionConfirmation,
+    PromiseResolution,
+    PromiseResolutionKind,
+    PromiseResponsibleParty,
+    PromiseSpec,
+    WorldMoment,
+)
 
 
 def _freeze_json(value: Any) -> Any:
@@ -128,6 +141,213 @@ class BoundaryModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
 
+class WorldMomentCandidate(BoundaryModel):
+    """Strict candidate form of a host-verifiable World Moment."""
+
+    clock_id: str = Field(min_length=1, max_length=256)
+    display_value: str = Field(min_length=1, max_length=4000)
+    order_value: Optional[float] = None
+
+    @field_validator("order_value", mode="before")
+    @classmethod
+    def order_is_numeric(cls, value):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+        ):
+            raise ValueError("order_value must be numeric when supplied")
+        return value
+
+    @model_validator(mode="after")
+    def order_is_finite(self) -> "WorldMomentCandidate":
+        if self.order_value is not None and not math.isfinite(self.order_value):
+            raise ValueError("order_value must be finite")
+        return self
+
+    def to_durable(self) -> WorldMoment:
+        return WorldMoment(
+            clock_id=self.clock_id,
+            display_value=self.display_value,
+            order_value=self.order_value,
+        )
+
+
+class PromiseConditionCandidate(BoundaryModel):
+    """Strict candidate form of one Promise activation condition."""
+
+    condition_id: str = Field(min_length=1, max_length=256)
+    description: str = Field(min_length=1, max_length=4000)
+
+    def to_durable(self) -> PromiseCondition:
+        return PromiseCondition(
+            condition_id=self.condition_id,
+            description=self.description,
+        )
+
+
+class PromiseSpecCandidate(BoundaryModel):
+    """Strict untrusted candidate for a structured Promise event."""
+
+    payload_type: Literal["promise"] = "promise"
+    responsible_parties: List[PromiseResponsibleParty] = Field(min_length=1, max_length=2)
+    action: str = Field(min_length=1, max_length=8000)
+    due_at: Optional[WorldMomentCandidate] = None
+    activation_condition: Optional[PromiseConditionCandidate] = None
+
+    @model_validator(mode="after")
+    def parties_are_unique_and_canonical(self) -> "PromiseSpecCandidate":
+        if len(self.responsible_parties) != len(set(self.responsible_parties)):
+            raise ValueError("responsible_parties must not contain duplicates")
+        canonical = sorted(
+            self.responsible_parties,
+            key={PromiseResponsibleParty.AGENT: 0, PromiseResponsibleParty.USER: 1}.__getitem__,
+        )
+        if canonical != self.responsible_parties:
+            object.__setattr__(self, "responsible_parties", canonical)
+        return self
+
+    def to_durable(self) -> PromiseSpec:
+        return PromiseSpec(
+            responsible_parties=self.responsible_parties,
+            action=self.action,
+            due_at=self.due_at.to_durable() if self.due_at else None,
+            activation_condition=(
+                self.activation_condition.to_durable()
+                if self.activation_condition
+                else None
+            ),
+        )
+
+
+class PromiseConditionConfirmationCandidate(BoundaryModel):
+    """Strict candidate for append-only Promise activation evidence."""
+
+    payload_type: Literal["promise_condition_confirmed"] = (
+        "promise_condition_confirmed"
+    )
+    promise_event_id: str = Field(min_length=1, max_length=256)
+    condition_id: str = Field(min_length=1, max_length=256)
+    confirmed_at: Optional[WorldMomentCandidate] = None
+
+    def to_durable(self) -> PromiseConditionConfirmation:
+        return PromiseConditionConfirmation(
+            promise_event_id=self.promise_event_id,
+            condition_id=self.condition_id,
+            confirmed_at=self.confirmed_at.to_durable() if self.confirmed_at else None,
+        )
+
+
+class PromiseResolutionCandidate(BoundaryModel):
+    """Strict candidate for an append-only Promise resolution."""
+
+    payload_type: Literal["promise_resolution"] = "promise_resolution"
+    promise_event_id: str = Field(min_length=1, max_length=256)
+    resolution_kind: PromiseResolutionKind
+    resolved_at: Optional[WorldMomentCandidate] = None
+    superseding_promise_event_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+    )
+    note: Optional[str] = Field(default=None, min_length=1, max_length=4000)
+
+    @model_validator(mode="after")
+    def supersession_reference_is_consistent(self) -> "PromiseResolutionCandidate":
+        if self.resolution_kind == PromiseResolutionKind.SUPERSEDED:
+            if self.superseding_promise_event_id is None:
+                raise ValueError(
+                    "superseded Promise resolution requires superseding_promise_event_id"
+                )
+            if self.superseding_promise_event_id == self.promise_event_id:
+                raise ValueError("a Promise cannot supersede itself")
+        elif self.superseding_promise_event_id is not None:
+            raise ValueError(
+                "superseding_promise_event_id is only valid for a superseded resolution"
+            )
+        return self
+
+    def to_durable(self) -> PromiseResolution:
+        return PromiseResolution(
+            promise_event_id=self.promise_event_id,
+            resolution_kind=self.resolution_kind,
+            resolved_at=self.resolved_at.to_durable() if self.resolved_at else None,
+            superseding_promise_event_id=self.superseding_promise_event_id,
+            note=self.note,
+        )
+
+
+class OpenLoopSpecCandidate(BoundaryModel):
+    """Strict untrusted candidate for an Open Loop without responsibility."""
+
+    payload_type: Literal["open_loop"] = "open_loop"
+    subject: str = Field(min_length=1, max_length=8000)
+    expected_continuation: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=8000,
+    )
+    origin_memory_node_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+    )
+
+    def to_durable(self) -> OpenLoopSpec:
+        return OpenLoopSpec(
+            subject=self.subject,
+            expected_continuation=self.expected_continuation,
+            origin_memory_node_id=self.origin_memory_node_id,
+        )
+
+
+class OpenLoopResolutionCandidate(BoundaryModel):
+    """Strict candidate for an append-only Open Loop resolution."""
+
+    payload_type: Literal["open_loop_resolution"] = "open_loop_resolution"
+    open_loop_event_id: str = Field(min_length=1, max_length=256)
+    resolution_kind: OpenLoopResolutionKind
+    superseding_open_loop_event_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+    )
+    note: Optional[str] = Field(default=None, min_length=1, max_length=4000)
+
+    @model_validator(mode="after")
+    def supersession_reference_is_consistent(self) -> "OpenLoopResolutionCandidate":
+        if self.resolution_kind == OpenLoopResolutionKind.SUPERSEDED:
+            if self.superseding_open_loop_event_id is None:
+                raise ValueError(
+                    "superseded Open Loop resolution requires superseding_open_loop_event_id"
+                )
+            if self.superseding_open_loop_event_id == self.open_loop_event_id:
+                raise ValueError("an Open Loop cannot supersede itself")
+        elif self.superseding_open_loop_event_id is not None:
+            raise ValueError(
+                "superseding_open_loop_event_id is only valid for a superseded resolution"
+            )
+        return self
+
+    def to_durable(self) -> OpenLoopResolution:
+        return OpenLoopResolution(
+            open_loop_event_id=self.open_loop_event_id,
+            resolution_kind=self.resolution_kind,
+            superseding_open_loop_event_id=self.superseding_open_loop_event_id,
+            note=self.note,
+        )
+
+
+TemporalPayloadCandidate = Annotated[
+    Union[
+        PromiseSpecCandidate,
+        PromiseConditionConfirmationCandidate,
+        PromiseResolutionCandidate,
+        OpenLoopSpecCandidate,
+        OpenLoopResolutionCandidate,
+    ],
+    Field(discriminator="payload_type"),
+]
+
+
 class SourceMessage(BoundaryModel):
     """One transient message supplied by the host for evidence verification."""
 
@@ -145,7 +365,7 @@ class SourceTurn(BoundaryModel):
     revision: str = Field(default="1", min_length=1, max_length=64)
     messages: List[SourceMessage] = Field(min_length=1, max_length=32)
     extractor_version: str = Field(default="unspecified", min_length=1, max_length=128)
-    contract_version: str = Field(default="0.4.0a2", min_length=1, max_length=64)
+    contract_version: str = Field(default="0.4.0a4", min_length=1, max_length=64)
     processing_mode: SourceProcessingMode = SourceProcessingMode.NORMAL
     reprocessing_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
 
@@ -196,6 +416,7 @@ class RelationshipEventCandidate(BoundaryModel):
     event_type: RelationshipEventType
     summary: str = Field(min_length=1, max_length=4000)
     signal: RelationshipSignal
+    temporal_payload: Optional[TemporalPayloadCandidate] = None
     evidence: List[EvidenceCitation] = Field(min_length=1, max_length=16)
     occurred_at: Optional[str] = Field(default=None, min_length=1)
     occurrence_key: Optional[str] = Field(default=None, min_length=1, max_length=256)
@@ -216,6 +437,36 @@ class RelationshipEventCandidate(BoundaryModel):
         ]
         if len(evidence_keys) != len(set(evidence_keys)):
             raise ValueError("evidence citations must not contain duplicates")
+
+        expected_payload_types = {
+            RelationshipEventType.PROMISE: PromiseSpecCandidate,
+            RelationshipEventType.PROMISE_CONDITION_CONFIRMED: (
+                PromiseConditionConfirmationCandidate
+            ),
+            RelationshipEventType.PROMISE_RESOLUTION: PromiseResolutionCandidate,
+            RelationshipEventType.OPEN_LOOP: OpenLoopSpecCandidate,
+            RelationshipEventType.OPEN_LOOP_RESOLUTION: OpenLoopResolutionCandidate,
+        }
+        expected_payload_type = expected_payload_types.get(self.event_type)
+        if self.event_type == RelationshipEventType.PROMISE and self.temporal_payload is None:
+            # Legacy generic Promise candidates remain parseable.
+            pass
+        elif expected_payload_type is not None:
+            if not isinstance(self.temporal_payload, expected_payload_type):
+                raise ValueError(
+                    f"{self.event_type.value} requires "
+                    f"{expected_payload_type.__name__} temporal_payload"
+                )
+        elif self.temporal_payload is not None:
+            raise ValueError(
+                f"{self.event_type.value} candidates cannot contain temporal_payload"
+            )
+        if (
+            self.event_type == RelationshipEventType.PROMISE
+            and self.temporal_payload is not None
+            and self.signal.signal_type != RelationshipSignalType.COMMITMENT
+        ):
+            raise ValueError("structured Promise candidates require a commitment signal")
         return self
 
 

@@ -2,6 +2,30 @@
 
 本项目的用户可感知变化记录在此文件。版本遵循语义化版本；`0.x` 阶段仍可能出现受控的破坏性变更。
 
+## [0.4.0a4] - 2026-07-28
+
+### Added
+
+- 不可变 `WorldMoment`、类型化 Promise/Condition Confirmation、Open Loop，以及引用原事件的追加式 Resolution。
+- 可信宿主使用的 `record_promise()`、`confirm_promise_condition()`、`resolve_promise()`、`record_open_loop()` 与 `resolve_open_loop()`。
+- 不可信模型输入使用的严格时间 Candidate Schema、证据裁决支持，以及 `POST /api/v1/relationship/adjudicate`。
+- 同一 World Time 时钟内确定性派生的 `promise_due`、`promise_overdue` 与 `open_loop` Agent Private 召回信号。
+- 时间历史完整性校验：关系内引用、单次条件确认、单次解决、有效后继与无环 supersession。
+- MemoryPack `0.4.0a4` 对嵌套事件引用的完整性校验与跨用户重映射。
+- 完整可信宿主流程示例 `examples/08_temporal_commitments.py`。
+
+### Changed
+
+- 逾期只表示可比较时钟中的时间状态，不自动推断违约、扣减信任或追加关系事件。
+- 旧 `MemoryNode.is_unresolved` 仅作为低权威兼容信号；正式 Open Loop 可引用其来源并抑制重复投影。
+- 包版本升级为 `0.4.0a4`。
+
+### Compatibility
+
+- SQLite Schema 保持 v3，无需新增迁移；FileStorage 与现有 SQLite 数据继续可读。
+- 旧的无类型 Promise 关系事件继续可读，但只有类型化载荷参与新的时间信号投影。
+- 旧 MemoryPack 继续可读；只有 `0.4.0a4` 时间载荷需要满足新的引用完整性规则。
+
 ## [0.4.0a3] - 2026-07-28
 
 ### Added

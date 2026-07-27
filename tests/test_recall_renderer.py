@@ -97,11 +97,16 @@ def _private_result():
         occurred_at="2026-07-24T10:30:00Z",
     )
     signal = RecallSignalProjection(
-        **_projection_fields("signal-open", "derived_signal"),
+        **{
+            **_projection_fields("signal-open", "derived_signal"),
+            "source_id": "event-tea",
+        },
         signal_type="open_loop",
         summary="Signal: our unfinished story can be continued.",
+        subject_id="event-tea",
+        authority="formal_relationship_history",
+        reason="unresolved_formal_loop",
         source_event_ids=("event-tea",),
-        clock_id="dragon_world",
     )
     return RecallResult(
         agent_id="agent_lumi",

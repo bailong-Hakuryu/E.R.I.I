@@ -10,6 +10,7 @@ from erii.core.adjudication import list_complete_relationship_events
 from erii.core.persona_context import PersonaContextPlanner
 from erii.core.relationship import RelationshipProjector
 from erii.core.retriever import MemoryRetriever
+from erii.core.temporal import RecallSignalDeriver
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
 from erii.models.persona import PersonaCompilationStatus, PersonaManifest
 from erii.models.recall import (
@@ -24,6 +25,9 @@ from erii.models.recall import (
     RecallNoticeSeverity,
     RecallRequest,
     RecallResult,
+    RecallSignalAuthority,
+    RecallSignalProjection,
+    RecallSignalType,
     RecallSourceReference,
     ReinforcementReport,
     RelationshipMetric,
@@ -63,6 +67,7 @@ class _Candidate:
     value: object
     required: bool
     cost: int
+    priority: int = 3
 
 
 class RecallAssembler:
@@ -291,17 +296,29 @@ class RecallAssembler:
                     )
                 )
 
+        signal_projections: List[RecallSignalProjection] = []
+        if request.audience == RecallAudience.AGENT_PRIVATE and not legacy_compat:
+            signal_projections = list(
+                RecallSignalDeriver.derive(
+                    relationship_events,
+                    request.temporal_context.world_time,
+                    candidate_nodes,
+                )
+            )
+
         (
             persona_context,
             relationship_context,
             selected_memories,
             selected_events,
+            selected_signals,
             budget_report,
         ) = self._apply_budget(
             persona_context,
             relationship_context,
             memory_projections,
             event_projections,
+            signal_projections,
             request.options.budget.max_cost,
         )
 
@@ -328,6 +345,7 @@ class RecallAssembler:
             relationship_context=relationship_context,
             memories=tuple(selected_memories),
             events=tuple(selected_events),
+            signals=tuple(selected_signals),
             temporal_context=request.temporal_context,
             notices=tuple(notices),
             budget_report=budget_report,
@@ -511,12 +529,14 @@ class RecallAssembler:
         relationship: Optional[RelationshipRecallContext],
         memories: Sequence[MemoryRecallProjection],
         events: Sequence[EventRecallProjection],
+        signals: Sequence[RecallSignalProjection],
         max_cost: int,
     ) -> Tuple[
         Optional[PersonaRecallContext],
         Optional[RelationshipRecallContext],
         List[MemoryRecallProjection],
         List[EventRecallProjection],
+        List[RecallSignalProjection],
         BudgetReport,
     ]:
         candidates: List[_Candidate] = []
@@ -549,6 +569,18 @@ class RecallAssembler:
             candidates.append(_Candidate("memory", item, False, self._cost(item)))
         for item in events:
             candidates.append(_Candidate("event", item, False, self._cost(item)))
+        for item in signals:
+            if item.signal_type == RecallSignalType.PROMISE_OVERDUE:
+                priority = 0
+            elif item.signal_type == RecallSignalType.PROMISE_DUE:
+                priority = 1
+            elif item.authority == RecallSignalAuthority.FORMAL_RELATIONSHIP_HISTORY:
+                priority = 2
+            else:
+                priority = 4
+            candidates.append(
+                _Candidate("signal", item, False, self._cost(item), priority)
+            )
 
         required_cost = sum(item.cost for item in candidates if item.required)
         if required_cost > max_cost:
@@ -558,7 +590,11 @@ class RecallAssembler:
         }
         selected_cost = required_cost
         omissions: List[BudgetOmission] = []
-        for candidate in candidates:
+        ordered_candidates = sorted(
+            enumerate(candidates),
+            key=lambda indexed: (indexed[1].priority, indexed[0]),
+        )
+        for _index, candidate in ordered_candidates:
             projection = candidate.value
             if candidate.required:
                 continue
@@ -613,11 +649,15 @@ class RecallAssembler:
             item for item in memories if item.projection_id in selected_ids
         ]
         selected_events = [item for item in events if item.projection_id in selected_ids]
+        selected_signals = [
+            item for item in signals if item.projection_id in selected_ids
+        ]
         return (
             persona,
             relationship,
             selected_memories,
             selected_events,
+            selected_signals,
             BudgetReport(
                 estimator_id=getattr(
                     self.cost_estimator,

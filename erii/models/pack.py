@@ -16,7 +16,7 @@ from erii.models.relationship import RelationshipEvent, RelationshipProfile
 class MemoryPack:
     """Portable container data structure for agent/user memory export & import."""
 
-    CURRENT_VERSION = "0.4.0a3"
+    CURRENT_VERSION = "0.4.0a4"
 
     def __init__(
         self,

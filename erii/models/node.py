@@ -91,11 +91,11 @@ class MemoryNode:
         elapsed_seconds = (datetime.now() - last_time).total_seconds()
         elapsed_days = max(0.0, elapsed_seconds / 86400.0)
 
-        # Apply Zeigarnik Effect (Unresolved narrative hold-back) or Emotional Resonance Decay Curve
+        # Apply Emotional Resonance Decay Curve. Legacy ``is_unresolved`` is
+        # projected as a low-authority recall signal; it no longer grants
+        # permanent salience or bypasses ordinary decay.
         effective_decay_rate = decay_rate
-        if self.is_unresolved:
-            time_decay = 1.0  # Suspense holdback: active unresolved thoughts never decay
-        elif (
+        if (
             self.node_type in (MemoryType.THOUGHT, MemoryType.DIARY, MemoryType.EMOTION)
             and abs(self.emotional_score) >= 0.5
         ):
@@ -114,14 +114,12 @@ class MemoryNode:
 
         # Relationship / Thought boost
         relationship_boost = 0.2 if self.node_type == MemoryType.RELATIONSHIP else 0.0
-        unresolved_boost = 0.15 if self.is_unresolved else 0.0
 
         raw_score = (
             (self.base_importance * time_decay)
             + frequency_boost
             + emotional_boost
             + relationship_boost
-            + unresolved_boost
         )
 
         final_weight = max(0.0, min(max_weight_cap, round(raw_score, 4)))

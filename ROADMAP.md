@@ -41,12 +41,14 @@
 - 默认只读召回与显式 Recall Reinforcement；
 - SQLite Schema v3 与 MemoryPack `0.4.0a3`。
 
-### alpha.4：时间承诺与开放事项（下一阶段：`0.4.0a4`）
+### alpha.4：时间承诺与开放事项（已完成：`0.4.0a4`）
 
-- 到期承诺与未完成事件信号。
+- 类型化 Promise、Condition Confirmation 与 Open Loop；
 - Promise/Open Loop 的追加式 Resolution；
 - 同一 World Time 时钟内的到期与逾期判断；
-- 旧 `is_unresolved` 的低权威兼容投影。
+- 只读、带来源的 Agent Private 召回信号；
+- 旧 `is_unresolved` 的低权威兼容投影；
+- SQLite Schema 保持 v3，MemoryPack `0.4.0a4` 校验并重映射事件引用。
 
 ### beta.1：迁移与长期评测
 

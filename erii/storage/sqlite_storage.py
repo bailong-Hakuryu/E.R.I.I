@@ -36,6 +36,7 @@ from erii.models.relationship import (
     RelationshipProfile,
     utc_now,
 )
+from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 
@@ -625,7 +626,7 @@ class SQLiteStorage(BaseStorage):
 
     def append_relationship_event(self, event: RelationshipEvent) -> RelationshipEvent:
         """Appends an event once and rejects conflicting event ID reuse."""
-        with self.lock_manager.lock("__relationship_events__", event.relationship_id):
+        with self.lock_manager.lock("__relationship_history__", event.relationship_id):
             with closing(self._get_connection()) as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
@@ -648,6 +649,33 @@ class SQLiteStorage(BaseStorage):
                 if relationship is None:
                     conn.rollback()
                     raise ValueError("relationship event references an unknown relationship")
+
+                direct_rows = conn.execute(
+                    """
+                    SELECT data FROM relationship_events
+                    WHERE relationship_id = ? ORDER BY sequence ASC
+                    """,
+                    (event.relationship_id,),
+                ).fetchall()
+                adjudication_rows = conn.execute(
+                    """
+                    SELECT data FROM relationship_adjudications
+                    WHERE relationship_id = ? ORDER BY sequence ASC
+                    """,
+                    (event.relationship_id,),
+                ).fetchall()
+                existing_events = [
+                    RelationshipEvent.from_dict(json.loads(item["data"]))
+                    for item in direct_rows
+                ]
+                existing_events.extend(
+                    accepted_event
+                    for item in adjudication_rows
+                    for accepted_event in AdjudicationRecord.from_dict(
+                        json.loads(item["data"])
+                    ).events
+                )
+                TemporalHistoryValidator.validate_append(existing_events, event)
 
                 conn.execute(
                     """
@@ -684,10 +712,7 @@ class SQLiteStorage(BaseStorage):
     ) -> AdjudicationRecord:
         """Atomically persists one full candidate decision record."""
         receipt = record.receipt
-        with self.lock_manager.lock(
-            "__relationship_adjudication__",
-            receipt.relationship_id,
-        ):
+        with self.lock_manager.lock("__relationship_history__", receipt.relationship_id):
             with closing(self._get_connection()) as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
@@ -730,6 +755,37 @@ class SQLiteStorage(BaseStorage):
                 if relationship is None:
                     conn.rollback()
                     raise ValueError("adjudication references an unknown relationship")
+                direct_rows = conn.execute(
+                    """
+                    SELECT data FROM relationship_events
+                    WHERE relationship_id = ? ORDER BY sequence ASC
+                    """,
+                    (receipt.relationship_id,),
+                ).fetchall()
+                adjudication_rows = conn.execute(
+                    """
+                    SELECT data FROM relationship_adjudications
+                    WHERE relationship_id = ? ORDER BY sequence ASC
+                    """,
+                    (receipt.relationship_id,),
+                ).fetchall()
+                existing_events = [
+                    RelationshipEvent.from_dict(json.loads(item["data"]))
+                    for item in direct_rows
+                ]
+                existing_events.extend(
+                    accepted_event
+                    for item in adjudication_rows
+                    for accepted_event in AdjudicationRecord.from_dict(
+                        json.loads(item["data"])
+                    ).events
+                )
+                for accepted_event in record.events:
+                    TemporalHistoryValidator.validate_append(
+                        existing_events,
+                        accepted_event,
+                    )
+                    existing_events.append(accepted_event)
                 conn.execute(
                     """
                     INSERT INTO relationship_adjudications (

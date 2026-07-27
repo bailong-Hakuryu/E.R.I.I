@@ -24,6 +24,7 @@ from erii.core.adjudication import (
 from erii.core.relationship import RelationshipProjector
 from erii.core.persona_compilation import PersonaCompiler
 from erii.core.recall import RecallAssembler
+from erii.core.temporal_history import TemporalHistoryValidator
 from erii.core.queue.base import BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.models.config import ERIIConfig
@@ -61,6 +62,18 @@ from erii.models.relationship import (
     RelationshipProfile,
     RelationshipPremise,
     RelationshipSnapshot,
+)
+from erii.models.temporal import (
+    OpenLoopResolution,
+    OpenLoopResolutionKind,
+    OpenLoopSpec,
+    PromiseCondition,
+    PromiseConditionConfirmation,
+    PromiseResolution,
+    PromiseResolutionKind,
+    PromiseResponsibleParty,
+    PromiseSpec,
+    WorldMoment,
 )
 from erii.renderers.markdown import MarkdownRecallRenderer
 from erii.security.sanitizer import SecuritySanitizer
@@ -627,6 +640,201 @@ class ERIIEngine:
         )
         return self.storage.append_relationship_event(event)
 
+    def record_promise(
+        self,
+        agent_id: str,
+        user_id: str,
+        action: str,
+        responsible_parties: Sequence[Union[PromiseResponsibleParty, str]],
+        *,
+        due_at: Optional[Union[WorldMoment, Mapping[str, Any]]] = None,
+        activation_condition: Optional[
+            Union[PromiseCondition, Mapping[str, Any]]
+        ] = None,
+        content: Optional[str] = None,
+        occurred_at: Optional[str] = None,
+        event_id: Optional[str] = None,
+    ) -> RelationshipEvent:
+        """Appends one trusted, explicitly structured Promise.
+
+        This is a host-authority API. Untrusted model output must cross
+        ``adjudicate_relationship_candidates`` instead.
+        """
+        profile = self._require_relationship(agent_id, user_id, "recording a Promise")
+        payload = PromiseSpec(
+            responsible_parties=responsible_parties,
+            action=action,
+            due_at=due_at,
+            activation_condition=activation_condition,
+        )
+        return self._append_temporal_event(
+            profile,
+            RelationshipEvent(
+                event_id=event_id or str(uuid.uuid4()),
+                relationship_id=profile.relationship_id,
+                event_type=RelationshipEventType.PROMISE,
+                content=content or payload.action,
+                occurred_at=occurred_at,
+                temporal_payload=payload,
+            ),
+        )
+
+    def confirm_promise_condition(
+        self,
+        agent_id: str,
+        user_id: str,
+        promise_event_id: str,
+        condition_id: str,
+        *,
+        confirmed_at: Optional[Union[WorldMoment, Mapping[str, Any]]] = None,
+        content: Optional[str] = None,
+        occurred_at: Optional[str] = None,
+        event_id: Optional[str] = None,
+    ) -> RelationshipEvent:
+        """Appends evidence that a condition attached to one Promise occurred."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "confirming a Promise condition",
+        )
+        payload = PromiseConditionConfirmation(
+            promise_event_id=promise_event_id,
+            condition_id=condition_id,
+            confirmed_at=confirmed_at,
+        )
+        return self._append_temporal_event(
+            profile,
+            RelationshipEvent(
+                event_id=event_id or str(uuid.uuid4()),
+                relationship_id=profile.relationship_id,
+                event_type=RelationshipEventType.PROMISE_CONDITION_CONFIRMED,
+                content=content or f"Promise condition confirmed: {condition_id}",
+                occurred_at=occurred_at,
+                temporal_payload=payload,
+            ),
+        )
+
+    def resolve_promise(
+        self,
+        agent_id: str,
+        user_id: str,
+        promise_event_id: str,
+        resolution_kind: Union[PromiseResolutionKind, str],
+        *,
+        superseding_promise_event_id: Optional[str] = None,
+        resolved_at: Optional[Union[WorldMoment, Mapping[str, Any]]] = None,
+        note: Optional[str] = None,
+        content: Optional[str] = None,
+        occurred_at: Optional[str] = None,
+        event_id: Optional[str] = None,
+    ) -> RelationshipEvent:
+        """Resolves a Promise by appending history; the original remains unchanged."""
+        profile = self._require_relationship(agent_id, user_id, "resolving a Promise")
+        payload = PromiseResolution(
+            promise_event_id=promise_event_id,
+            resolution_kind=resolution_kind,
+            superseding_promise_event_id=superseding_promise_event_id,
+            resolved_at=resolved_at,
+            note=note,
+        )
+        return self._append_temporal_event(
+            profile,
+            RelationshipEvent(
+                event_id=event_id or str(uuid.uuid4()),
+                relationship_id=profile.relationship_id,
+                event_type=RelationshipEventType.PROMISE_RESOLUTION,
+                content=content or f"Promise resolved: {payload.resolution_kind.value}",
+                occurred_at=occurred_at,
+                temporal_payload=payload,
+            ),
+        )
+
+    def record_open_loop(
+        self,
+        agent_id: str,
+        user_id: str,
+        subject: str,
+        *,
+        expected_continuation: Optional[str] = None,
+        origin_memory_node_id: Optional[str] = None,
+        content: Optional[str] = None,
+        occurred_at: Optional[str] = None,
+        event_id: Optional[str] = None,
+    ) -> RelationshipEvent:
+        """Appends an unfinished matter without inventing a responsible party."""
+        profile = self._require_relationship(agent_id, user_id, "recording an Open Loop")
+        if origin_memory_node_id is not None:
+            nodes = self.storage.load_nodes(profile.agent_id, profile.user_id)
+            matching = [item for item in nodes if item.node_id == origin_memory_node_id]
+            if (
+                not matching
+                or not matching[0].is_unresolved
+                or not matching[0].is_latest
+            ):
+                raise ValueError(
+                    "origin_memory_node_id must identify an active unresolved memory "
+                    "for this pair"
+                )
+        payload = OpenLoopSpec(
+            subject=subject,
+            expected_continuation=expected_continuation,
+            origin_memory_node_id=origin_memory_node_id,
+        )
+        return self._append_temporal_event(
+            profile,
+            RelationshipEvent(
+                event_id=event_id or str(uuid.uuid4()),
+                relationship_id=profile.relationship_id,
+                event_type=RelationshipEventType.OPEN_LOOP,
+                content=content or payload.subject,
+                occurred_at=occurred_at,
+                temporal_payload=payload,
+            ),
+        )
+
+    def resolve_open_loop(
+        self,
+        agent_id: str,
+        user_id: str,
+        open_loop_event_id: str,
+        resolution_kind: Union[OpenLoopResolutionKind, str],
+        *,
+        superseding_open_loop_event_id: Optional[str] = None,
+        note: Optional[str] = None,
+        content: Optional[str] = None,
+        occurred_at: Optional[str] = None,
+        event_id: Optional[str] = None,
+    ) -> RelationshipEvent:
+        """Closes an Open Loop through a later immutable event."""
+        profile = self._require_relationship(agent_id, user_id, "resolving an Open Loop")
+        payload = OpenLoopResolution(
+            open_loop_event_id=open_loop_event_id,
+            resolution_kind=resolution_kind,
+            superseding_open_loop_event_id=superseding_open_loop_event_id,
+            note=note,
+        )
+        return self._append_temporal_event(
+            profile,
+            RelationshipEvent(
+                event_id=event_id or str(uuid.uuid4()),
+                relationship_id=profile.relationship_id,
+                event_type=RelationshipEventType.OPEN_LOOP_RESOLUTION,
+                content=content or f"Open Loop resolved: {payload.resolution_kind.value}",
+                occurred_at=occurred_at,
+                temporal_payload=payload,
+            ),
+        )
+
+    def _append_temporal_event(
+        self,
+        profile: RelationshipProfile,
+        event: RelationshipEvent,
+    ) -> RelationshipEvent:
+        """Validates temporal history before the storage-level atomic recheck."""
+        history = list_complete_relationship_events(self.storage, profile.relationship_id)
+        TemporalHistoryValidator.validate_append(history, event)
+        return self.storage.append_relationship_event(event)
+
     def adjudicate_relationship_candidates(
         self,
         agent_id: str,
@@ -1029,6 +1237,8 @@ class ERIIEngine:
         else:
             pack = pack_or_path
 
+        self._validate_temporal_pack(pack)
+
         target_agent = agent_id or pack.agent_id
         target_user = user_id or pack.user_id
 
@@ -1159,6 +1369,10 @@ class ERIIEngine:
                 if source_relationship_id == target_relationship_id:
                     return source_event
                 metadata = source_event.to_dict().get("metadata", {})
+                temporal_payload = self._remap_temporal_payload(
+                    source_event.temporal_payload,
+                    event_id_map,
+                )
                 adjudication = metadata.get("adjudication")
                 if isinstance(adjudication, dict):
                     if adjudication.get("decision_id"):
@@ -1177,6 +1391,11 @@ class ERIIEngine:
                             summary=source_event.content,
                             occurred_at=source_event.occurred_at,
                             occurrence_key=adjudication.get("occurrence_key"),
+                            temporal_payload=(
+                                temporal_payload.to_dict()
+                                if temporal_payload is not None
+                                else None
+                            ),
                         )
                     )
                 return replace(
@@ -1184,18 +1403,37 @@ class ERIIEngine:
                     event_id=event_id_map[source_event.event_id],
                     relationship_id=target_relationship_id,
                     metadata=metadata,
+                    temporal_payload=temporal_payload,
                 )
+
+            if source_relationship_id != target_relationship_id:
+                remapped_history = []
+                seen_remapped_source_ids = set()
+                for source_event in [
+                    *pack.relationship_events,
+                    *(
+                        event
+                        for record in pack.relationship_adjudications
+                        for event in record.events
+                    ),
+                ]:
+                    if source_event.event_id in seen_remapped_source_ids:
+                        continue
+                    seen_remapped_source_ids.add(source_event.event_id)
+                    remapped_history.append(remap_event(source_event))
+                TemporalHistoryValidator.validate_complete_history(remapped_history)
 
             adjudicated_event_ids = {
                 event.event_id
                 for record in pack.relationship_adjudications
                 for event in record.events
             }
-            for source_event in pack.relationship_events:
-                if source_event.event_id in adjudicated_event_ids:
-                    continue
-                self.storage.append_relationship_event(remap_event(source_event))
-
+            imported_direct_events = [
+                remap_event(source_event)
+                for source_event in pack.relationship_events
+                if source_event.event_id not in adjudicated_event_ids
+            ]
+            imported_records: List[AdjudicationRecord] = []
             for source_record in pack.relationship_adjudications:
                 if source_relationship_id == target_relationship_id:
                     imported_record = source_record
@@ -1232,7 +1470,13 @@ class ERIIEngine:
                         receipt=imported_receipt,
                         events=imported_events,
                     )
-                self.storage.commit_relationship_adjudication(imported_record)
+                imported_records.append(imported_record)
+
+            self._commit_relationship_import_history(
+                target_relationship_id,
+                imported_direct_events,
+                imported_records,
+            )
 
             for source_proposal in pack.persona_growth_proposals:
                 if source_relationship_id == target_relationship_id:
@@ -1259,6 +1503,198 @@ class ERIIEngine:
                 self.storage.save_persona_growth_proposal(imported_proposal)
 
         return pack
+
+    def _commit_relationship_import_history(
+        self,
+        relationship_id: str,
+        direct_events: Sequence[RelationshipEvent],
+        adjudications: Sequence[AdjudicationRecord],
+    ) -> None:
+        """Imports both journals in a stable order that satisfies temporal references.
+
+        Direct events and adjudicated events are stored in separate append-only
+        journals. A trusted resolution may therefore depend on an adjudicated
+        Promise (or the reverse). Importing one whole journal before the other
+        would reject a valid pack even though its causal target is present.
+        """
+        try:
+            existing = list_complete_relationship_events(self.storage, relationship_id)
+        except NotImplementedError:
+            existing = []
+        available_ids = {event.event_id for event in existing}
+        pending = [
+            ("event", event)
+            for event in direct_events
+        ] + [
+            ("adjudication", record)
+            for record in adjudications
+        ]
+        imported_events = [
+            event
+            for _unit_kind, unit in pending
+            for event in (
+                (unit,)
+                if isinstance(unit, RelationshipEvent)
+                else unit.events
+            )
+        ]
+        prerequisites = TemporalHistoryValidator.causal_prerequisites(imported_events)
+
+        while pending:
+            for index, (unit_kind, unit) in enumerate(pending):
+                unit_events = (
+                    (unit,)
+                    if isinstance(unit, RelationshipEvent)
+                    else unit.events
+                )
+                causal_ids = set(available_ids)
+                ready = True
+                for event in unit_events:
+                    references = prerequisites[event.event_id]
+                    if not references.issubset(causal_ids):
+                        ready = False
+                        break
+                    causal_ids.add(event.event_id)
+                if not ready:
+                    continue
+
+                if unit_kind == "event":
+                    self.storage.append_relationship_event(unit)
+                else:
+                    self.storage.commit_relationship_adjudication(unit)
+                available_ids.update(event.event_id for event in unit_events)
+                del pending[index]
+                break
+            else:
+                unresolved = sorted(
+                    {
+                        reference
+                        for _unit_kind, unit in pending
+                        for event in (
+                            (unit,)
+                            if isinstance(unit, RelationshipEvent)
+                            else unit.events
+                        )
+                        for reference in prerequisites[event.event_id]
+                        if reference not in available_ids
+                    }
+                )
+                raise ValueError(
+                    "MemoryPack relationship history has unresolved causal ordering"
+                    + (f": {', '.join(unresolved)}" if unresolved else "")
+                )
+
+    @staticmethod
+    def _temporal_reference_ids(event: RelationshipEvent) -> Sequence[str]:
+        payload = event.temporal_payload
+        if isinstance(payload, PromiseConditionConfirmation):
+            return (payload.promise_event_id,)
+        if isinstance(payload, PromiseResolution):
+            references = [payload.promise_event_id]
+            if payload.superseding_promise_event_id is not None:
+                references.append(payload.superseding_promise_event_id)
+            return tuple(references)
+        if isinstance(payload, OpenLoopResolution):
+            references = [payload.open_loop_event_id]
+            if payload.superseding_open_loop_event_id is not None:
+                references.append(payload.superseding_open_loop_event_id)
+            return tuple(references)
+        return ()
+
+    @classmethod
+    def _validate_temporal_pack(cls, pack: MemoryPack) -> None:
+        """Rejects incomplete or cross-relationship temporal graphs before import writes."""
+        ordered_events = []
+        by_id: Dict[str, RelationshipEvent] = {}
+        for event in [
+            *pack.relationship_events,
+            *(
+                accepted
+                for record in pack.relationship_adjudications
+                for accepted in record.events
+            ),
+        ]:
+            existing = by_id.get(event.event_id)
+            if existing is not None:
+                if not existing.same_payload_as(event):
+                    raise ValueError(
+                        f"MemoryPack event_id {event.event_id!r} has conflicting payloads"
+                    )
+                continue
+            by_id[event.event_id] = event
+            ordered_events.append(event)
+
+        temporal_events = [
+            event for event in ordered_events if event.temporal_payload is not None
+        ]
+        if not temporal_events:
+            return
+        if pack.relationship is None:
+            raise ValueError("MemoryPack temporal history requires a relationship profile")
+        relationship_id = pack.relationship.relationship_id
+        if any(event.relationship_id != relationship_id for event in ordered_events):
+            raise ValueError("MemoryPack relationship history crosses relationship boundaries")
+        all_ids = set(by_id)
+        memory_node_ids = {node.node_id for node in pack.nodes}
+        for event in temporal_events:
+            missing = set(cls._temporal_reference_ids(event)).difference(all_ids)
+            if missing:
+                raise ValueError(
+                    "MemoryPack temporal event references missing source events: "
+                    + ", ".join(sorted(missing))
+                )
+            payload = event.temporal_payload
+            if (
+                isinstance(payload, OpenLoopSpec)
+                and payload.origin_memory_node_id is not None
+                and payload.origin_memory_node_id not in memory_node_ids
+            ):
+                # Existence is the portability invariant. The legacy node may
+                # legitimately have been resolved or superseded after the formal
+                # Open Loop captured its historical provenance.
+                raise ValueError(
+                    "MemoryPack Open Loop references a missing origin memory node: "
+                    + payload.origin_memory_node_id
+                )
+        TemporalHistoryValidator.validate_complete_history(ordered_events)
+
+    @staticmethod
+    def _remap_temporal_payload(payload, event_id_map: Mapping[str, str]):
+        """Remaps every relationship-event reference in one temporal payload."""
+        if payload is None or isinstance(payload, (PromiseSpec, OpenLoopSpec)):
+            return payload
+
+        def mapped(source_id: str) -> str:
+            try:
+                return event_id_map[source_id]
+            except KeyError as exc:
+                raise ValueError(
+                    "MemoryPack temporal payload references an event outside the pack"
+                ) from exc
+
+        if isinstance(payload, PromiseConditionConfirmation):
+            return replace(payload, promise_event_id=mapped(payload.promise_event_id))
+        if isinstance(payload, PromiseResolution):
+            return replace(
+                payload,
+                promise_event_id=mapped(payload.promise_event_id),
+                superseding_promise_event_id=(
+                    mapped(payload.superseding_promise_event_id)
+                    if payload.superseding_promise_event_id is not None
+                    else None
+                ),
+            )
+        if isinstance(payload, OpenLoopResolution):
+            return replace(
+                payload,
+                open_loop_event_id=mapped(payload.open_loop_event_id),
+                superseding_open_loop_event_id=(
+                    mapped(payload.superseding_open_loop_event_id)
+                    if payload.superseding_open_loop_event_id is not None
+                    else None
+                ),
+            )
+        raise ValueError("unsupported temporal payload in MemoryPack")
 
     def _import_persona_compilation(
         self,

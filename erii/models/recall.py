@@ -12,7 +12,7 @@ from enum import Enum
 import json
 from typing import Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class RecallModel(BaseModel):
@@ -65,12 +65,53 @@ class RecallNoticeSeverity(str, Enum):
     WARNING = "warning"
 
 
+class RecallSignalType(str, Enum):
+    """Kinds of current, side-effect-free temporal recall signals."""
+
+    PROMISE_DUE = "promise_due"
+    PROMISE_OVERDUE = "promise_overdue"
+    OPEN_LOOP = "open_loop"
+
+
+class RecallSignalAuthority(str, Enum):
+    """Authority of the history source from which a signal was derived."""
+
+    FORMAL_RELATIONSHIP_HISTORY = "formal_relationship_history"
+    LEGACY_UNRESOLVED_MEMORY = "legacy_unresolved_memory"
+
+
+class RecallSignalReason(str, Enum):
+    """Exact deterministic condition that caused a signal to exist."""
+
+    AT_DEADLINE = "at_deadline"
+    PAST_DEADLINE = "past_deadline"
+    CONDITION_CONFIRMED = "condition_confirmed"
+    UNRESOLVED_FORMAL_LOOP = "unresolved_formal_loop"
+    LEGACY_UNRESOLVED_FLAG = "legacy_unresolved_flag"
+
+
 class WorldTime(RecallModel):
     """An explicit time value in one host-owned fictional or real clock."""
 
     clock_id: str = Field(min_length=1, max_length=256)
     display_value: str = Field(min_length=1, max_length=4000)
     order_value: Optional[float] = None
+
+    @field_validator("clock_id", "display_value", mode="before")
+    @classmethod
+    def text_fields_are_normalized(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("WorldTime text fields must be non-empty strings")
+        return value.strip()
+
+    @field_validator("order_value", mode="before")
+    @classmethod
+    def order_value_is_explicitly_numeric(cls, value):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, (int, float))
+        ):
+            raise ValueError("order_value must be numeric when supplied")
+        return value
 
 
 class RecallTemporalContext(RecallModel):
@@ -208,17 +249,100 @@ class RelationshipRecallContext(RecallModel):
 
 
 class RecallSignalProjection(RecallProjection):
-    """A derived, side-effect-free signal slot populated by later releases."""
+    """One provenance-complete, side-effect-free current signal."""
 
-    signal_type: str = Field(min_length=1, max_length=128)
+    signal_type: RecallSignalType
     summary: str = Field(min_length=1, max_length=200_000)
+    subject_id: str = Field(min_length=1, max_length=256)
+    authority: RecallSignalAuthority
+    reason: RecallSignalReason
     source_event_ids: Tuple[str, ...] = Field(default_factory=tuple)
+    source_memory_ids: Tuple[str, ...] = Field(default_factory=tuple)
+    due_world_time: Optional[WorldTime] = None
+    condition_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    # Retained as a compact compatibility/indexing field. When a deadline is
+    # present it must name the exact same clock.
     clock_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
 
     @model_validator(mode="after")
-    def event_ids_are_unique(self) -> "RecallSignalProjection":
+    def provenance_and_signal_shape_are_consistent(self) -> "RecallSignalProjection":
         if len(self.source_event_ids) != len(set(self.source_event_ids)):
             raise ValueError("source_event_ids must not contain duplicates")
+        if len(self.source_memory_ids) != len(set(self.source_memory_ids)):
+            raise ValueError("source_memory_ids must not contain duplicates")
+        if self.visibility != RecallAudience.AGENT_PRIVATE:
+            raise ValueError("temporal recall signals are agent-private in schema version 1")
+        if self.source_id != self.subject_id:
+            raise ValueError("signal source_id must identify its subject")
+
+        if self.authority == RecallSignalAuthority.FORMAL_RELATIONSHIP_HISTORY:
+            if not self.source_event_ids or self.source_memory_ids:
+                raise ValueError(
+                    "formal signals require event provenance and cannot name legacy memories"
+                )
+            if self.source_event_ids[0] != self.subject_id:
+                raise ValueError("formal signal subject must be its first source event")
+        else:
+            if not self.source_memory_ids or self.source_event_ids:
+                raise ValueError(
+                    "legacy signals require memory provenance and cannot name formal events"
+                )
+            if self.source_memory_ids != (self.subject_id,):
+                raise ValueError("legacy signal subject must be its only source memory")
+            if (
+                self.signal_type != RecallSignalType.OPEN_LOOP
+                or self.reason != RecallSignalReason.LEGACY_UNRESOLVED_FLAG
+            ):
+                raise ValueError("legacy unresolved memories can only derive legacy open loops")
+
+        if self.due_world_time is not None:
+            if self.clock_id != self.due_world_time.clock_id:
+                raise ValueError("clock_id must match due_world_time.clock_id")
+        elif self.clock_id is not None:
+            raise ValueError("clock_id requires due_world_time")
+
+        if self.signal_type == RecallSignalType.PROMISE_OVERDUE:
+            if (
+                self.reason != RecallSignalReason.PAST_DEADLINE
+                or self.due_world_time is None
+                or self.due_world_time.order_value is None
+            ):
+                raise ValueError("promise_overdue requires a comparable past deadline")
+        elif self.signal_type == RecallSignalType.PROMISE_DUE:
+            if self.reason == RecallSignalReason.AT_DEADLINE:
+                if (
+                    self.due_world_time is None
+                    or self.due_world_time.order_value is None
+                ):
+                    raise ValueError("deadline-based promise_due requires a comparable deadline")
+            elif self.reason == RecallSignalReason.CONDITION_CONFIRMED:
+                if self.condition_id is None:
+                    raise ValueError("condition-based promise_due requires condition_id")
+                if self.due_world_time is not None:
+                    raise ValueError(
+                        "condition-based promise_due cannot carry a deadline"
+                    )
+            else:
+                raise ValueError("promise_due has an incompatible derivation reason")
+        elif self.reason not in {
+            RecallSignalReason.UNRESOLVED_FORMAL_LOOP,
+            RecallSignalReason.LEGACY_UNRESOLVED_FLAG,
+        }:
+            raise ValueError("open_loop has an incompatible derivation reason")
+
+        if self.condition_id is not None and len(self.source_event_ids) < 2:
+            raise ValueError(
+                "condition-backed promise signal requires its confirmation event"
+            )
+        if self.signal_type == RecallSignalType.OPEN_LOOP:
+            if self.due_world_time is not None or self.condition_id is not None:
+                raise ValueError("open_loop cannot carry promise timing or condition fields")
+            if (
+                self.authority
+                == RecallSignalAuthority.FORMAL_RELATIONSHIP_HISTORY
+                and self.reason != RecallSignalReason.UNRESOLVED_FORMAL_LOOP
+            ):
+                raise ValueError("formal open_loop requires unresolved_formal_loop reason")
         return self
 
 

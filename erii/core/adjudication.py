@@ -37,6 +37,17 @@ from erii.models.relationship import (
     RelationshipProfile,
     utc_now,
 )
+from erii.models.temporal import (
+    OpenLoopResolution,
+    OpenLoopResolutionKind,
+    OpenLoopSpec,
+    PromiseConditionConfirmation,
+    PromiseResolution,
+    PromiseResolutionKind,
+    PromiseResponsibleParty,
+    PromiseSpec,
+    TemporalPayload,
+)
 from erii.storage.base import BaseStorage
 
 
@@ -45,6 +56,10 @@ MIN_EXTRACTION_CONFIDENCE = 0.5
 MIN_STATE_CONFIDENCE = 0.7
 MIN_REFLECTION_CONFIDENCE = 0.8
 MIN_PIVOTAL_CONFIDENCE = 0.9
+MIN_PROMISE_EXTRACTION_CONFIDENCE = 0.8
+MIN_PROMISE_INTERPRETATION_CONFIDENCE = 0.8
+MIN_TEMPORAL_EXTRACTION_CONFIDENCE = 0.8
+MIN_TEMPORAL_INTERPRETATION_CONFIDENCE = 0.8
 
 _STRENGTH_MULTIPLIERS = {
     SignalStrength.WEAK: 0.5,
@@ -139,6 +154,34 @@ def _canonical_hash(value: object) -> str:
     return _sha256_text(payload)
 
 
+def canonical_temporal_payload(value: Optional[object]) -> Optional[object]:
+    """Returns one JSON-compatible temporal payload for stable identities.
+
+    The helper accepts both the untrusted Pydantic candidate values and the
+    frozen durable values used by relationship events.  Keeping this
+    normalization beside the occurrence hash gives imports and adjudication
+    one canonical identity rule without coupling them to a concrete payload
+    class.
+    """
+    if value is None:
+        return None
+    if hasattr(value, "to_dict"):
+        value = value.to_dict()
+    elif hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")
+    try:
+        return json.loads(
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("temporal payload must be JSON-compatible") from exc
+
+
 def _normalized_summary(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().casefold())
 
@@ -161,6 +204,7 @@ def relationship_occurrence_fingerprint(
     summary: str,
     occurred_at: Optional[str],
     occurrence_key: Optional[str] = None,
+    temporal_payload: Optional[object] = None,
 ) -> str:
     """Builds the portable semantic identity used for conservative occurrence dedup."""
     if occurrence_key is not None:
@@ -171,6 +215,9 @@ def relationship_occurrence_fingerprint(
             "occurred_at": occurred_at,
             "summary": _normalized_summary(summary),
         }
+    canonical_temporal = canonical_temporal_payload(temporal_payload)
+    if canonical_temporal is not None:
+        occurrence["temporal_payload"] = canonical_temporal
     return _canonical_hash({"relationship_id": relationship_id, "occurrence": occurrence})
 
 
@@ -515,6 +562,113 @@ class RelationshipAdjudicator:
                 DecisionOutcome.IGNORED,
                 ["low_extraction_confidence"],
             )
+
+        temporal_payload: Optional[TemporalPayload] = (
+            candidate.temporal_payload.to_durable()
+            if candidate.temporal_payload is not None
+            else None
+        )
+        if isinstance(temporal_payload, PromiseSpec):
+            if (
+                candidate.signal.extraction_confidence
+                < MIN_PROMISE_EXTRACTION_CONFIDENCE
+            ):
+                return self._receipt_record(
+                    profile,
+                    source_turn,
+                    candidate,
+                    policy,
+                    fingerprint,
+                    batch_fingerprint,
+                    DecisionOutcome.IGNORED,
+                    ["low_promise_extraction_confidence"],
+                )
+            if (
+                candidate.signal.interpretation_confidence
+                < MIN_PROMISE_INTERPRETATION_CONFIDENCE
+            ):
+                return self._receipt_record(
+                    profile,
+                    source_turn,
+                    candidate,
+                    policy,
+                    fingerprint,
+                    batch_fingerprint,
+                    DecisionOutcome.IGNORED,
+                    ["low_promise_interpretation_confidence"],
+                )
+            evidenced_roles = {item.role for item in evidence}
+            required_roles = {
+                PromiseResponsibleParty.AGENT: SourceRole.AGENT,
+                PromiseResponsibleParty.USER: SourceRole.USER,
+            }
+            missing_parties = [
+                party.value
+                for party in temporal_payload.responsible_parties
+                if required_roles[party] not in evidenced_roles
+            ]
+            if missing_parties:
+                return self._receipt_record(
+                    profile,
+                    source_turn,
+                    candidate,
+                    policy,
+                    fingerprint,
+                    batch_fingerprint,
+                    DecisionOutcome.REJECTED,
+                    [
+                        "promise_responsible_party_not_evidenced:"
+                        + ",".join(missing_parties)
+                    ],
+                )
+        elif temporal_payload is not None:
+            if (
+                candidate.signal.extraction_confidence
+                < MIN_TEMPORAL_EXTRACTION_CONFIDENCE
+            ):
+                return self._receipt_record(
+                    profile,
+                    source_turn,
+                    candidate,
+                    policy,
+                    fingerprint,
+                    batch_fingerprint,
+                    DecisionOutcome.IGNORED,
+                    ["low_temporal_extraction_confidence"],
+                )
+            if (
+                candidate.signal.interpretation_confidence
+                < MIN_TEMPORAL_INTERPRETATION_CONFIDENCE
+            ):
+                return self._receipt_record(
+                    profile,
+                    source_turn,
+                    candidate,
+                    policy,
+                    fingerprint,
+                    batch_fingerprint,
+                    DecisionOutcome.IGNORED,
+                    ["low_temporal_interpretation_confidence"],
+                )
+        if temporal_payload is not None:
+            lifecycle_reasons = []
+            if candidate.persona_reflection is not None:
+                lifecycle_reasons.append(
+                    "temporal_lifecycle_cannot_include_persona_reflection"
+                )
+            if candidate.growth_trigger != GrowthTriggerKind.NONE:
+                lifecycle_reasons.append("temporal_lifecycle_cannot_trigger_growth")
+            if lifecycle_reasons:
+                return self._receipt_record(
+                    profile,
+                    source_turn,
+                    candidate,
+                    policy,
+                    fingerprint,
+                    batch_fingerprint,
+                    DecisionOutcome.REJECTED,
+                    lifecycle_reasons,
+                )
         if candidate.event_type not in _SIGNAL_EVENT_TYPES[candidate.signal.signal_type]:
             return self._receipt_record(
                 profile,
@@ -527,14 +681,32 @@ class RelationshipAdjudicator:
                 ["signal_event_type_mismatch"],
             )
 
+        temporal_error, temporal_references = self._validate_temporal_targets(
+            profile,
+            temporal_payload,
+            events_by_id,
+        )
+        if temporal_error is not None:
+            return self._receipt_record(
+                profile,
+                source_turn,
+                candidate,
+                policy,
+                fingerprint,
+                batch_fingerprint,
+                DecisionOutcome.REJECTED,
+                [temporal_error],
+            )
+
         effective_occurred_at = self._effective_occurred_at(candidate, evidence)
         occurrence_fingerprint = self._occurrence_fingerprint(
             profile,
             candidate,
             effective_occurred_at,
+            temporal_payload,
         )
         duplicate = occurrence_events.get(occurrence_fingerprint)
-        if duplicate is None:
+        if duplicate is None and temporal_payload is None:
             duplicate = next(
                 (
                     event
@@ -564,12 +736,32 @@ class RelationshipAdjudicator:
                 occurrence_fingerprint=occurrence_fingerprint,
             )
 
+        terminal_error = self._validate_temporal_terminal_transition(
+            temporal_payload,
+            events_by_id,
+        )
+        if terminal_error is not None:
+            return self._receipt_record(
+                profile,
+                source_turn,
+                candidate,
+                policy,
+                fingerprint,
+                batch_fingerprint,
+                DecisionOutcome.REJECTED,
+                [terminal_error],
+                occurrence_fingerprint=occurrence_fingerprint,
+            )
+
         reasons: List[str] = []
         valid_references = [
             event_id for event_id in candidate.references if event_id in events_by_id
         ]
         if len(valid_references) != len(candidate.references):
             reasons.append("unresolved_references_removed")
+        for event_id in temporal_references:
+            if event_id not in valid_references:
+                valid_references.append(event_id)
 
         state_delta: Mapping[str, float] = {}
         has_interaction_evidence = any(
@@ -577,6 +769,9 @@ class RelationshipAdjudicator:
         )
         if not has_interaction_evidence:
             reasons.append("non_interaction_evidence_not_applied")
+        elif temporal_payload is not None:
+            # Temporal lifecycle never mutates relationship state by itself.
+            pass
         elif candidate.signal.interpretation_confidence >= MIN_STATE_CONFIDENCE:
             state_delta = self._state_delta(candidate, policy)
         else:
@@ -602,6 +797,7 @@ class RelationshipAdjudicator:
             relationship_id=profile.relationship_id,
             event_type=candidate.event_type,
             content=candidate.summary,
+            temporal_payload=temporal_payload,
             state_delta=state_delta,
             occurred_at=effective_occurred_at,
             metadata={
@@ -856,18 +1052,262 @@ class RelationshipAdjudicator:
             )
         )
 
+    def _validate_temporal_targets(
+        self,
+        profile: RelationshipProfile,
+        payload: Optional[TemporalPayload],
+        events_by_id: Mapping[str, RelationshipEvent],
+    ) -> Tuple[Optional[str], Tuple[str, ...]]:
+        """Validates typed target references before an event can enter history."""
+
+        def target_event(
+            event_id: str,
+            expected_type: RelationshipEventType,
+            expected_payload_type: type,
+            label: str,
+        ) -> Tuple[Optional[RelationshipEvent], Optional[str]]:
+            event = events_by_id.get(event_id)
+            if event is None:
+                return None, f"{label}_target_not_found"
+            if event.relationship_id != profile.relationship_id:
+                return None, f"{label}_target_relationship_mismatch"
+            if event.event_type != expected_type or not isinstance(
+                event.temporal_payload,
+                expected_payload_type,
+            ):
+                return None, f"{label}_target_not_structured"
+            return event, None
+
+        if isinstance(payload, OpenLoopSpec) and payload.origin_memory_node_id is not None:
+            origin = next(
+                (
+                    node
+                    for node in self._storage.load_nodes(profile.agent_id, profile.user_id)
+                    if node.node_id == payload.origin_memory_node_id
+                ),
+                None,
+            )
+            if origin is None:
+                return "open_loop_origin_memory_not_found", ()
+            if not origin.is_unresolved or not origin.is_latest:
+                return "open_loop_origin_memory_not_active", ()
+            if any(
+                isinstance(event.temporal_payload, OpenLoopSpec)
+                and event.temporal_payload.origin_memory_node_id
+                == payload.origin_memory_node_id
+                for event in events_by_id.values()
+            ):
+                return "open_loop_origin_already_formalized", ()
+            return None, ()
+
+        if isinstance(payload, PromiseConditionConfirmation):
+            target, error = target_event(
+                payload.promise_event_id,
+                RelationshipEventType.PROMISE,
+                PromiseSpec,
+                "promise_condition",
+            )
+            if error is not None:
+                return error, ()
+            promise = target.temporal_payload
+            if promise.activation_condition is None:
+                return "promise_has_no_activation_condition", ()
+            if promise.activation_condition.condition_id != payload.condition_id:
+                return "promise_condition_id_mismatch", ()
+            return None, (payload.promise_event_id,)
+
+        if isinstance(payload, PromiseResolution):
+            _, error = target_event(
+                payload.promise_event_id,
+                RelationshipEventType.PROMISE,
+                PromiseSpec,
+                "promise_resolution",
+            )
+            if error is not None:
+                return error, ()
+            references = [payload.promise_event_id]
+            if payload.superseding_promise_event_id is not None:
+                _, error = target_event(
+                    payload.superseding_promise_event_id,
+                    RelationshipEventType.PROMISE,
+                    PromiseSpec,
+                    "superseding_promise",
+                )
+                if error is not None:
+                    return error, ()
+                references.append(payload.superseding_promise_event_id)
+            return None, tuple(references)
+
+        if isinstance(payload, OpenLoopResolution):
+            _, error = target_event(
+                payload.open_loop_event_id,
+                RelationshipEventType.OPEN_LOOP,
+                OpenLoopSpec,
+                "open_loop_resolution",
+            )
+            if error is not None:
+                return error, ()
+            references = [payload.open_loop_event_id]
+            if payload.superseding_open_loop_event_id is not None:
+                _, error = target_event(
+                    payload.superseding_open_loop_event_id,
+                    RelationshipEventType.OPEN_LOOP,
+                    OpenLoopSpec,
+                    "superseding_open_loop",
+                )
+                if error is not None:
+                    return error, ()
+                references.append(payload.superseding_open_loop_event_id)
+            return None, tuple(references)
+
+        return None, ()
+
+    @staticmethod
+    def _promise_condition_confirmation_for(
+        promise_event_id: str,
+        condition_id: str,
+        events_by_id: Mapping[str, RelationshipEvent],
+    ) -> Optional[PromiseConditionConfirmation]:
+        return next(
+            (
+                event.temporal_payload
+                for event in events_by_id.values()
+                if isinstance(event.temporal_payload, PromiseConditionConfirmation)
+                and event.temporal_payload.promise_event_id == promise_event_id
+                and event.temporal_payload.condition_id == condition_id
+            ),
+            None,
+        )
+
+    @classmethod
+    def _validate_temporal_terminal_transition(
+        cls,
+        payload: Optional[TemporalPayload],
+        events_by_id: Mapping[str, RelationshipEvent],
+    ) -> Optional[str]:
+        """Rejects conflicting terminal decisions and supersession cycles."""
+        if isinstance(payload, PromiseConditionConfirmation):
+            if cls._promise_resolution_for(payload.promise_event_id, events_by_id):
+                return "promise_already_resolved"
+            if cls._promise_condition_confirmation_for(
+                payload.promise_event_id,
+                payload.condition_id,
+                events_by_id,
+            ):
+                return "promise_condition_already_confirmed"
+            return None
+        if isinstance(payload, PromiseResolution):
+            if cls._promise_resolution_for(payload.promise_event_id, events_by_id):
+                return "promise_already_resolved"
+            if (
+                payload.resolution_kind == PromiseResolutionKind.SUPERSEDED
+                and cls._supersession_creates_cycle(
+                    payload.promise_event_id,
+                    payload.superseding_promise_event_id,
+                    events_by_id,
+                    PromiseResolution,
+                )
+            ):
+                return "promise_supersession_cycle"
+            return None
+        if isinstance(payload, OpenLoopResolution):
+            if cls._open_loop_resolution_for(payload.open_loop_event_id, events_by_id):
+                return "open_loop_already_resolved"
+            if (
+                payload.resolution_kind == OpenLoopResolutionKind.SUPERSEDED
+                and cls._supersession_creates_cycle(
+                    payload.open_loop_event_id,
+                    payload.superseding_open_loop_event_id,
+                    events_by_id,
+                    OpenLoopResolution,
+                )
+            ):
+                return "open_loop_supersession_cycle"
+        return None
+
+    @staticmethod
+    def _promise_resolution_for(
+        promise_event_id: str,
+        events_by_id: Mapping[str, RelationshipEvent],
+    ) -> Optional[PromiseResolution]:
+        return next(
+            (
+                event.temporal_payload
+                for event in events_by_id.values()
+                if isinstance(event.temporal_payload, PromiseResolution)
+                and event.temporal_payload.promise_event_id == promise_event_id
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _open_loop_resolution_for(
+        open_loop_event_id: str,
+        events_by_id: Mapping[str, RelationshipEvent],
+    ) -> Optional[OpenLoopResolution]:
+        return next(
+            (
+                event.temporal_payload
+                for event in events_by_id.values()
+                if isinstance(event.temporal_payload, OpenLoopResolution)
+                and event.temporal_payload.open_loop_event_id == open_loop_event_id
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _supersession_creates_cycle(
+        target_event_id: str,
+        successor_event_id: Optional[str],
+        events_by_id: Mapping[str, RelationshipEvent],
+        resolution_type: type,
+    ) -> bool:
+        if successor_event_id is None:
+            return False
+        edges: Dict[str, str] = {}
+        for event in events_by_id.values():
+            resolution = event.temporal_payload
+            if not isinstance(resolution, resolution_type):
+                continue
+            if isinstance(resolution, PromiseResolution):
+                source_id = resolution.promise_event_id
+                next_id = resolution.superseding_promise_event_id
+                is_superseded = resolution.resolution_kind == PromiseResolutionKind.SUPERSEDED
+            else:
+                source_id = resolution.open_loop_event_id
+                next_id = resolution.superseding_open_loop_event_id
+                is_superseded = (
+                    resolution.resolution_kind == OpenLoopResolutionKind.SUPERSEDED
+                )
+            if is_superseded and next_id is not None:
+                edges[source_id] = next_id
+
+        current = successor_event_id
+        visited = set()
+        while current is not None:
+            if current == target_event_id or current in visited:
+                return True
+            visited.add(current)
+            current = edges.get(current)
+        return False
+
     @staticmethod
     def _occurrence_fingerprint(
         profile: RelationshipProfile,
         candidate: RelationshipEventCandidate,
         effective_occurred_at: Optional[str] = None,
+        temporal_payload: Optional[TemporalPayload] = None,
     ) -> str:
+        fingerprint_payload: Optional[object] = temporal_payload
+        if fingerprint_payload is None and candidate.temporal_payload is not None:
+            fingerprint_payload = candidate.temporal_payload
         return relationship_occurrence_fingerprint(
             relationship_id=profile.relationship_id,
             event_type=candidate.event_type.value,
             summary=candidate.summary,
             occurred_at=candidate.occurred_at or effective_occurred_at,
             occurrence_key=candidate.occurrence_key,
+            temporal_payload=fingerprint_payload,
         )
 
     @staticmethod

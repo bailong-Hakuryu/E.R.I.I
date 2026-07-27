@@ -10,6 +10,7 @@ from erii.models.recall import (
     PersonaRecallProjection,
     RecallAudience,
     RecallResult,
+    RecallSignalProjection,
     RelationshipNarrativeProjection,
 )
 from erii.renderers.base import RecallRenderBudgetError, require_matching_audience
@@ -62,6 +63,19 @@ class MarkdownRecallRenderer:
         if item.occurred_at is not None:
             times.insert(0, f"occurred: {item.occurred_at}")
         return f"{index}. [{item.event_type}] {item.summary} ({'; '.join(times)})"
+
+    @staticmethod
+    def _signal_line(item: RecallSignalProjection, index: int) -> str:
+        timing = ""
+        if item.due_world_time is not None:
+            timing = (
+                f" (deadline [{item.due_world_time.clock_id}]: "
+                f"{item.due_world_time.display_value})"
+            )
+        return (
+            f"{index}. [{item.signal_type.value}; {item.authority.value}] "
+            f"{item.summary}{timing}"
+        )
 
     def render(self, result: RecallResult) -> str:
         """Renders a complete result, refusing mismatch or output truncation."""
@@ -117,7 +131,7 @@ class MarkdownRecallRenderer:
 
         if result.signals:
             lines = [
-                f"{index}. [{item.signal_type}] {item.summary}"
+                self._signal_line(item, index)
                 for index, item in enumerate(result.signals, 1)
             ]
             sections.append("# Current Recall Signals\n" + "\n".join(lines))

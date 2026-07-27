@@ -15,6 +15,7 @@ from erii.adapters.persona_compiler import (
 from erii.core.persona_compilation import PersonaCompiler
 from erii.core.persona_context import PersonaManifestRequiredError
 from erii.core.recall import RecallBudgetUnsatisfiedError
+from erii.core.temporal_history import TemporalHistoryConflictError
 from erii.core.queue.base import BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.engine import ERIIEngine
@@ -28,11 +29,17 @@ from erii.models.adjudication import (
     EvidenceCitation,
     EvidenceReference,
     GrowthTriggerKind,
+    OpenLoopResolutionCandidate,
+    OpenLoopSpecCandidate,
     PersonaGrowthConflictError,
     PersonaGrowthDecision,
     PersonaGrowthIntentCandidate,
     PersonaGrowthProposal,
     PersonaGrowthStatus,
+    PromiseConditionCandidate,
+    PromiseConditionConfirmationCandidate,
+    PromiseResolutionCandidate,
+    PromiseSpecCandidate,
     RelationshipCandidateBatch,
     RelationshipEventCandidate,
     RelationshipPolicySpec,
@@ -43,6 +50,8 @@ from erii.models.adjudication import (
     SourceProcessingMode,
     SourceRole,
     SourceTurn,
+    TemporalPayloadCandidate,
+    WorldMomentCandidate,
 )
 from erii.models.node import MemoryNode, MemoryState, MemoryType, MemoryVisibility
 from erii.models.pack import MemoryPack
@@ -81,6 +90,9 @@ from erii.models.recall import (
     RecallOptions,
     RecallRequest,
     RecallResult,
+    RecallSignalAuthority,
+    RecallSignalReason,
+    RecallSignalType,
     RecallSignalProjection,
     RecallSourceReference,
     RecallTemporalContext,
@@ -113,6 +125,22 @@ from erii.models.relationship import (
     RelationshipState,
     StateReason,
     TemporalContext,
+)
+from erii.models.temporal import (
+    OpenLoopResolution,
+    OpenLoopResolutionKind,
+    OpenLoopSpec,
+    PromiseCondition,
+    PromiseConditionConfirmation,
+    PromiseResolution,
+    PromiseResolutionKind,
+    PromiseResponsibleParty,
+    PromiseSpec,
+    TemporalPayload,
+    TemporalPayloadType,
+    WorldMoment,
+    temporal_payload_from_dict,
+    temporal_payload_to_dict,
 )
 from erii.security.sanitizer import SecuritySanitizer
 from erii.renderers import (
@@ -149,6 +177,11 @@ __all__ = [
     "MarkdownRecallRenderer",
     "MeaningCapsuleCandidate",
     "MemoryRecallProjection",
+    "OpenLoopResolution",
+    "OpenLoopResolutionCandidate",
+    "OpenLoopResolutionKind",
+    "OpenLoopSpec",
+    "OpenLoopSpecCandidate",
     "PersonaActivationTier",
     "PersonaApplicability",
     "PersonaClaimCandidate",
@@ -169,6 +202,16 @@ __all__ = [
     "PersonaSourceSpan",
     "PremiseExperience",
     "PremisePolicy",
+    "PromiseCondition",
+    "PromiseConditionCandidate",
+    "PromiseConditionConfirmation",
+    "PromiseConditionConfirmationCandidate",
+    "PromiseResolution",
+    "PromiseResolutionCandidate",
+    "PromiseResolutionKind",
+    "PromiseResponsibleParty",
+    "PromiseSpec",
+    "PromiseSpecCandidate",
     "RecallAudience",
     "RecallAudienceMismatchError",
     "RecallBudget",
@@ -181,6 +224,9 @@ __all__ = [
     "RecallRenderer",
     "RecallRequest",
     "RecallResult",
+    "RecallSignalAuthority",
+    "RecallSignalReason",
+    "RecallSignalType",
     "RecallSignalProjection",
     "RecallSourceReference",
     "RecallTemporalContext",
@@ -233,6 +279,14 @@ __all__ = [
     "RelationshipState",
     "StateReason",
     "TemporalContext",
+    "TemporalHistoryConflictError",
+    "TemporalPayload",
+    "TemporalPayloadCandidate",
+    "TemporalPayloadType",
+    "WorldMoment",
+    "WorldMomentCandidate",
+    "temporal_payload_from_dict",
+    "temporal_payload_to_dict",
     "SignalStrength",
     "SourceMessage",
     "SourceProcessingMode",

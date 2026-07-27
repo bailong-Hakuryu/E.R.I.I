@@ -13,7 +13,14 @@ from erii._version import __version__
 from erii.core.persona_context import PersonaManifestRequiredError
 from erii.core.recall import RecallBudgetUnsatisfiedError
 from erii.engine import ERIIEngine
+from erii.models.adjudication import (
+    CandidateConflictError,
+    RelationshipEventCandidate as DomainRelationshipEventCandidate,
+    SourceTurn as DomainSourceTurn,
+)
 from erii.models.recall import RecallRequest as DomainRecallRequest
+from erii.models.relationship import RelationshipNotFoundError
+from erii.core.temporal_history import TemporalHistoryConflictError
 
 logger = logging.getLogger("erii.server")
 
@@ -47,7 +54,7 @@ def close_engine() -> None:
 
 try:
     from fastapi import FastAPI, HTTPException
-    from pydantic import BaseModel
+    from pydantic import BaseModel, Field
 
     app = FastAPI(
         title="E.R.I.I. Memory Engine REST API",
@@ -69,6 +76,17 @@ try:
 
     class StructuredRecallBody(DomainRecallRequest):
         """Renderer-neutral structured recall request body."""
+
+    class RelationshipAdjudicationBody(BaseModel):
+        """Evidence-backed relationship candidates crossing the REST boundary."""
+
+        agent_id: str = "default_agent"
+        user_id: str
+        source_turn: DomainSourceTurn
+        candidates: list[DomainRelationshipEventCandidate] = Field(
+            min_length=1,
+            max_length=32,
+        )
 
     class CoreMemoryRequest(BaseModel):
         agent_id: str = "default_agent"
@@ -155,6 +173,29 @@ try:
             raise HTTPException(status_code=409, detail=str(e))
         except RecallBudgetUnsatisfiedError as e:
             raise HTTPException(status_code=422, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/v1/relationship/adjudicate")
+    def api_adjudicate_relationship(req: RelationshipAdjudicationBody):
+        """Adjudicates untrusted temporal and relationship candidates with evidence."""
+        try:
+            result = get_engine().adjudicate_relationship_candidates(
+                req.agent_id,
+                req.user_id,
+                req.source_turn,
+                req.candidates,
+            )
+            return {
+                "status": "success",
+                "records": [record.to_dict() for record in result.records],
+            }
+        except (CandidateConflictError, TemporalHistoryConflictError) as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except RelationshipNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:

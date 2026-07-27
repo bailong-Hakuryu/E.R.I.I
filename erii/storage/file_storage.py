@@ -37,6 +37,7 @@ from erii.models.relationship import (
     RelationshipEvent,
     RelationshipProfile,
 )
+from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 
@@ -389,7 +390,7 @@ class FileStorage(BaseStorage):
 
     def append_relationship_event(self, event: RelationshipEvent) -> RelationshipEvent:
         """Appends an event once, rejecting conflicting reuse of an event ID."""
-        with self.lock_manager.lock("__relationship_events__", event.relationship_id):
+        with self.lock_manager.lock("__relationship_history__", event.relationship_id):
             registry = self._load_identity_registry()
             if event.relationship_id not in registry["relationships"]:
                 raise ValueError("relationship event references an unknown relationship")
@@ -410,6 +411,18 @@ class FileStorage(BaseStorage):
                     )
                 return existing
 
+            existing_events = [RelationshipEvent.from_dict(item) for item in raw_events]
+            adjudication_path = self._get_relationship_adjudications_path(
+                event.relationship_id
+            )
+            if os.path.exists(adjudication_path):
+                with open(adjudication_path, "r", encoding="utf-8") as file_obj:
+                    existing_events.extend(
+                        accepted_event
+                        for raw_record in json.load(file_obj)
+                        for accepted_event in AdjudicationRecord.from_dict(raw_record).events
+                    )
+            TemporalHistoryValidator.validate_append(existing_events, event)
             raw_events.append(event.to_dict())
             self._write_json_atomic(file_path, raw_events)
             return event
@@ -429,7 +442,7 @@ class FileStorage(BaseStorage):
     ) -> AdjudicationRecord:
         """Atomically appends one complete adjudication record to its journal."""
         relationship_id = record.receipt.relationship_id
-        with self.lock_manager.lock("__relationship_adjudication__", relationship_id):
+        with self.lock_manager.lock("__relationship_history__", relationship_id):
             registry = self._load_identity_registry()
             if relationship_id not in registry["relationships"]:
                 raise ValueError("adjudication references an unknown relationship")
@@ -459,6 +472,21 @@ class FileStorage(BaseStorage):
                     )
                 return existing
 
+            direct_path = self._get_relationship_events_path(relationship_id)
+            existing_events: List[RelationshipEvent] = []
+            if os.path.exists(direct_path):
+                with open(direct_path, "r", encoding="utf-8") as file_obj:
+                    existing_events.extend(
+                        RelationshipEvent.from_dict(item) for item in json.load(file_obj)
+                    )
+            existing_events.extend(
+                accepted_event
+                for raw_record in raw_records
+                for accepted_event in AdjudicationRecord.from_dict(raw_record).events
+            )
+            for accepted_event in record.events:
+                TemporalHistoryValidator.validate_append(existing_events, accepted_event)
+                existing_events.append(accepted_event)
             raw_records.append(record.to_dict())
             self._write_json_atomic(file_path, raw_records)
             return record

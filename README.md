@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0a3-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-0.4.0a4-orange.svg)]()
 
 E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI 伴侣、虚拟角色和叙事型 Agent。
 
@@ -19,7 +19,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 当前版本能够做什么
 
-`v0.4.0a3` 已实现：
+`v0.4.0a4` 已实现：
 
 - 按 `(agent_id, user_id)` 隔离记忆；
 - 核心人格文本、体验时间线和分类印象节点；
@@ -49,13 +49,14 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - `fresh`、`address_only`、`canonical_continuation` 关系前提及确定性 Baseline；
 - `RecallResult`、显式受众、World Time、完整投影预算和可替换 Renderer；
 - 默认只读的结构化召回，以及只强化最终入选记忆的显式模式；
-- SQLite Schema v3 和携带 Persona Proposal/Manifest/关系前提的 MemoryPack `0.4.0a3`；
+- 类型化 Promise、Promise Condition、Open Loop 与追加式 Resolution；
+- 同一 World Time 时钟内派生的到期/逾期承诺和开放事项召回信号；
+- SQLite Schema 继续保持 v3，MemoryPack `0.4.0a4` 携带并校验时间事件引用；
 - 由宿主显式控制的后台归档生命周期。
 
 当前版本尚未实现：
 
 - 事件、情节和关系阶段的分层巩固；
-- 到期承诺、开放事项与其追加式解决事件信号；
 - 完整的授权、加密或多租户安全边界。
 
 这些能力属于 `v0.4.0` 及后续路线，不应将 README 中的规划理解为已经交付。
@@ -325,6 +326,47 @@ with ERIIEngine(storage_dir="./erii_memory") as engine:
 
 REST 客户端可调用 `POST /api/v1/recall/structured`；旧 `POST /api/v1/recall` 与 `ERIIEngine.recall()` 仍返回兼容 Markdown，并保留自动强化行为。
 
+## 时间承诺与开放事项
+
+`0.4.0a4` 将“已经明确承担责任的承诺”和“尚待继续、但没有人明确承担责任的事项”分开建模。可信宿主可直接使用类型化 API：
+
+```python
+from erii import ERIIEngine, PromiseResponsibleParty, WorldMoment
+
+with ERIIEngine(storage_dir="./erii_memory") as engine:
+    engine.initialize_relationship(
+        "agent_lumi",
+        "user_chen",
+        "Lumi is patient and treats commitments seriously.",
+    )
+    promise = engine.record_promise(
+        "agent_lumi",
+        "user_chen",
+        "bring the revised travel plan",
+        (PromiseResponsibleParty.AGENT,),
+        due_at=WorldMoment("story-day", "day 3", order_value=3),
+    )
+    open_loop = engine.record_open_loop(
+        "agent_lumi",
+        "user_chen",
+        "Choose the destination together",
+        expected_continuation="Ask which city feels right.",
+    )
+
+    engine.resolve_promise(
+        "agent_lumi", "user_chen", promise.event_id, "fulfilled"
+    )
+    engine.resolve_open_loop(
+        "agent_lumi", "user_chen", open_loop.event_id, "completed"
+    )
+```
+
+原始 Promise/Open Loop 不会被原地修改；条件确认和解决结果都是引用早期事件的新关系事件。带条件的 Promise 只有在追加明确的 Condition Confirmation 后才会产生信号。对于截止时间，只有观察时间和截止时间的 `clock_id` 相同且双方 `order_value` 都是有限数值时才比较：小于截止值不产生信号，等于时为 `promise_due`，大于时为 `promise_overdue`。逾期只是只读的时间信号，不代表违约，也不会自动扣减信任或写入新事件。
+
+这些信号由 `recall_structured()` 在 Agent Private 结果中派生，不会因读取而改变历史。旧 `MemoryNode.is_unresolved` 仍可成为低权威 Open Loop 信号，但不等同于正式关系义务；可用 `origin_memory_node_id` 将它显式提升为正式 Open Loop，并避免重复投影。完整可运行流程见 [`examples/08_temporal_commitments.py`](examples/08_temporal_commitments.py)。
+
+`record_promise()` 等直接 API 只适用于可信宿主输入。不可信 LLM 输出必须作为带来源引文的 Candidate 进入 `adjudicate_relationship_candidates()`，REST 对应 `POST /api/v1/relationship/adjudicate`；参考服务不提供绕过证据裁决的 Promise/Open Loop CRUD。
+
 ## 使用 SQLite 保存记忆
 
 当前默认记忆驱动仍是 JSON FileStorage。需要 SQLite 时应显式配置：
@@ -375,7 +417,7 @@ pack = engine.export_memory(
 engine.import_memory("./lumi-memory.json", overwrite=False)
 ```
 
-MemoryPack `0.4.0` 会携带人设快照、稳定关系档案和追加式关系事件；事件按 `event_id` 幂等导入。旧版体验时间线仍可能在重复导入时追加重复项。在依赖它处理重要数据前，请保留原始存储备份并验证导入结果。
+MemoryPack `0.4.0a4` 会携带人设快照、稳定关系档案和追加式关系事件，包括类型化时间载荷。事件按 `event_id` 幂等导入；跨用户导入会重映射载荷中的事件引用，引用不完整或越过关系边界的时间历史会被拒绝。旧版体验时间线仍可能在重复导入时追加重复项。在依赖它处理重要数据前，请保留原始存储备份并验证导入结果。
 
 ## 混合召回
 
@@ -403,6 +445,8 @@ erii serve --host 127.0.0.1 --port 8000 --storage-dir ./erii_memory
 - `GET /api/v1/health`
 - `POST /api/v1/remember`
 - `POST /api/v1/recall`
+- `POST /api/v1/recall/structured`
+- `POST /api/v1/relationship/adjudicate`
 - `GET|POST /api/v1/core_memory`
 - `GET /api/v1/memory/monologue`
 - `POST /api/v1/memory/thought`
@@ -432,7 +476,7 @@ python -m unittest discover -s tests -v
 python -m compileall -q erii examples tests
 ```
 
-仓库的测试覆盖存储、衰减、召回、任务队列、MemoryPack、时间锚定、独白可见性、安全过滤、显式服务生命周期、关系隔离、人设不可变性、事件幂等、证据裁决、历史重处理、人格成长和投影重建。
+仓库的测试覆盖存储、衰减、召回、任务队列、MemoryPack、时间锚定、独白可见性、安全过滤、显式服务生命周期、关系隔离、人设不可变性、事件幂等、证据裁决、历史重处理、人格成长、时间承诺和投影重建。
 
 ## 路线图
 
@@ -454,11 +498,21 @@ python -m compileall -q erii examples tests
 - Persona Reflection、积累型/转折型成长提案和宿主安全决定；
 - SQLite Schema v2 与跨 Adapter MemoryPack 携带。
 
-### v0.4.0 后续 alpha
+### v0.4.0a3 — 人设感知结构化召回
 
 - 结构化 RecallResult 与可替换 Prompt Renderer；
 - recorded、occurred 与 world time；
-- 到期承诺、未完成事件信号和分层巩固。
+- Persona Compiler、审批 Manifest、关系前提和定性 Baseline；
+- SQLite Schema v3 与 MemoryPack `0.4.0a3`。
+
+### v0.4.0a4 — 时间承诺与开放事项
+
+- 类型化 Promise、Condition Confirmation、Open Loop 和追加式 Resolution；
+- 同一 World Time 时钟内的到期/逾期判断与只读召回信号；
+- 旧 `is_unresolved` 的低权威兼容投影；
+- SQLite Schema 保持 v3，MemoryPack 升级为 `0.4.0a4`。
+
+后续 alpha/beta 将继续处理事件、情节和关系阶段的分层巩固，以及迁移与长期评测。
 
 Web UI、多 Agent 共享图、托管平台和主动消息发送不属于 `v0.4.0` 范围。
 

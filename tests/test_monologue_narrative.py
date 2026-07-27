@@ -89,8 +89,8 @@ class TestMonologueNarrative(unittest.TestCase):
         self.assertEqual(len(internal_logs), 1)
         self.assertIn("犯人", internal_logs[0]["content"])
 
-    def test_unresolved_suspense_holdback_decay(self):
-        """Tests that unresolved thoughts retain max dynamic weight despite time decay."""
+    def test_unresolved_suspense_uses_normal_decay(self):
+        """Legacy unresolved markers no longer create permanent salience."""
         past_time = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
 
         node = MemoryNode(
@@ -105,9 +105,22 @@ class TestMonologueNarrative(unittest.TestCase):
             created_at=past_time,
         )
 
-        # Effective weight for unresolved thought should not decay to weak state
-        weight = node.calculate_effective_weight(decay_rate=0.1)
-        self.assertGreaterEqual(weight, 0.7)
+        ordinary = MemoryNode(
+            node_id="node_ordinary",
+            user_id="user_1",
+            agent_id="agent_1",
+            node_type=MemoryType.THOUGHT,
+            content=node.content,
+            base_importance=node.base_importance,
+            is_unresolved=False,
+            last_accessed_at=past_time,
+            created_at=past_time,
+        )
+
+        self.assertEqual(
+            node.calculate_effective_weight(decay_rate=0.1),
+            ordinary.calculate_effective_weight(decay_rate=0.1),
+        )
 
     def test_resolve_thought_status(self):
         """Tests resolving an unresolved suspense thought node."""

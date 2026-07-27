@@ -33,6 +33,51 @@ class TestServerLifecycle(unittest.TestCase):
 
         self.assertIsNone(server_app._engine)
 
+    @unittest.skipIf(server_app.app is None, "FastAPI is not installed")
+    def test_relationship_adjudication_reports_missing_relationship_as_404(self):
+        with tempfile.TemporaryDirectory() as storage_dir:
+            server_app.configure_engine(storage_dir=storage_dir)
+            try:
+                request = server_app.RelationshipAdjudicationBody(
+                    user_id="missing-user",
+                    source_turn={
+                        "turn_id": "missing-relationship-turn",
+                        "messages": [
+                            {
+                                "source_id": "message-1",
+                                "role": "user",
+                                "content": "Hello.",
+                            }
+                        ],
+                    },
+                    candidates=[
+                        {
+                            "candidate_key": "observation-1",
+                            "event_type": "observation",
+                            "summary": "The user said hello.",
+                            "signal": {
+                                "signal_type": "neutral",
+                                "strength": "weak",
+                                "extraction_confidence": 0.9,
+                                "interpretation_confidence": 0.9,
+                            },
+                            "evidence": [
+                                {
+                                    "source_id": "message-1",
+                                    "quote": "Hello.",
+                                }
+                            ],
+                        }
+                    ],
+                )
+
+                with self.assertRaises(server_app.HTTPException) as raised:
+                    server_app.api_adjudicate_relationship(request)
+
+                self.assertEqual(raised.exception.status_code, 404)
+            finally:
+                server_app.close_engine()
+
 
 if __name__ == "__main__":
     unittest.main()

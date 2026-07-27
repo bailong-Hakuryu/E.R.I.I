@@ -14,6 +14,17 @@ import re
 from types import MappingProxyType
 from typing import Any, ClassVar, Dict, List, Mapping, Optional, Sequence
 
+from erii.models.temporal import (
+    OpenLoopResolution,
+    OpenLoopSpec,
+    PromiseConditionConfirmation,
+    PromiseResolution,
+    PromiseSpec,
+    TemporalPayload,
+    temporal_payload_from_dict,
+    temporal_payload_to_dict,
+)
+
 
 RELATIONSHIP_DIMENSIONS = (
     "familiarity",
@@ -105,6 +116,10 @@ class RelationshipEventType(str, Enum):
     SHARED_EXPERIENCE = "shared_experience"
     OBSERVATION = "observation"
     PROMISE = "promise"
+    PROMISE_CONDITION_CONFIRMED = "promise_condition_confirmed"
+    PROMISE_RESOLUTION = "promise_resolution"
+    OPEN_LOOP = "open_loop"
+    OPEN_LOOP_RESOLUTION = "open_loop_resolution"
     CONFLICT = "conflict"
     REPAIR = "repair"
     REFLECTION = "reflection"
@@ -652,6 +667,7 @@ class RelationshipEvent:
     relationship_id: str
     event_type: RelationshipEventType
     content: str
+    temporal_payload: Optional[TemporalPayload] = None
     state_delta: Mapping[str, float] = field(default_factory=dict)
     belief_updates: Sequence[BeliefUpdate] = field(default_factory=tuple)
     occurred_at: Optional[str] = None
@@ -701,6 +717,46 @@ class RelationshipEvent:
                 update if isinstance(update, BeliefUpdate) else BeliefUpdate.from_dict(update)
             )
         object.__setattr__(self, "belief_updates", tuple(updates))
+
+        payload = self.temporal_payload
+        if isinstance(payload, Mapping):
+            payload = temporal_payload_from_dict(payload)
+            object.__setattr__(self, "temporal_payload", payload)
+        elif payload is not None and not isinstance(
+            payload,
+            (
+                PromiseSpec,
+                PromiseConditionConfirmation,
+                PromiseResolution,
+                OpenLoopSpec,
+                OpenLoopResolution,
+            ),
+        ):
+            raise ValueError("temporal_payload must be a supported temporal payload")
+
+        expected_payload_types = {
+            RelationshipEventType.PROMISE: PromiseSpec,
+            RelationshipEventType.PROMISE_CONDITION_CONFIRMED: PromiseConditionConfirmation,
+            RelationshipEventType.PROMISE_RESOLUTION: PromiseResolution,
+            RelationshipEventType.OPEN_LOOP: OpenLoopSpec,
+            RelationshipEventType.OPEN_LOOP_RESOLUTION: OpenLoopResolution,
+        }
+        expected_payload_type = expected_payload_types.get(event_type)
+        if event_type == RelationshipEventType.PROMISE and payload is None:
+            # Pre-alpha.4 Promise events remain readable and portable.
+            pass
+        elif expected_payload_type is not None:
+            if not isinstance(payload, expected_payload_type):
+                raise ValueError(
+                    f"{event_type.value} requires {expected_payload_type.__name__} temporal_payload"
+                )
+        elif payload is not None:
+            raise ValueError(f"{event_type.value} events cannot contain temporal_payload")
+        if payload is not None and (normalized_delta or updates):
+            raise ValueError(
+                "typed temporal events cannot contain state_delta or belief_updates"
+            )
+
         _require_json(self.metadata, "event metadata")
         object.__setattr__(self, "metadata", _freeze_json(self.metadata))
 
@@ -710,6 +766,11 @@ class RelationshipEvent:
             "relationship_id": self.relationship_id,
             "event_type": self.event_type.value,
             "content": self.content,
+            "temporal_payload": (
+                temporal_payload_to_dict(self.temporal_payload)
+                if self.temporal_payload is not None
+                else None
+            ),
             "state_delta": dict(self.state_delta),
             "belief_updates": [update.to_dict() for update in self.belief_updates],
             "metadata": _thaw_json(self.metadata),
@@ -732,6 +793,11 @@ class RelationshipEvent:
             relationship_id=str(data["relationship_id"]),
             event_type=RelationshipEventType(data["event_type"]),
             content=str(data["content"]),
+            temporal_payload=(
+                temporal_payload_from_dict(data["temporal_payload"])
+                if data.get("temporal_payload") is not None
+                else None
+            ),
             state_delta=data.get("state_delta", {}),
             belief_updates=[
                 BeliefUpdate.from_dict(item) for item in data.get("belief_updates", [])
