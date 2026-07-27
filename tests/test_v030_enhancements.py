@@ -9,7 +9,7 @@ from erii.security.sanitizer import SecuritySanitizer
 
 class TestV030Enhancements(unittest.TestCase):
     def test_public_package_version(self):
-        self.assertEqual(__version__, "0.3.1")
+        self.assertEqual(__version__, "0.4.0a1")
 
 
     def setUp(self):
@@ -20,6 +20,8 @@ class TestV030Enhancements(unittest.TestCase):
 
     def test_context_manager_and_close(self):
         with ERIIEngine(storage_dir=self.test_dir) as engine:
+            self.assertFalse(engine.archiver_worker.running)
+            engine.start()
             self.assertTrue(engine.archiver_worker.running)
         # Should be shut down after context exit
         self.assertFalse(engine.archiver_worker.running)

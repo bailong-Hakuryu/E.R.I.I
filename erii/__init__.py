@@ -13,6 +13,22 @@ from erii.engine import ERIIEngine
 from erii.models.config import ERIIConfig
 from erii.models.node import MemoryNode, MemoryState, MemoryType, MemoryVisibility
 from erii.models.pack import MemoryPack
+from erii.models.relationship import (
+    BeliefOperation,
+    BeliefUpdate,
+    CharacterBlueprint,
+    CurrentBelief,
+    EventConflictError,
+    IdentityKind,
+    PersonaConflictError,
+    RelationshipEvent,
+    RelationshipEventType,
+    RelationshipNotFoundError,
+    RelationshipProfile,
+    RelationshipSnapshot,
+    RelationshipState,
+    StateReason,
+)
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 from erii.storage.file_storage import FileStorage
@@ -34,6 +50,20 @@ __all__ = [
     "MemoryState",
     "MemoryVisibility",
     "MemoryPack",
+    "BeliefOperation",
+    "BeliefUpdate",
+    "CharacterBlueprint",
+    "CurrentBelief",
+    "EventConflictError",
+    "IdentityKind",
+    "PersonaConflictError",
+    "RelationshipEvent",
+    "RelationshipEventType",
+    "RelationshipNotFoundError",
+    "RelationshipProfile",
+    "RelationshipSnapshot",
+    "RelationshipState",
+    "StateReason",
     "BaseLLMAdapter",
     "CallableLLMAdapter",
     "OpenAIAdapter",

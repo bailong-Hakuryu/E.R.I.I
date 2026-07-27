@@ -4,10 +4,12 @@ from erii.core.archiver import AsyncArchiverWorker
 from erii.core.budget import MemoryBudgetManager
 from erii.core.decay import MemoryDecayEvaluator
 from erii.core.retriever import MemoryRetriever
+from erii.core.relationship import RelationshipProjector
 
 __all__ = [
     "MemoryDecayEvaluator",
     "MemoryRetriever",
     "MemoryBudgetManager",
     "AsyncArchiverWorker",
+    "RelationshipProjector",
 ]

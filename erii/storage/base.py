@@ -8,6 +8,11 @@ from contextlib import contextmanager
 import threading
 from typing import Dict, List, Optional
 from erii.models.node import MemoryNode
+from erii.models.relationship import (
+    IdentityKind,
+    RelationshipEvent,
+    RelationshipProfile,
+)
 
 
 class KeyLockManager:
@@ -119,3 +124,30 @@ class BaseStorage(ABC):
             List of formatted timeline entry strings.
         """
         pass
+
+    def get_or_create_identity(self, kind: IdentityKind, external_id: str) -> str:
+        """Resolves a mutable external key to a stable internal identity ID.
+
+        Relationship-aware custom storage adapters should override this method.
+        It remains concrete so pre-v0.4 adapters can still be instantiated for
+        legacy memory behavior.
+        """
+        raise NotImplementedError("storage adapter does not support relationship identities")
+
+    def create_relationship(self, profile: RelationshipProfile) -> RelationshipProfile:
+        """Creates an immutable relationship profile or returns the existing one."""
+        raise NotImplementedError("storage adapter does not support relationship profiles")
+
+    def get_relationship(
+        self, agent_id: str, user_id: str
+    ) -> Optional[RelationshipProfile]:
+        """Loads the relationship profile mapped to an external Agent x User pair."""
+        raise NotImplementedError("storage adapter does not support relationship profiles")
+
+    def append_relationship_event(self, event: RelationshipEvent) -> RelationshipEvent:
+        """Appends an immutable event, idempotently keyed by event ID."""
+        raise NotImplementedError("storage adapter does not support relationship events")
+
+    def list_relationship_events(self, relationship_id: str) -> List[RelationshipEvent]:
+        """Returns accepted events for a relationship in append order."""
+        raise NotImplementedError("storage adapter does not support relationship events")

@@ -39,10 +39,7 @@ def main():
         user_message="I always set my editor to dark mode with solarized dark theme.",
         bot_reply="Dark mode is essential for night coding sessions!"
     )
-
-    # Wait briefly for background archival
-    import time
-    time.sleep(1)
+    engine.process_pending()
 
     context = engine.recall(
         agent_id=agent_id,

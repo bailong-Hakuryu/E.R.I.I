@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.3.1-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-0.4.0a1-orange.svg)]()
 
 E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI 伴侣、虚拟角色和叙事型 Agent。
 
@@ -19,7 +19,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 当前版本能够做什么
 
-`v0.3.1` 已实现：
+`v0.4.0a1` 已实现：
 
 - 按 `(agent_id, user_id)` 隔离记忆；
 - 核心人格文本、体验时间线和分类印象节点；
@@ -32,14 +32,20 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - Prompt 注入模式过滤、路径键校验和基础 PII 掩码；
 - Callable、OpenAI-compatible 和 ChromaDB 扩展；
 - 可选 FastAPI REST 服务。
+- 每个 `Agent × User` 独立且稳定的 relationship、persona 与 identity ID；
+- 不可静默覆盖的原始人设快照和可选结构化编译结果；
+- 追加式关系事件、幂等事件 ID 与可重建的当前认知；
+- 熟悉、信任、亲密、安全感与冲突张力的有限幅度状态投影；
+- 每项当前状态对应的事件证据和叙事解释；
+- 关系档案与事件的 MemoryPack 携带能力；
+- 由宿主显式控制的后台归档生命周期。
 
 当前版本尚未实现：
 
-- 结构化人设快照与独立关系人格；
-- 追加式历史事件和当前认知投影；
-- 可解释的信任、亲密和冲突状态演化；
 - 人格变化提案与人工确认；
+- LLM 候选事件的证据校验和规则裁决；
 - 事件、情节和关系阶段的分层巩固；
+- 关系状态进入结构化召回结果；
 - 完整的授权、加密或多租户安全边界。
 
 这些能力属于 `v0.4.0` 及后续路线，不应将 README 中的规划理解为已经交付。
@@ -99,6 +105,16 @@ def extract_memory(prompt: str) -> str:
 
 
 with ERIIEngine(storage_dir="./erii_memory", llm=extract_memory) as engine:
+    engine.initialize_relationship(
+        agent_id="agent_lumi",
+        user_id="user_chen",
+        persona_source="Lumi 是一个温柔、坦诚，并尊重用户边界的原创角色。",
+        compiled_persona={
+            "values": ["坦诚", "尊重边界"],
+            "voice": {"style": "温和"},
+        },
+    )
+
     engine.set_core_memory(
         agent_id="agent_lumi",
         user_id="user_chen",
@@ -111,6 +127,7 @@ with ERIIEngine(storage_dir="./erii_memory", llm=extract_memory) as engine:
         user_message="下雨的时候，我喜欢喝伯爵红茶。",
         bot_reply="我记住这种安静的雨天味道了。",
     )
+    engine.process_pending()
 
     context = engine.recall(
         agent_id="agent_lumi",
@@ -120,7 +137,43 @@ with ERIIEngine(storage_dir="./erii_memory", llm=extract_memory) as engine:
     print(context)
 ```
 
-归档在后台执行。退出前应调用 `close()`，或使用上面的上下文管理器语法。未提供 LLM 时，当前版本只记录占位时间线，不会自动提取有效印象；这将在 `v0.4.0` 中改为明确的“自动提取未启用”状态。
+`ERIIEngine()` 不会自动启动隐藏线程。上例用 `process_pending()` 同步消费任务；需要后台归档时，由宿主显式调用 `engine.start()`。退出前应调用 `close()`，或使用上下文管理器。未提供 LLM 时，当前版本只记录占位时间线，不会自动提取有效印象。
+
+`set_core_memory()` 是仍供旧版文本召回使用的可覆盖字段，不等同于新的 Character Blueprint。alpha.1 已保存人设底色和关系投影，但它们要到结构化召回阶段才会自动进入宿主 Prompt。
+
+## 关系人格内核
+
+```python
+from erii import BeliefUpdate, ERIIEngine
+
+with ERIIEngine(storage_dir="./erii_memory") as engine:
+    profile = engine.initialize_relationship(
+        "agent_lumi",
+        "user_chen",
+        persona_source="Lumi 重视诚实，也尊重用户边界。",
+        compiled_persona={"values": ["诚实"], "boundaries": ["不替用户做决定"]},
+    )
+
+    engine.record_relationship_event(
+        "agent_lumi",
+        "user_chen",
+        "shared_experience",
+        "我们第一次一起看雪。",
+        event_id="first-snow",
+        state_delta={"familiarity": 0.08, "trust": 0.04},
+        belief_updates=[
+            BeliefUpdate(key="shared.first_snow", value=True, confidence=1.0)
+        ],
+    )
+
+    snapshot = engine.get_relationship_snapshot("agent_lumi", "user_chen")
+    print(snapshot.state.trust)
+    print(snapshot.state_reasons["trust"].evidence_event_id)
+```
+
+同一关系重复初始化会返回原有稳定 ID；试图换掉原始人设会抛出 `PersonaConflictError`。另一个用户会得到独立 `persona_id`、关系历史和状态。单个事件的状态变化绝对值上限为 `0.1`，巨大跃迁不会静默生效。
+
+`compiled_persona` 在 alpha.1 由宿主提供并与原文一同保存；LLM 编译、候选校验和重大人格变更提案属于后续 alpha。
 
 ## 使用 SQLite 保存记忆
 
@@ -172,7 +225,7 @@ pack = engine.export_memory(
 engine.import_memory("./lumi-memory.json", overwrite=False)
 ```
 
-MemoryPack 当前适合开发期备份和跨驱动迁移。导入同一个包可能追加重复时间线；在依赖它处理重要数据前，请保留原始存储备份并验证导入结果。
+MemoryPack `0.4.0` 会携带人设快照、稳定关系档案和追加式关系事件；事件按 `event_id` 幂等导入。旧版体验时间线仍可能在重复导入时追加重复项。在依赖它处理重要数据前，请保留原始存储备份并验证导入结果。
 
 ## 混合召回
 
@@ -229,25 +282,21 @@ python -m unittest discover -s tests -v
 python -m compileall -q erii examples tests
 ```
 
-仓库的测试覆盖存储、衰减、召回、任务队列、MemoryPack、时间锚定、独白可见性、安全过滤和服务生命周期。
+仓库的测试覆盖存储、衰减、召回、任务队列、MemoryPack、时间锚定、独白可见性、安全过滤、显式服务生命周期、关系隔离、人设不可变性、事件幂等和投影重建。
 
 ## 路线图
 
-### v0.3.1 — 稳定化
+### v0.4.0a1 — 无 LLM 关系人格内核
 
-- 统一包版本；
-- 改善 LLM JSON 容错；
-- 恢复崩溃遗留任务；
-- 消除 REST 导入副作用；
-- 清理第三方角色痕迹和不准确文案；
-- 建立持续集成。
-
-### v0.4.0 — 关系人格基础
-
-- 原始人设快照与结构化编译；
-- 每段关系独立的人格实例；
+- 原始人设快照与宿主提供的结构化编译；
+- 每段关系独立的人格实例与稳定 ID；
 - 追加式历史事件和当前认知投影；
 - 可解释、有限幅度的关系状态演化；
+- SQLite Schema 迁移和 MemoryPack 携带；
+- 显式后台处理生命周期。
+
+### v0.4.0 后续 alpha
+
 - LLM 候选提议与确定性规则裁决；
 - 人格变更提案与确认；
 - 结构化 RecallResult 与可替换 Prompt Renderer；

@@ -23,6 +23,7 @@ def configure_engine(storage_dir: str = "./erii_memory") -> ERIIEngine:
     if _engine is not None:
         _engine.close()
     _engine = ERIIEngine(storage_dir=storage_dir)
+    _engine.start()
     return _engine
 
 
@@ -30,7 +31,7 @@ def get_engine() -> ERIIEngine:
     """Returns the lazily initialized server engine."""
     global _engine
     if _engine is None:
-        _engine = ERIIEngine(storage_dir="./erii_memory")
+        return configure_engine(storage_dir="./erii_memory")
     return _engine
 
 

@@ -8,12 +8,13 @@ from datetime import datetime
 import json
 from typing import Any, Dict, List, Optional
 from erii.models.node import MemoryNode
+from erii.models.relationship import RelationshipEvent, RelationshipProfile
 
 
 class MemoryPack:
     """Portable container data structure for agent/user memory export & import."""
 
-    CURRENT_VERSION = "0.2.0"
+    CURRENT_VERSION = "0.4.0"
 
     def __init__(
         self,
@@ -24,6 +25,8 @@ class MemoryPack:
         timeline: Optional[List[Dict[str, str]]] = None,
         version: str = CURRENT_VERSION,
         exported_at: Optional[str] = None,
+        relationship: Optional[RelationshipProfile] = None,
+        relationship_events: Optional[List[RelationshipEvent]] = None,
     ) -> None:
         """Initializes MemoryPack.
 
@@ -35,12 +38,16 @@ class MemoryPack:
             timeline: List of timeline dicts {"timestamp": ..., "content": ...}.
             version: MemoryPack format version string.
             exported_at: ISO timestamp string of export.
+            relationship: Immutable relationship/persona profile, when initialized.
+            relationship_events: Append-only relationship history.
         """
         self.agent_id = agent_id
         self.user_id = user_id
         self.core_memory = core_memory
         self.nodes = nodes or []
         self.timeline = timeline or []
+        self.relationship = relationship
+        self.relationship_events = relationship_events or []
         self.version = version
         self.exported_at = exported_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -56,6 +63,10 @@ class MemoryPack:
             "core_memory": self.core_memory,
             "nodes": [node.to_dict() for node in self.nodes],
             "timeline": self.timeline,
+            "relationship": self.relationship.to_dict() if self.relationship else None,
+            "relationship_events": [
+                event.to_dict() for event in self.relationship_events
+            ],
         }
 
     @classmethod
@@ -70,6 +81,8 @@ class MemoryPack:
         core_mem = data.get("core_memory", "")
         raw_nodes = data.get("nodes", [])
         timeline = data.get("timeline", [])
+        raw_relationship = data.get("relationship")
+        raw_relationship_events = data.get("relationship_events", [])
 
         nodes = [MemoryNode.from_dict(item) for item in raw_nodes]
 
@@ -79,6 +92,14 @@ class MemoryPack:
             core_memory=core_mem,
             nodes=nodes,
             timeline=timeline,
+            relationship=(
+                RelationshipProfile.from_dict(raw_relationship)
+                if raw_relationship
+                else None
+            ),
+            relationship_events=[
+                RelationshipEvent.from_dict(item) for item in raw_relationship_events
+            ],
             version=version,
             exported_at=exported_at,
         )

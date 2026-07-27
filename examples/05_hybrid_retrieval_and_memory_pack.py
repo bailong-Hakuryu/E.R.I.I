@@ -2,7 +2,7 @@
 
 Demonstrates:
 1. SQLite Storage with WAL mode & (agent_id, user_id) locking.
-2. BaseTaskQueue & PersistentTaskQueue background archival.
+2. BaseTaskQueue & PersistentTaskQueue host-controlled archival.
 3. RRF (Reciprocal Rank Fusion) hybrid vector search with InMemoryVectorStore.
 4. Exporting and importing memory snapshot via MemoryPack.
 
@@ -53,6 +53,7 @@ def main():
             user_message="我工作时最喜欢用 VS Code 的暗黑主题。",
             bot_reply="暗黑主题对眼睛很好呢！我也很喜欢深色调。",
         )
+        engine.process_pending()
 
         # 4. RRF Hybrid Recall
         print("\n--- 2. Executing RRF Hybrid Memory Recall ---")

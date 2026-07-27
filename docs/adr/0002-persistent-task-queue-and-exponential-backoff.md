@@ -15,6 +15,7 @@
 1. **队列接口抽象**：设计 `BaseTaskQueue` 抽象基类，规范 `enqueue()`, `dequeue()`, `complete()`, `fail()`, `get_status_summary()`, `retry_failed()` 方法。
 2. **默认持久化实现**：提供基于 SQLite/File 的内置 `PersistentTaskQueue`，记录任务状态 (`PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`)。
 3. **指数退避重试 (Exponential Backoff)**：对于因 LLM 网络超时或临时报错导致的失败，自动按 `BaseDelay * (2 ^ attempt)` 延迟重试（默认最多 3 次）；超时或多次失败的任务进入 `FAILED` 死信状态，支持后续排查与重跑。
+4. **宿主控制生命周期**：构造 Engine 只装配 Worker 和队列，不自动启动隐藏线程；宿主通过 `start()` 启动后台消费，或通过 `process_pending()` 同步处理已入队任务。
 
 ## 后续影响与 Trade-offs (Consequences)
 

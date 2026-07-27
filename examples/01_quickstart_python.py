@@ -30,6 +30,7 @@ def main():
         user_message="I love brewing Earl Grey black tea with lavender on quiet rainy afternoons.",
         bot_reply="That sounds incredibly relaxing! Earl Grey with lavender is a wonderful blend."
     )
+    engine.process_pending()
 
     # 4. Recall prompt context
     print("\nRecalling relevant memory context...")

@@ -97,6 +97,13 @@ Output strictly valid JSON with no markdown block formatting:
         self.enable_pii_scrubbing = enable_pii_scrubbing
         self.task_queue = task_queue or PersistentTaskQueue()
 
+        self.running = False
+        self.worker_thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        """Starts background consumption when explicitly requested by the host."""
+        if self.worker_thread is not None and self.worker_thread.is_alive():
+            return
         self.running = True
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
@@ -120,7 +127,7 @@ Output strictly valid JSON with no markdown block formatting:
     def shutdown(self) -> None:
         """Stops worker thread gracefully."""
         self.running = False
-        if hasattr(self, "worker_thread") and self.worker_thread.is_alive():
+        if self.worker_thread is not None and self.worker_thread.is_alive():
             self.worker_thread.join(timeout=1.0)
 
     def close(self) -> None:
@@ -145,19 +152,39 @@ Output strictly valid JSON with no markdown block formatting:
                 self.running = False
                 break
             try:
-                task = self.task_queue.dequeue()
-                if task is None:
+                if not self.process_next():
                     time.sleep(0.2)
-                    continue
-                try:
-                    self._process_archival(task)
-                    self.task_queue.complete(task.task_id)
-                except Exception as ex:
-                    logger.error("Error processing archival task %s: %s", task.task_id, str(ex))
-                    self.task_queue.fail(task.task_id, str(ex))
             except Exception as e:
                 logger.error("Error in AsyncArchiverWorker loop: %s", str(e))
                 time.sleep(0.5)
+
+    def process_next(self) -> bool:
+        """Processes one ready queued task synchronously.
+
+        Returns:
+            True when a task was claimed, otherwise False.
+        """
+        task = self.task_queue.dequeue()
+        if task is None:
+            return False
+        try:
+            self._process_archival(task)
+            self.task_queue.complete(task.task_id)
+        except Exception as ex:
+            logger.error("Error processing archival task %s: %s", task.task_id, str(ex))
+            self.task_queue.fail(task.task_id, str(ex))
+        return True
+
+    def process_now(self, agent_id: str, user_id: str, user_msg: str, bot_reply: str) -> None:
+        """Processes one turn immediately without creating a queued task."""
+        self._process_archival(
+            {
+                "agent_id": agent_id,
+                "user_id": user_id,
+                "user_msg": user_msg,
+                "bot_reply": bot_reply,
+            }
+        )
 
     def _process_archival(self, task: Union[ArchivalTask, Dict[str, str]]) -> None:
         """Executes LLM extraction and persists memory nodes & timeline entries."""

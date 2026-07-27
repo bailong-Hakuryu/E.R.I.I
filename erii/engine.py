@@ -5,7 +5,8 @@ Follows Google Python Style Guide.
 """
 
 import os
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
+import uuid
 
 from erii.adapters.base import BaseLLMAdapter
 from erii.adapters.custom_adapter import CallableLLMAdapter
@@ -13,11 +14,23 @@ from erii.core.archiver import AsyncArchiverWorker
 from erii.core.budget import MemoryBudgetManager
 from erii.core.decay import MemoryDecayEvaluator
 from erii.core.retriever import MemoryRetriever
+from erii.core.relationship import RelationshipProjector
 from erii.core.queue.base import BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.models.config import ERIIConfig
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
 from erii.models.pack import MemoryPack
+from erii.models.relationship import (
+    BeliefUpdate,
+    CharacterBlueprint,
+    IdentityKind,
+    PersonaConflictError,
+    RelationshipEvent,
+    RelationshipEventType,
+    RelationshipNotFoundError,
+    RelationshipProfile,
+    RelationshipSnapshot,
+)
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 from erii.storage.file_storage import FileStorage
@@ -109,7 +122,7 @@ class ERIIEngine:
                     queue_db_path = os.path.join(configured_root, "erii_tasks.db")
             task_queue = PersistentTaskQueue(db_path=queue_db_path)
 
-        # 6. Instantiate Background Archiver Worker
+        # 6. Assemble the background archiver without starting hidden work.
         self.archiver_worker = AsyncArchiverWorker(
             storage=self.storage,
             llm_adapter=self.llm_adapter,
@@ -150,9 +163,16 @@ class ERIIEngine:
             user_message = SecuritySanitizer.scrub_pii(user_message)
             bot_reply = SecuritySanitizer.scrub_pii(bot_reply)
 
-        # Push turn to background archival worker thread
+        # Queue for host-controlled background processing, or process inline.
         if self.config.async_archival:
             self.archiver_worker.push_task(
+                agent_id=clean_agent,
+                user_id=clean_user,
+                user_msg=user_message,
+                bot_reply=bot_reply,
+            )
+        else:
+            self.archiver_worker.process_now(
                 agent_id=clean_agent,
                 user_id=clean_user,
                 user_msg=user_message,
@@ -249,6 +269,141 @@ class ERIIEngine:
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
         return self.storage.get_core_memory(clean_agent, clean_user)
+
+    def initialize_relationship(
+        self,
+        agent_id: str,
+        user_id: str,
+        persona_source: str,
+        compiled_persona: Optional[Mapping[str, Any]] = None,
+    ) -> RelationshipProfile:
+        """Initializes one isolated Agent x User relationship idempotently.
+
+        The imported persona source is an immutable authority snapshot. Calling
+        this method again for the same pair is safe only when the source and any
+        explicitly supplied compilation are unchanged.
+        """
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        source_text = persona_source.strip() if isinstance(persona_source, str) else ""
+        if not source_text:
+            raise ValueError("persona_source must be a non-empty string")
+
+        existing = self.storage.get_relationship(clean_agent, clean_user)
+        if existing is not None:
+            self._ensure_persona_matches(existing, source_text, compiled_persona)
+            return existing
+
+        agent_identity_id = self.storage.get_or_create_identity(
+            IdentityKind.AGENT,
+            clean_agent,
+        )
+        user_identity_id = self.storage.get_or_create_identity(
+            IdentityKind.USER,
+            clean_user,
+        )
+        profile = RelationshipProfile(
+            relationship_id=str(uuid.uuid4()),
+            persona_id=str(uuid.uuid4()),
+            agent_identity_id=agent_identity_id,
+            user_identity_id=user_identity_id,
+            agent_id=clean_agent,
+            user_id=clean_user,
+            blueprint=CharacterBlueprint(
+                blueprint_id=str(uuid.uuid4()),
+                source_text=source_text,
+                compiled=compiled_persona or {},
+            ),
+        )
+        stored = self.storage.create_relationship(profile)
+        self._ensure_persona_matches(stored, source_text, compiled_persona)
+        return stored
+
+    @staticmethod
+    def _ensure_persona_matches(
+        profile: RelationshipProfile,
+        persona_source: str,
+        compiled_persona: Optional[Mapping[str, Any]],
+    ) -> None:
+        """Rejects attempts to mutate the immutable authority snapshot."""
+        if profile.blueprint.source_text != persona_source:
+            raise PersonaConflictError(
+                "this relationship already has a different persona authority snapshot"
+            )
+        if compiled_persona is not None:
+            candidate = CharacterBlueprint(
+                blueprint_id=profile.blueprint.blueprint_id,
+                source_text=persona_source,
+                compiled=compiled_persona,
+                created_at=profile.blueprint.created_at,
+            )
+            if candidate.to_dict()["compiled"] != profile.blueprint.to_dict()["compiled"]:
+                raise PersonaConflictError(
+                    "this relationship already has a different compiled persona snapshot"
+                )
+
+    def record_relationship_event(
+        self,
+        agent_id: str,
+        user_id: str,
+        event_type: Union[RelationshipEventType, str],
+        content: str,
+        *,
+        state_delta: Optional[Mapping[str, float]] = None,
+        belief_updates: Optional[Sequence[Union[BeliefUpdate, Mapping[str, Any]]]] = None,
+        occurred_at: Optional[str] = None,
+        event_id: Optional[str] = None,
+    ) -> RelationshipEvent:
+        """Appends one validated relationship event and returns the stored event."""
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        profile = self.storage.get_relationship(clean_agent, clean_user)
+        if profile is None:
+            raise RelationshipNotFoundError(
+                "initialize_relationship() must be called before recording events"
+            )
+
+        event = RelationshipEvent(
+            event_id=event_id or str(uuid.uuid4()),
+            relationship_id=profile.relationship_id,
+            event_type=RelationshipEventType(event_type),
+            content=content,
+            state_delta=state_delta or {},
+            belief_updates=belief_updates or (),
+            occurred_at=occurred_at,
+        )
+        return self.storage.append_relationship_event(event)
+
+    def get_relationship_snapshot(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> RelationshipSnapshot:
+        """Rebuilds current beliefs and relationship state from accepted history."""
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        profile = self.storage.get_relationship(clean_agent, clean_user)
+        if profile is None:
+            raise RelationshipNotFoundError(
+                "initialize_relationship() must be called before reading a snapshot"
+            )
+        events = self.storage.list_relationship_events(profile.relationship_id)
+        return RelationshipProjector.project(profile, events)
+
+    def list_relationship_events(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> List[RelationshipEvent]:
+        """Returns the append-only relationship history in storage order."""
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        profile = self.storage.get_relationship(clean_agent, clean_user)
+        if profile is None:
+            raise RelationshipNotFoundError(
+                "initialize_relationship() must be called before reading events"
+            )
+        return self.storage.list_relationship_events(profile.relationship_id)
 
     def remember_thought(
         self,
@@ -416,6 +571,16 @@ class ERIIEngine:
         nodes = self.storage.load_nodes(clean_agent, clean_user)
         core_mem = self.storage.get_core_memory(clean_agent, clean_user)
         timeline = self.storage.get_recent_timeline(clean_agent, clean_user, limit=1000)
+        try:
+            relationship = self.storage.get_relationship(clean_agent, clean_user)
+            relationship_events = (
+                self.storage.list_relationship_events(relationship.relationship_id)
+                if relationship is not None
+                else []
+            )
+        except NotImplementedError:
+            relationship = None
+            relationship_events = []
 
         raw_timeline = []
         for line in timeline:
@@ -433,6 +598,8 @@ class ERIIEngine:
             core_memory=core_mem,
             nodes=nodes,
             timeline=raw_timeline,
+            relationship=relationship,
+            relationship_events=relationship_events,
         )
 
         if export_path:
@@ -482,7 +649,74 @@ class ERIIEngine:
                 clean_agent, clean_user, entry.get("content", ""), entry.get("timestamp")
             )
 
+        if pack.relationship is not None:
+            existing_profile = self.storage.get_relationship(clean_agent, clean_user)
+            if existing_profile is not None:
+                self._ensure_persona_matches(
+                    existing_profile,
+                    pack.relationship.blueprint.source_text,
+                    pack.relationship.blueprint.compiled,
+                )
+                target_profile = existing_profile
+            elif (
+                clean_agent == pack.relationship.agent_id
+                and clean_user == pack.relationship.user_id
+            ):
+                try:
+                    target_profile = self.storage.create_relationship(pack.relationship)
+                except (RuntimeError, ValueError):
+                    target_profile = self.initialize_relationship(
+                        clean_agent,
+                        clean_user,
+                        pack.relationship.blueprint.source_text,
+                        pack.relationship.blueprint.compiled,
+                    )
+            else:
+                target_profile = self.initialize_relationship(
+                    clean_agent,
+                    clean_user,
+                    pack.relationship.blueprint.source_text,
+                    pack.relationship.blueprint.compiled,
+                )
+
+            for source_event in pack.relationship_events:
+                if source_event.relationship_id == target_profile.relationship_id:
+                    imported_event = source_event
+                else:
+                    imported_event = RelationshipEvent(
+                        event_id=str(
+                            uuid.uuid5(
+                                uuid.NAMESPACE_URL,
+                                f"erii:{target_profile.relationship_id}:{source_event.event_id}",
+                            )
+                        ),
+                        relationship_id=target_profile.relationship_id,
+                        event_type=source_event.event_type,
+                        content=source_event.content,
+                        state_delta=source_event.state_delta,
+                        belief_updates=source_event.belief_updates,
+                        occurred_at=source_event.occurred_at,
+                        recorded_at=source_event.recorded_at,
+                    )
+                self.storage.append_relationship_event(imported_event)
+
         return pack
+
+    def start(self) -> "ERIIEngine":
+        """Explicitly starts background archival and returns this engine."""
+        self.archiver_worker.start()
+        return self
+
+    def process_pending(self, max_tasks: Optional[int] = None) -> int:
+        """Synchronously processes ready archival tasks under host control."""
+        if max_tasks is not None and max_tasks < 0:
+            raise ValueError("max_tasks cannot be negative")
+        processed = 0
+        while max_tasks is None or processed < max_tasks:
+            if not self.archiver_worker.process_next():
+                break
+            processed += 1
+        return processed
 
     def close(self) -> None:
         """Gracefully shuts down background archiver thread."""

@@ -75,6 +75,8 @@ class TestRFCFullVerification(unittest.TestCase):
     def test_rfc4_context_manager_and_graceful_shutdown(self):
         """验证 RFC 4: ContextManager (__enter__ / __exit__) 自动化资源回收"""
         with ERIIEngine(storage_dir=self.test_dir) as engine:
+            self.assertFalse(engine.archiver_worker.running)
+            engine.start()
             self.assertTrue(engine.archiver_worker.running)
 
         # 退出 with 块后自动 shutdown

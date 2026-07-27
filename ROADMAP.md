@@ -12,13 +12,15 @@
 
 ## v0.4.0：关系人格基础
 
-### alpha.1：无 LLM 领域内核
+### alpha.1：无 LLM 领域内核（已完成）
 
 - 原始人设快照与结构化编译结果；
 - 稳定的 persona、relationship 和 identity ID；
 - 追加式历史事件；
 - 当前认知与关系状态投影；
-- SQLite Schema 和迁移框架。
+- SQLite Schema 和迁移框架；
+- 宿主显式控制后台处理生命周期；
+- 关系档案和事件进入 MemoryPack `0.4.0`。
 
 ### alpha.2：候选提取与规则裁决
 

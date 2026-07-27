@@ -24,6 +24,7 @@ def main():
         user_message="Hello, test storing memory in SQLite database.",
         bot_reply="SQLite database is initialized and working smoothly!"
     )
+    engine.process_pending()
 
     context = engine.recall(agent_id, user_id, query="sqlite test")
 

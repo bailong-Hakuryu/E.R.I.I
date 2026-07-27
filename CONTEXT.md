@@ -1,42 +1,60 @@
-# E.R.I.I. Domain Glossary (上下文与领域术语表)
+# E.R.I.I. Domain Glossary
 
-本文档定义 E.R.I.I. 引擎中的核心领域术语（Ubiquitous Language）。本表严禁包含任何代码实现细节或技术栈框架词汇。
+E.R.I.I. 描述情感型 Agent 与用户如何分别形成共同历史、当前认知与关系人格。本文档规定项目统一使用的领域语言。
 
----
+## 身份与人格
 
-## 1. 记忆轨 (Memory Tracks)
+**Character Blueprint（人设底色）**：
+用户导入的角色身份、价值观、表达风格与边界的权威原文快照；结构化结果只能解释它，不能反向改写它。
+_Avoid_: 核心人格记忆、Core Memory、系统提示词
 
-- **第一人称体验时间线 (Experiential Timeline)**
-   Agent 站在第一人称“我”的视角，对发生的交互事件所做的叙述性总结与事实重现记录。
+**Persona Instance（关系人格实例）**：
+人设底色在一段具体关系中的独立人格；每个 `Agent × User` 分别成长，不继承其他关系的亲密程度或共同经历。
+_Avoid_: 全局人格、共享人格
 
-- **多维印象节点 (Impression Node)**
-   从对话交互中提取并分类归档的结构化知识与态度节点（涵盖客观事实 `FACT`、偏好 `PREFERENCE`、事件 `EVENT`、情感 `EMOTION`、关系 `RELATIONSHIP` 等）。
+**Identity（身份）**：
+关系一方稳定且不可因显示名称或外部平台标识变化而改变的身份。
+_Avoid_: 用户名、Agent 名称、外部 ID
 
-- **核心人格记忆 (Core Persona Memory)**
-   赋予 Agent 的基础角色设定、不可置疑的元规则或长效自我身份认知。
+## 关系与历史
 
----
+**Relationship（关系）**：
+一个 Agent 身份与一个 User 身份之间独立、连续的共同生命线。
+_Avoid_: 会话、聊天室、全局关系图
 
-## 2. 动态记忆演进 (Memory Dynamics)
+**Relationship Event（关系事件）**：
+追加到关系历史中的共同经历、观察、承诺、冲突、修复、更正或反思；事件一旦接受便不通过覆盖来抹去。
+_Avoid_: 可变状态记录、聊天日志
 
-- **时间指数衰减 (Time Exponential Decay)**
-   记忆节点的有效权重随时间流逝呈指数级下降（`e^(-λ·Δt)`），非重要记忆随时间推移逐渐淡出召回视野。
+**Current Belief（当前认知）**：
+由关系事件投影出的 Agent 当前所相信的内容，同时保留置信度与来源事件。
+_Avoid_: 永久事实、无来源印象
 
-- **召回强化 (Recall Reinforcement)**
-   当某条记忆节点在对话检索中被精准引用时，引擎自动刷新其活跃时间戳并提升其基础重要度，实现“越常想起来，记忆越深刻”。
+**Relationship State（关系状态）**：
+由关系事件投影出的熟悉、信任、亲密、安全感与冲突张力；普通变化是渐进、有证据且有限幅度的。
+_Avoid_: 好感度、单一亲密值
 
-- **分类熔断 (Diversity Cap)**
-   检索召回时对单一分类（如 `PREFERENCE`）设置的配额上限，防止单一话题或重复向量垄断 Context 预算。
+**Persona Change Proposal（人格变更提案）**：
+触及人设底色或造成巨大人格跃迁的候选变化；确认前不属于有效人格。
+_Avoid_: 自动人格改写
 
----
+## 记忆与叙事
 
-## 3. 叙事与心理独白 (Narrative & Inner Monologue)
+**Experiential Timeline（体验时间线）**：
+Agent 以第一人称对交互经历所作的叙事性总结。
+_Avoid_: 原始聊天记录
 
-- **心理独白 (Inner Monologue)**
-   Agent 内部未言说的第一人称心理活动、内省思考或情感余温。
+**Impression Node（印象节点）**：
+从交互中提取并分类的事实、偏好、事件、情绪或关系印象，用于相关性召回。
+_Avoid_: 关系事件、权威事实
 
-- **蔡格尼克效应 / 叙事悬念 (Zeigarnik Effect / Narrative Tension)**
-   带有“未完待续”标记（`is_unresolved`）的心理状态或承诺，其时间衰减自动挂起并在时间轴中顶置呈现，维持剧情张力直至被显式闭环。
+**Inner Monologue（心理独白）**：
+Agent 未言说的第一人称心理活动、内省或情感余温。
 
-- **情感余温衰减 (Emotional Resonance Decay)**
-   具有强烈情绪共鸣（高情绪绝对值）的独白采用减缓的衰减速率，使其在 Agent 心理层面停留更长时间。
+**Recall Salience（召回显著性）**：
+一段记忆在当前情境中被想起的倾向；显著性降低不表示历史被删除或关系影响被撤销。
+_Avoid_: 遗忘、事实失效
+
+**Narrative Tension（叙事悬念）**：
+未完成承诺、未解决冲突或待续事件对当前叙事保持的持续影响。
+_Avoid_: 永不衰减的所有记忆
