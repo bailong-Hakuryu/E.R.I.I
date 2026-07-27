@@ -19,7 +19,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 从这里开始
 
-- **第一次接入：** [完整中文使用手册](docs/USAGE_zh-CN.md)，从安装、十分钟示例到真实聊天循环；
+- **第一次接入：** [完整中文使用手册](docs/USAGE_zh-CN.md) / [Complete English User Guide](docs/USAGE.md)，从安装、十分钟示例到真实聊天循环；
 - **直接运行：** [`examples/`](examples/) 中包含 FileStorage、SQLite、关系人格、结构化召回和时间承诺示例；
 - **准备贡献：** [CONTRIBUTING.md](CONTRIBUTING.md)；
 - **处理真实数据前：** [SECURITY.md](SECURITY.md)。

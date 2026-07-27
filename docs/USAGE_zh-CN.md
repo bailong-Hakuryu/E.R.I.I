@@ -1,5 +1,7 @@
 # E.R.I.I. 中文使用手册
 
+**简体中文** · [English](USAGE.md)
+
 > 适用于 E.R.I.I. `0.4.0a4`。当前版本仍是 alpha：适合本地开发、原型验证和受控集成，不应未经加固直接承担公开生产服务。
 
 E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长期记忆内核。它不负责生成聊天回复，也不绑定某一种模型；它负责保存角色与某个用户共同经历过什么、当前如何理解这些经历，以及哪些承诺和未完成事项仍值得被想起。
@@ -321,6 +323,8 @@ with ERIIEngine(
 
 初始化会保存原文快照、格式、来源名和 SHA-256。它不会修改原文件，也不会自动把文件提交到 Git。
 
+E.R.I.I. 本身不附带第三方角色素材，项目的软件许可证也不会授予导入人设内容的权利。使用、发布或商业化第三方角色材料前，请自行核对适用的著作权、许可证和平台条款。
+
 同一 `(agent_id, user_id)` 再次传入完全相同的人设是安全的；传入不同原文会抛出 `PersonaConflictError`。需要发布角色的新版本时，推荐：
 
 - 保留旧关系和旧 MemoryPack；
@@ -465,9 +469,9 @@ proposal = engine.propose_persona_compilation(
         ],
         "claims": [
             {
-                "claim_id": "respect-choice",
-                "kind": "value",
-                "statement": "Lumi 尊重他人的选择。",
+                "claim_id": "patient-respectful-identity",
+                "kind": "identity",
+                "statement": source,
                 "activation_tier": "foundation",
                 "basis": "explicit",
                 "source_span_ids": ["source-identity"],
@@ -685,6 +689,8 @@ print(snapshot.state.trust)
 print(snapshot.state_reasons["trust"].explanation)
 print(snapshot.state_reasons["trust"].evidence_event_id)
 ```
+
+这些指标是有证据支撑的内部投影，不是对用户心理的事实判断，也不是优化目标；数值更高不天然代表更好。
 
 不要让 LLM 直接决定 `state_delta`。
 
