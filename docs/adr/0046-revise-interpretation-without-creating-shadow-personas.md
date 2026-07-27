@@ -1,0 +1,3 @@
+# Revise interpretation without creating shadow personas
+
+Reviewers correct source-backed classification, activation, scope, link basis, and Meaning Capsule content by creating a new immutable Persona Compilation Revision, then approve that exact revision rather than editing during approval. A revision may add an omitted interpretation only when it cites the existing source; any new unsupported core setting requires a Character Blueprint Revision, while user-role binding and initial intimacy remain Relationship Premise and Baseline concerns, preventing the Manifest from becoming a more authoritative shadow persona.

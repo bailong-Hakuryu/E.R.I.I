@@ -7,6 +7,14 @@ Follows Google Python Style Guide.
 from erii.adapters.base import BaseLLMAdapter
 from erii.adapters.custom_adapter import CallableLLMAdapter
 from erii.adapters.openai_adapter import OpenAIAdapter
+from erii.adapters.persona_compiler import (
+    BasePersonaCompilerAdapter,
+    CallablePersonaCompilerAdapter,
+    LLMPersonaCompilerAdapter,
+)
+from erii.core.persona_compilation import PersonaCompiler
+from erii.core.persona_context import PersonaManifestRequiredError
+from erii.core.recall import RecallBudgetUnsatisfiedError
 from erii.core.queue.base import BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.engine import ERIIEngine
@@ -38,7 +46,53 @@ from erii.models.adjudication import (
 )
 from erii.models.node import MemoryNode, MemoryState, MemoryType, MemoryVisibility
 from erii.models.pack import MemoryPack
+from erii.models.persona import (
+    CanonicalPremiseTemplateCandidate,
+    FormativeExperienceCandidate,
+    FormativeLinkCandidate,
+    FormativeLinkType,
+    MeaningCapsuleCandidate,
+    PersonaActivationTier,
+    PersonaApplicability,
+    PersonaClaimCandidate,
+    PersonaClaimKind,
+    PersonaCompilationConflictError,
+    PersonaCompilationDecision,
+    PersonaCompilationProposal,
+    PersonaCompilationStatus,
+    PersonaInterpretationBasis,
+    PersonaManifest,
+    PersonaManifestCandidate,
+    PersonaScope,
+    PersonaSourceSpan,
+)
+from erii.models.recall import (
+    BudgetOmission,
+    BudgetReport,
+    EventRecallProjection,
+    MemoryRecallProjection,
+    PersonaDelivery,
+    PersonaRecallContext,
+    PersonaRecallProjection,
+    RecallAudience,
+    RecallBudget,
+    RecallNotice,
+    RecallNoticeSeverity,
+    RecallOptions,
+    RecallRequest,
+    RecallResult,
+    RecallSignalProjection,
+    RecallSourceReference,
+    RecallTemporalContext,
+    ReinforcementReport,
+    RelationshipMetric,
+    RelationshipNarrativeProjection,
+    RelationshipRecallContext,
+    RelationshipRecallStatus,
+    WorldTime,
+)
 from erii.models.relationship import (
+    BaselineLevel,
     BeliefOperation,
     BeliefUpdate,
     CharacterBlueprint,
@@ -46,16 +100,28 @@ from erii.models.relationship import (
     EventConflictError,
     IdentityKind,
     PersonaConflictError,
+    PremiseExperience,
+    PremisePolicy,
+    RelationshipBaseline,
     RelationshipEvent,
     RelationshipEventType,
     RelationshipNotFoundError,
     RelationshipProfile,
+    RelationshipPremise,
+    RelationshipPremiseMode,
     RelationshipSnapshot,
     RelationshipState,
     StateReason,
     TemporalContext,
 )
 from erii.security.sanitizer import SecuritySanitizer
+from erii.renderers import (
+    MarkdownRecallRenderer,
+    RecallAudienceMismatchError,
+    RecallRenderBudgetError,
+    RecallRenderError,
+    RecallRenderer,
+)
 from erii.storage.base import BaseStorage
 from erii.storage.file_storage import FileStorage
 from erii.storage.sqlite_storage import SQLiteStorage
@@ -69,6 +135,64 @@ from erii._version import __version__
 
 __all__ = [
     "__version__",
+    "BasePersonaCompilerAdapter",
+    "BaselineLevel",
+    "BudgetOmission",
+    "BudgetReport",
+    "CallablePersonaCompilerAdapter",
+    "CanonicalPremiseTemplateCandidate",
+    "EventRecallProjection",
+    "FormativeExperienceCandidate",
+    "FormativeLinkCandidate",
+    "FormativeLinkType",
+    "LLMPersonaCompilerAdapter",
+    "MarkdownRecallRenderer",
+    "MeaningCapsuleCandidate",
+    "MemoryRecallProjection",
+    "PersonaActivationTier",
+    "PersonaApplicability",
+    "PersonaClaimCandidate",
+    "PersonaClaimKind",
+    "PersonaCompilationConflictError",
+    "PersonaCompilationDecision",
+    "PersonaCompilationProposal",
+    "PersonaCompilationStatus",
+    "PersonaCompiler",
+    "PersonaDelivery",
+    "PersonaInterpretationBasis",
+    "PersonaManifest",
+    "PersonaManifestCandidate",
+    "PersonaManifestRequiredError",
+    "PersonaRecallContext",
+    "PersonaRecallProjection",
+    "PersonaScope",
+    "PersonaSourceSpan",
+    "PremiseExperience",
+    "PremisePolicy",
+    "RecallAudience",
+    "RecallAudienceMismatchError",
+    "RecallBudget",
+    "RecallBudgetUnsatisfiedError",
+    "RecallNotice",
+    "RecallNoticeSeverity",
+    "RecallOptions",
+    "RecallRenderBudgetError",
+    "RecallRenderError",
+    "RecallRenderer",
+    "RecallRequest",
+    "RecallResult",
+    "RecallSignalProjection",
+    "RecallSourceReference",
+    "RecallTemporalContext",
+    "ReinforcementReport",
+    "RelationshipBaseline",
+    "RelationshipMetric",
+    "RelationshipNarrativeProjection",
+    "RelationshipPremise",
+    "RelationshipPremiseMode",
+    "RelationshipRecallContext",
+    "RelationshipRecallStatus",
+    "WorldTime",
     "AdjudicationBatchResult",
     "AdjudicationRecord",
     "ERIIEngine",

@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0a2-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-0.4.0a3-orange.svg)]()
 
 E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI 伴侣、虚拟角色和叙事型 Agent。
 
@@ -19,7 +19,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 当前版本能够做什么
 
-`v0.4.0a2` 已实现：
+`v0.4.0a3` 已实现：
 
 - 按 `(agent_id, user_id)` 隔离记忆；
 - 核心人格文本、体验时间线和分类印象节点；
@@ -45,12 +45,17 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - 宿主在对话外按提案版本批准、拒绝或撤销人格成长；
 - 证据、裁决回执和人格成长提案的 MemoryPack 携带能力；
 - 显式观察但不暗改关系状态的时间上下文；
+- 显式 Persona Compiler、不可变 Proposal revision 与精确 Manifest 审批；
+- `fresh`、`address_only`、`canonical_continuation` 关系前提及确定性 Baseline；
+- `RecallResult`、显式受众、World Time、完整投影预算和可替换 Renderer；
+- 默认只读的结构化召回，以及只强化最终入选记忆的显式模式；
+- SQLite Schema v3 和携带 Persona Proposal/Manifest/关系前提的 MemoryPack `0.4.0a3`；
 - 由宿主显式控制的后台归档生命周期。
 
 当前版本尚未实现：
 
 - 事件、情节和关系阶段的分层巩固；
-- 关系状态进入结构化召回结果；
+- 到期承诺、开放事项与其追加式解决事件信号；
 - 完整的授权、加密或多租户安全边界。
 
 这些能力属于 `v0.4.0` 及后续路线，不应将 README 中的规划理解为已经交付。
@@ -244,6 +249,81 @@ with ERIIEngine(storage_dir="./erii_memory") as engine:
 相同来源处理身份的首次提交会固定整批候选；普通重试不能新增、删除或改写候选，只会继续未完成项或返回原回执。用新模型复核旧来源时，宿主必须显式提交 `processing_mode="historical_reprocessing"` 和稳定的 `reprocessing_id`；复核只追加佐证、更正或重新理解，不覆盖旧历史。
 
 人格成长不能与当前 turn 的事件提取在同一次输出中完成。事件和 Persona Reflection 必须先提交，之后宿主再调用 `propose_persona_growth()` 提交独立 Inner Review 结果；`decide_persona_growth_proposal()` 仅记录宿主在对话外完成鉴权后的精确版本决定。
+
+## Persona Compiler 与结构化召回
+
+`0.4.0a3` 把“检索到什么”与“如何写进 Prompt”分开。`recall_structured()` 返回不可变、可序列化的 `RecallResult`；`render_recall()` 只是确定性 Renderer，不读取存储、不调用 LLM，也不会在渲染时删改语义项。
+
+Persona Compiler 必须由宿主显式调用。编译结果先成为带原文引用的 Proposal，只有对精确 revision 的对话外审批才会生成 Manifest；初始化关系和后台归档都不会偷偷运行编译器或批准人设。
+
+```python
+from erii import ERIIEngine, RecallRequest
+
+source = "Lumi is a patient original character."
+
+with ERIIEngine(storage_dir="./erii_memory") as engine:
+    engine.initialize_relationship("agent_lumi", "user_chen", source)
+
+    proposal = engine.propose_persona_compilation(
+        "agent_lumi",
+        "user_chen",
+        {
+            "compiler_version": "my-compiler-v1",
+            "source_spans": [{
+                "span_id": "identity-source",
+                "start": 0,
+                "end": len(source),
+                "quote": source,
+            }],
+            "claims": [{
+                "claim_id": "patient-identity",
+                "kind": "identity",
+                "statement": "Lumi is patient.",
+                "activation_tier": "foundation",
+                "basis": "explicit",
+                "source_span_ids": ["identity-source"],
+            }],
+        },
+    )
+    engine.decide_persona_compilation(
+        "agent_lumi",
+        "user_chen",
+        proposal.proposal_id,
+        proposal.revision,
+        actor_id="owner",
+        decision="approve",
+    )
+
+    result = engine.recall_structured({
+        "agent_id": "agent_lumi",
+        "user_id": "user_chen",
+        "query": "How should Lumi respond?",
+        "audience": "agent_private",
+        "options": {
+            "persona_delivery": "planned",
+            "reinforce": False,
+            "budget": {"max_cost": 8192},
+        },
+        "temporal_context": {
+            "world_time": {
+                "clock_id": "story-v1",
+                "display_value": "the third day of winter",
+            }
+        },
+    })
+    prompt_context = engine.render_recall(result)
+```
+
+关系未初始化时，结构化召回会明确返回 `uninitialized`，继续提供旧记忆投影，但绝不会因此创建默认人设。结构化召回默认只读；只有 `reinforce=True` 才会强化最终通过预算的 MemoryNode。`public` 受众会在组装阶段排除人设原文、内部独白、关系数值和默认私有关系事件，不能依靠 Renderer 临时隐藏。
+
+人设交付有两种模式：
+
+- `planned`（默认）：使用获批 Manifest，始终携带 Foundation 与其形成性依赖闭包，再按当前问题选择 Situational/Reference 内容；
+- `full`：显式携带完整 Character Blueprint 原文，作为服从宿主安全、授权、隐私与工具策略的角色材料。
+
+每段关系还可在初始化时显式选择 `fresh`、`address_only` 或 `canonical_continuation`。默认 `fresh` 不继承原作关系；`address_only` 只继承称呼；`canonical_continuation` 必须提供有原文区间证据的 Premise Experience，并由版本化 Premise Policy 把定性等级确定映射为该关系独有的 Baseline。不同用户始终是不同世界线。
+
+REST 客户端可调用 `POST /api/v1/recall/structured`；旧 `POST /api/v1/recall` 与 `ERIIEngine.recall()` 仍返回兼容 Markdown，并保留自动强化行为。
 
 ## 使用 SQLite 保存记忆
 

@@ -9,13 +9,14 @@ import json
 from typing import Any, Dict, List, Optional
 from erii.models.adjudication import AdjudicationRecord, PersonaGrowthProposal
 from erii.models.node import MemoryNode
+from erii.models.persona import PersonaCompilationProposal, PersonaManifest
 from erii.models.relationship import RelationshipEvent, RelationshipProfile
 
 
 class MemoryPack:
     """Portable container data structure for agent/user memory export & import."""
 
-    CURRENT_VERSION = "0.4.0"
+    CURRENT_VERSION = "0.4.0a3"
 
     def __init__(
         self,
@@ -30,6 +31,8 @@ class MemoryPack:
         relationship_events: Optional[List[RelationshipEvent]] = None,
         relationship_adjudications: Optional[List[AdjudicationRecord]] = None,
         persona_growth_proposals: Optional[List[PersonaGrowthProposal]] = None,
+        persona_compilation_proposals: Optional[List[PersonaCompilationProposal]] = None,
+        persona_manifests: Optional[List[PersonaManifest]] = None,
     ) -> None:
         """Initializes MemoryPack.
 
@@ -45,6 +48,8 @@ class MemoryPack:
             relationship_events: Append-only relationship history.
             relationship_adjudications: Candidate receipts and verified evidence.
             persona_growth_proposals: Pending and decided relationship-persona growth.
+            persona_compilation_proposals: Reviewable Persona Compiler revisions.
+            persona_manifests: Approved, immutable Persona Interpretation manifests.
         """
         self.agent_id = agent_id
         self.user_id = user_id
@@ -55,6 +60,8 @@ class MemoryPack:
         self.relationship_events = relationship_events or []
         self.relationship_adjudications = relationship_adjudications or []
         self.persona_growth_proposals = persona_growth_proposals or []
+        self.persona_compilation_proposals = persona_compilation_proposals or []
+        self.persona_manifests = persona_manifests or []
         self.version = version
         self.exported_at = exported_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -80,6 +87,10 @@ class MemoryPack:
             "persona_growth_proposals": [
                 proposal.to_dict() for proposal in self.persona_growth_proposals
             ],
+            "persona_compilation_proposals": [
+                proposal.to_dict() for proposal in self.persona_compilation_proposals
+            ],
+            "persona_manifests": [manifest.to_dict() for manifest in self.persona_manifests],
         }
 
     @classmethod
@@ -98,6 +109,8 @@ class MemoryPack:
         raw_relationship_events = data.get("relationship_events", [])
         raw_adjudications = data.get("relationship_adjudications", [])
         raw_growth_proposals = data.get("persona_growth_proposals", [])
+        raw_compilation_proposals = data.get("persona_compilation_proposals", [])
+        raw_persona_manifests = data.get("persona_manifests", [])
 
         nodes = [MemoryNode.from_dict(item) for item in raw_nodes]
 
@@ -120,6 +133,13 @@ class MemoryPack:
             ],
             persona_growth_proposals=[
                 PersonaGrowthProposal.from_dict(item) for item in raw_growth_proposals
+            ],
+            persona_compilation_proposals=[
+                PersonaCompilationProposal.from_dict(item)
+                for item in raw_compilation_proposals
+            ],
+            persona_manifests=[
+                PersonaManifest.from_dict(item) for item in raw_persona_manifests
             ],
             version=version,
             exported_at=exported_at,

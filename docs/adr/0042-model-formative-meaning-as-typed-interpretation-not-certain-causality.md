@@ -1,0 +1,3 @@
+# Model formative meaning as typed interpretation, not certain causality
+
+Persona Interpretation links Formative Experiences to persona claims through typed `supports`, `explains`, `expresses`, `shapes_attachment`, `tensions_with`, and `relationship_specific` meanings, each marked as explicit, strongly implied, or interpretive and anchored to source spans. Approved links may form dependency closure for planned recall, but they never claim a unique deterministic psychological cause, use model confidence as authorization, or silently promote an interpretation after compiler upgrades; supported tensions may remain visible rather than being normalized away.

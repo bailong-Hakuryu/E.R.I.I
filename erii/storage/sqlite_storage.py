@@ -4,6 +4,7 @@ Provides relational, single-file database storage using Python standard sqlite3.
 Follows Google Python Style Guide.
 """
 
+from dataclasses import replace
 from datetime import datetime
 import json
 import logging
@@ -21,9 +22,16 @@ from erii.models.adjudication import (
     PersonaGrowthStatus,
 )
 from erii.models.node import MemoryNode
+from erii.models.persona import (
+    PersonaCompilationConflictError,
+    PersonaCompilationProposal,
+    PersonaCompilationStatus,
+    PersonaManifest,
+)
 from erii.models.relationship import (
     EventConflictError,
     IdentityKind,
+    PersonaConflictError,
     RelationshipEvent,
     RelationshipProfile,
     utc_now,
@@ -125,6 +133,13 @@ class SQLiteStorage(BaseStorage):
                     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                     (2, "relationship-adjudication-alpha2", utc_now()),
                 )
+                current_version = 2
+            if current_version < 3:
+                self._migrate_persona_structured_recall_v3(cursor)
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                    (3, "persona-structured-recall-alpha3", utc_now()),
+                )
             conn.commit()
 
     @staticmethod
@@ -225,6 +240,63 @@ class SQLiteStorage(BaseStorage):
             """
             CREATE INDEX IF NOT EXISTS idx_persona_growth_relationship
             ON persona_growth_proposals(relationship_id, created_at)
+            """
+        )
+
+    @staticmethod
+    def _migrate_persona_structured_recall_v3(cursor: sqlite3.Cursor) -> None:
+        """Adds immutable compilation revisions, manifests, and initial context."""
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS persona_compilation_revisions (
+                proposal_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                blueprint_id TEXT NOT NULL,
+                content_fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL,
+                data JSON NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (proposal_id, revision)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_persona_compilation_blueprint
+            ON persona_compilation_revisions(blueprint_id, proposal_id, revision)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS persona_manifests (
+                manifest_id TEXT PRIMARY KEY,
+                blueprint_id TEXT NOT NULL,
+                proposal_id TEXT NOT NULL,
+                proposal_revision INTEGER NOT NULL,
+                content_fingerprint TEXT NOT NULL,
+                data JSON NOT NULL,
+                approved_at TEXT NOT NULL,
+                UNIQUE (proposal_id, proposal_revision),
+                FOREIGN KEY (proposal_id, proposal_revision)
+                    REFERENCES persona_compilation_revisions(proposal_id, revision)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_persona_manifest_blueprint
+            ON persona_manifests(blueprint_id, approved_at)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS relationship_initial_context (
+                relationship_id TEXT PRIMARY KEY,
+                data JSON NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id)
+            )
             """
         )
 
@@ -404,7 +476,10 @@ class SQLiteStorage(BaseStorage):
                 return identity_id
 
     @staticmethod
-    def _profile_from_row(row: sqlite3.Row) -> RelationshipProfile:
+    def _profile_from_row(
+        row: sqlite3.Row,
+        context_data: Optional[str] = None,
+    ) -> RelationshipProfile:
         data = {
             "relationship_id": row["relationship_id"],
             "persona_id": row["persona_id"],
@@ -415,6 +490,15 @@ class SQLiteStorage(BaseStorage):
             "blueprint": json.loads(row["blueprint_data"]),
             "created_at": row["created_at"],
         }
+        if context_data:
+            context = json.loads(context_data)
+            data.update(
+                {
+                    "premise": context.get("premise", {}),
+                    "baseline": context.get("baseline"),
+                    "manifest_id": context.get("manifest_id"),
+                }
+            )
         return RelationshipProfile.from_dict(data)
 
     def create_relationship(self, profile: RelationshipProfile) -> RelationshipProfile:
@@ -480,10 +564,41 @@ class SQLiteStorage(BaseStorage):
                     "SELECT * FROM relationships WHERE agent_id = ? AND user_id = ?",
                     (clean_agent, clean_user),
                 ).fetchone()
-                conn.commit()
                 if row is None:
+                    conn.rollback()
                     raise RuntimeError("relationship profile could not be created")
-                return self._profile_from_row(row)
+                initial_context = {
+                    "premise": profile.premise.to_dict(),
+                    "baseline": profile.baseline.to_dict(),
+                    "manifest_id": profile.manifest_id,
+                }
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO relationship_initial_context
+                        (relationship_id, data, created_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (
+                        row["relationship_id"],
+                        json.dumps(initial_context, ensure_ascii=False),
+                        profile.created_at,
+                    ),
+                )
+                context_row = conn.execute(
+                    "SELECT data FROM relationship_initial_context WHERE relationship_id = ?",
+                    (row["relationship_id"],),
+                ).fetchone()
+                stored = self._profile_from_row(
+                    row,
+                    context_row["data"] if context_row is not None else None,
+                )
+                if stored.to_dict() != profile.to_dict():
+                    conn.rollback()
+                    raise PersonaConflictError(
+                        "relationship initialization conflicts with its immutable profile"
+                    )
+                conn.commit()
+                return stored
 
     def get_relationship(
         self, agent_id: str, user_id: str
@@ -497,7 +612,16 @@ class SQLiteStorage(BaseStorage):
                     "SELECT * FROM relationships WHERE agent_id = ? AND user_id = ?",
                     (clean_agent, clean_user),
                 ).fetchone()
-                return self._profile_from_row(row) if row is not None else None
+                if row is None:
+                    return None
+                context_row = conn.execute(
+                    "SELECT data FROM relationship_initial_context WHERE relationship_id = ?",
+                    (row["relationship_id"],),
+                ).fetchone()
+                return self._profile_from_row(
+                    row,
+                    context_row["data"] if context_row is not None else None,
+                )
 
     def append_relationship_event(self, event: RelationshipEvent) -> RelationshipEvent:
         """Appends an event once and rejects conflicting event ID reuse."""
@@ -743,6 +867,514 @@ class SQLiteStorage(BaseStorage):
                     (relationship_id,),
                 ).fetchall()
                 return [PersonaGrowthProposal.from_dict(json.loads(row["data"])) for row in rows]
+
+    def save_persona_compilation_proposal(
+        self,
+        proposal: PersonaCompilationProposal,
+        expected_status: Optional[PersonaCompilationStatus] = None,
+    ) -> PersonaCompilationProposal:
+        """Appends or conditionally updates one immutable compilation revision."""
+        with self.lock_manager.lock("__persona_compilation__", proposal.blueprint_id):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    """
+                    SELECT data FROM persona_compilation_revisions
+                    WHERE proposal_id = ? AND revision = ?
+                    """,
+                    (proposal.proposal_id, proposal.revision),
+                ).fetchone()
+                if row is None:
+                    if expected_status is not None:
+                        conn.rollback()
+                        raise PersonaCompilationConflictError(
+                            "persona compilation proposal revision no longer exists"
+                        )
+                    if proposal.revision > 1:
+                        parent = conn.execute(
+                            """
+                            SELECT 1 FROM persona_compilation_revisions
+                            WHERE proposal_id = ? AND revision = ?
+                            """,
+                            (proposal.proposal_id, proposal.parent_revision),
+                        ).fetchone()
+                        if parent is None:
+                            conn.rollback()
+                            raise PersonaCompilationConflictError(
+                                "persona compilation parent revision does not exist"
+                            )
+                    conn.execute(
+                        """
+                        INSERT INTO persona_compilation_revisions (
+                            proposal_id, revision, blueprint_id, content_fingerprint,
+                            status, data, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            proposal.proposal_id,
+                            proposal.revision,
+                            proposal.blueprint_id,
+                            proposal.content_fingerprint,
+                            proposal.status.value,
+                            json.dumps(proposal.to_dict(), ensure_ascii=False),
+                            proposal.created_at,
+                            proposal.decided_at or proposal.created_at,
+                        ),
+                    )
+                    conn.commit()
+                    return proposal
+
+                existing = PersonaCompilationProposal.from_dict(json.loads(row["data"]))
+                if self._compilation_content(existing) != self._compilation_content(proposal):
+                    conn.rollback()
+                    raise PersonaCompilationConflictError(
+                        "persona compilation revision content is immutable"
+                    )
+                if expected_status is None:
+                    conn.commit()
+                    if self._compilation_lifecycle(existing) != self._compilation_lifecycle(
+                        proposal
+                    ):
+                        raise PersonaCompilationConflictError(
+                            "updating a compilation decision requires its expected status"
+                        )
+                    return existing
+                cursor = conn.execute(
+                    """
+                    UPDATE persona_compilation_revisions
+                    SET status = ?, data = ?, updated_at = ?
+                    WHERE proposal_id = ? AND revision = ? AND status = ?
+                    """,
+                    (
+                        proposal.status.value,
+                        json.dumps(proposal.to_dict(), ensure_ascii=False),
+                        proposal.decided_at or utc_now(),
+                        proposal.proposal_id,
+                        proposal.revision,
+                        expected_status.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    conn.rollback()
+                    raise PersonaCompilationConflictError(
+                        "persona compilation proposal status changed"
+                    )
+                conn.commit()
+                return proposal
+
+    def list_persona_compilation_proposals(
+        self,
+        blueprint_id: str,
+    ) -> List[PersonaCompilationProposal]:
+        """Loads compilation revisions in stable proposal/revision order."""
+        with closing(self._get_connection()) as conn:
+            rows = conn.execute(
+                """
+                SELECT data FROM persona_compilation_revisions
+                WHERE blueprint_id = ? ORDER BY proposal_id ASC, revision ASC
+                """,
+                (blueprint_id,),
+            ).fetchall()
+            return [
+                PersonaCompilationProposal.from_dict(json.loads(row["data"]))
+                for row in rows
+            ]
+
+    def approve_persona_manifest(
+        self,
+        proposal: PersonaCompilationProposal,
+        manifest: PersonaManifest,
+        expected_status: PersonaCompilationStatus = PersonaCompilationStatus.PENDING,
+    ) -> PersonaManifest:
+        """Atomically applies an exact proposal approval and stores its Manifest."""
+        self._validate_manifest_approval(proposal, manifest)
+        with self.lock_manager.lock("__persona_compilation__", proposal.blueprint_id):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                existing_manifest_row = conn.execute(
+                    "SELECT data FROM persona_manifests WHERE manifest_id = ?",
+                    (manifest.manifest_id,),
+                ).fetchone()
+                if existing_manifest_row is not None:
+                    existing_manifest = PersonaManifest.from_dict(
+                        json.loads(existing_manifest_row["data"])
+                    )
+                    conn.commit()
+                    if existing_manifest.to_dict() != manifest.to_dict():
+                        raise PersonaCompilationConflictError(
+                            "manifest ID has different content"
+                        )
+                    return existing_manifest
+
+                row = conn.execute(
+                    """
+                    SELECT data, status FROM persona_compilation_revisions
+                    WHERE proposal_id = ? AND revision = ?
+                    """,
+                    (proposal.proposal_id, proposal.revision),
+                ).fetchone()
+                if row is None:
+                    conn.rollback()
+                    raise PersonaCompilationConflictError(
+                        "persona compilation revision is missing"
+                    )
+                existing = PersonaCompilationProposal.from_dict(json.loads(row["data"]))
+                if existing.status != expected_status:
+                    conn.rollback()
+                    raise PersonaCompilationConflictError(
+                        "persona compilation proposal status changed"
+                    )
+                if self._compilation_content(existing) != self._compilation_content(proposal):
+                    conn.rollback()
+                    raise PersonaCompilationConflictError(
+                        "approved proposal content differs from persisted revision"
+                    )
+                cursor = conn.execute(
+                    """
+                    UPDATE persona_compilation_revisions
+                    SET status = ?, data = ?, updated_at = ?
+                    WHERE proposal_id = ? AND revision = ? AND status = ?
+                    """,
+                    (
+                        proposal.status.value,
+                        json.dumps(proposal.to_dict(), ensure_ascii=False),
+                        proposal.decided_at or utc_now(),
+                        proposal.proposal_id,
+                        proposal.revision,
+                        expected_status.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    conn.rollback()
+                    raise PersonaCompilationConflictError(
+                        "persona compilation proposal status changed"
+                    )
+                try:
+                    conn.execute(
+                        """
+                        INSERT INTO persona_manifests (
+                            manifest_id, blueprint_id, proposal_id, proposal_revision,
+                            content_fingerprint, data, approved_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            manifest.manifest_id,
+                            manifest.blueprint_id,
+                            manifest.approved_proposal_id,
+                            manifest.approved_revision,
+                            manifest.content_fingerprint,
+                            json.dumps(manifest.to_dict(), ensure_ascii=False),
+                            manifest.approved_at,
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    conn.rollback()
+                    raise PersonaCompilationConflictError(
+                        "proposal revision already has a different manifest"
+                    ) from exc
+                conn.commit()
+                return manifest
+
+    def approve_and_bind_persona_manifest(
+        self,
+        profile: RelationshipProfile,
+        proposal: PersonaCompilationProposal,
+        manifest: PersonaManifest,
+        expected_status: PersonaCompilationStatus = PersonaCompilationStatus.PENDING,
+    ) -> PersonaManifest:
+        """Approves and binds one exact Manifest in a single SQLite transaction."""
+        self._validate_manifest_approval(proposal, manifest)
+        with self.lock_manager.lock("__persona_compilation__", proposal.blueprint_id):
+            with self.lock_manager.lock(profile.agent_id, profile.user_id):
+                with closing(self._get_connection()) as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    relationship_row = conn.execute(
+                        "SELECT * FROM relationships WHERE relationship_id = ?",
+                        (profile.relationship_id,),
+                    ).fetchone()
+                    if relationship_row is None:
+                        conn.rollback()
+                        raise ValueError("relationship profile does not exist")
+                    if (
+                        relationship_row["agent_id"] != profile.agent_id
+                        or relationship_row["user_id"] != profile.user_id
+                        or relationship_row["blueprint_id"] != proposal.blueprint_id
+                    ):
+                        conn.rollback()
+                        raise PersonaCompilationConflictError(
+                            "Manifest approval targets a different relationship or Blueprint"
+                        )
+
+                    context_row = conn.execute(
+                        "SELECT data FROM relationship_initial_context WHERE relationship_id = ?",
+                        (profile.relationship_id,),
+                    ).fetchone()
+                    context = (
+                        json.loads(context_row["data"])
+                        if context_row is not None
+                        else {
+                            "premise": profile.premise.to_dict(),
+                            "baseline": profile.baseline.to_dict(),
+                            "manifest_id": None,
+                        }
+                    )
+                    existing_binding = context.get("manifest_id")
+                    if existing_binding not in (None, manifest.manifest_id):
+                        conn.rollback()
+                        raise PersonaCompilationConflictError(
+                            "relationship is already pinned to a different Manifest"
+                        )
+
+                    proposal_row = conn.execute(
+                        """
+                        SELECT data FROM persona_compilation_revisions
+                        WHERE proposal_id = ? AND revision = ?
+                        """,
+                        (proposal.proposal_id, proposal.revision),
+                    ).fetchone()
+                    if proposal_row is None:
+                        conn.rollback()
+                        raise PersonaCompilationConflictError(
+                            "persona compilation revision is missing"
+                        )
+                    persisted_proposal = PersonaCompilationProposal.from_dict(
+                        json.loads(proposal_row["data"])
+                    )
+                    if self._compilation_content(
+                        persisted_proposal
+                    ) != self._compilation_content(proposal):
+                        conn.rollback()
+                        raise PersonaCompilationConflictError(
+                            "approved proposal content differs from persisted revision"
+                        )
+                    if persisted_proposal.status != expected_status:
+                        conn.rollback()
+                        raise PersonaCompilationConflictError(
+                            "persona compilation proposal status changed"
+                        )
+                    if expected_status == PersonaCompilationStatus.APPROVED:
+                        if self._compilation_lifecycle(
+                            persisted_proposal
+                        ) != self._compilation_lifecycle(proposal):
+                            conn.rollback()
+                            raise PersonaCompilationConflictError(
+                                "approved proposal lifecycle differs from persisted revision"
+                            )
+                    else:
+                        cursor = conn.execute(
+                            """
+                            UPDATE persona_compilation_revisions
+                            SET status = ?, data = ?, updated_at = ?
+                            WHERE proposal_id = ? AND revision = ? AND status = ?
+                            """,
+                            (
+                                proposal.status.value,
+                                json.dumps(proposal.to_dict(), ensure_ascii=False),
+                                proposal.decided_at or utc_now(),
+                                proposal.proposal_id,
+                                proposal.revision,
+                                expected_status.value,
+                            ),
+                        )
+                        if cursor.rowcount != 1:
+                            conn.rollback()
+                            raise PersonaCompilationConflictError(
+                                "persona compilation proposal status changed"
+                            )
+
+                    manifest_rows = conn.execute(
+                        """
+                        SELECT data FROM persona_manifests
+                        WHERE manifest_id = ? OR (proposal_id = ? AND proposal_revision = ?)
+                        """,
+                        (
+                            manifest.manifest_id,
+                            proposal.proposal_id,
+                            proposal.revision,
+                        ),
+                    ).fetchall()
+                    persisted_manifest = None
+                    for manifest_row in manifest_rows:
+                        candidate = PersonaManifest.from_dict(
+                            json.loads(manifest_row["data"])
+                        )
+                        if candidate.to_dict() != manifest.to_dict():
+                            conn.rollback()
+                            raise PersonaCompilationConflictError(
+                                "proposal revision already has a different Manifest"
+                            )
+                        persisted_manifest = candidate
+                    if persisted_manifest is None:
+                        try:
+                            conn.execute(
+                                """
+                                INSERT INTO persona_manifests (
+                                    manifest_id, blueprint_id, proposal_id,
+                                    proposal_revision, content_fingerprint, data,
+                                    approved_at
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    manifest.manifest_id,
+                                    manifest.blueprint_id,
+                                    manifest.approved_proposal_id,
+                                    manifest.approved_revision,
+                                    manifest.content_fingerprint,
+                                    json.dumps(manifest.to_dict(), ensure_ascii=False),
+                                    manifest.approved_at,
+                                ),
+                            )
+                        except sqlite3.IntegrityError as exc:
+                            conn.rollback()
+                            raise PersonaCompilationConflictError(
+                                "proposal revision already has a different Manifest"
+                            ) from exc
+
+                    context["manifest_id"] = manifest.manifest_id
+                    conn.execute(
+                        """
+                        INSERT INTO relationship_initial_context
+                            (relationship_id, data, created_at)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(relationship_id) DO UPDATE SET data = excluded.data
+                        """,
+                        (
+                            profile.relationship_id,
+                            json.dumps(context, ensure_ascii=False),
+                            profile.created_at,
+                        ),
+                    )
+                    conn.commit()
+                    return persisted_manifest or manifest
+
+    def get_persona_manifest(self, manifest_id: str) -> Optional[PersonaManifest]:
+        """Loads one approved Persona Manifest."""
+        with closing(self._get_connection()) as conn:
+            row = conn.execute(
+                "SELECT data FROM persona_manifests WHERE manifest_id = ?",
+                (manifest_id,),
+            ).fetchone()
+            return (
+                PersonaManifest.from_dict(json.loads(row["data"]))
+                if row is not None
+                else None
+            )
+
+    def list_persona_manifests(self, blueprint_id: str) -> List[PersonaManifest]:
+        """Loads approved Persona Manifests for one Blueprint."""
+        with closing(self._get_connection()) as conn:
+            rows = conn.execute(
+                """
+                SELECT data FROM persona_manifests
+                WHERE blueprint_id = ? ORDER BY approved_at ASC, manifest_id ASC
+                """,
+                (blueprint_id,),
+            ).fetchall()
+            return [PersonaManifest.from_dict(json.loads(row["data"])) for row in rows]
+
+    def bind_relationship_manifest(
+        self,
+        profile: RelationshipProfile,
+        manifest_id: str,
+    ) -> RelationshipProfile:
+        """Pins an approved Manifest in the relationship initial-context record."""
+        manifest = self.get_persona_manifest(manifest_id)
+        if manifest is None or manifest.blueprint_id != profile.blueprint.blueprint_id:
+            raise PersonaCompilationConflictError(
+                "manifest is missing or belongs to a different Character Blueprint"
+            )
+        with self.lock_manager.lock(profile.agent_id, profile.user_id):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT * FROM relationships WHERE relationship_id = ?",
+                    (profile.relationship_id,),
+                ).fetchone()
+                if row is None:
+                    conn.rollback()
+                    raise ValueError("relationship profile does not exist")
+                context_row = conn.execute(
+                    "SELECT data FROM relationship_initial_context WHERE relationship_id = ?",
+                    (profile.relationship_id,),
+                ).fetchone()
+                context = (
+                    json.loads(context_row["data"])
+                    if context_row is not None
+                    else {
+                        "premise": profile.premise.to_dict(),
+                        "baseline": profile.baseline.to_dict(),
+                        "manifest_id": None,
+                    }
+                )
+                existing_manifest_id = context.get("manifest_id")
+                if existing_manifest_id is not None and existing_manifest_id != manifest_id:
+                    conn.rollback()
+                    raise PersonaCompilationConflictError(
+                        "relationship is already pinned to a different Manifest"
+                    )
+                context["manifest_id"] = manifest_id
+                conn.execute(
+                    """
+                    INSERT INTO relationship_initial_context (relationship_id, data, created_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(relationship_id) DO UPDATE SET data = excluded.data
+                    """,
+                    (
+                        profile.relationship_id,
+                        json.dumps(context, ensure_ascii=False),
+                        profile.created_at,
+                    ),
+                )
+                conn.commit()
+                return replace(profile, manifest_id=manifest_id)
+
+    @staticmethod
+    def _validate_manifest_approval(
+        proposal: PersonaCompilationProposal,
+        manifest: PersonaManifest,
+    ) -> None:
+        if proposal.status != PersonaCompilationStatus.APPROVED:
+            raise PersonaCompilationConflictError(
+                "approval requires an approved proposal value"
+            )
+        if (
+            manifest.blueprint_id != proposal.blueprint_id
+            or manifest.blueprint_revision != proposal.blueprint_revision
+            or manifest.source_sha256 != proposal.source_sha256
+            or manifest.approved_proposal_id != proposal.proposal_id
+            or manifest.approved_revision != proposal.revision
+            or manifest.content_fingerprint != proposal.content_fingerprint
+            or manifest.candidate.model_dump(mode="json")
+            != proposal.candidate.model_dump(mode="json")
+            or manifest.approved_by != proposal.decided_by
+            or manifest.approved_at != proposal.decided_at
+        ):
+            raise PersonaCompilationConflictError(
+                "manifest does not match the exact approved proposal"
+            )
+
+    @staticmethod
+    def _compilation_content(proposal: PersonaCompilationProposal):
+        data = proposal.to_dict()
+        for key in (
+            "status",
+            "created_at",
+            "created_by",
+            "decided_by",
+            "decided_at",
+            "decision_reason",
+        ):
+            data.pop(key, None)
+        return data
+
+    @staticmethod
+    def _compilation_lifecycle(proposal: PersonaCompilationProposal):
+        return (
+            proposal.status,
+            proposal.decided_by,
+            proposal.decided_at,
+            proposal.decision_reason,
+        )
 
     @staticmethod
     def _proposal_content(proposal: PersonaGrowthProposal):

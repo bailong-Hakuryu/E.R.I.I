@@ -51,6 +51,7 @@ class MemoryRetriever:
         vector_store: Optional[BaseVectorStore] = None,
         embedding_provider: Optional[BaseEmbeddingProvider] = None,
         rrf_k: float = 60.0,
+        update_index: bool = True,
     ) -> List[MemoryNode]:
         """Ranks candidate nodes using RRF (Reciprocal Rank Fusion) or term overlap.
 
@@ -60,6 +61,7 @@ class MemoryRetriever:
             vector_store: Optional BaseVectorStore instance.
             embedding_provider: Optional BaseEmbeddingProvider instance.
             rrf_k: RRF constant factor (default 60.0).
+            update_index: Whether candidate embeddings may be upserted before search.
 
         Returns:
             Ranked list of MemoryNode objects sorted by score descending.
@@ -90,11 +92,17 @@ class MemoryRetriever:
         if vector_store is not None and embedding_provider is not None and query:
             try:
                 query_vector = embedding_provider.embed_text(query)
-                # Ensure all candidate nodes are indexed in vector store
-                for node in candidates:
-                    text_to_embed = f"{node.content} {' '.join(node.tags)}"
-                    node_vec = embedding_provider.embed_text(text_to_embed)
-                    vector_store.upsert(node.node_id, node_vec, {"node_id": node.node_id})
+                if update_index:
+                    # Index mutation is an explicit caller policy. Read-only recall
+                    # may still search an already populated vector store.
+                    for node in candidates:
+                        text_to_embed = f"{node.content} {' '.join(node.tags)}"
+                        node_vec = embedding_provider.embed_text(text_to_embed)
+                        vector_store.upsert(
+                            node.node_id,
+                            node_vec,
+                            {"node_id": node.node_id},
+                        )
 
                 vec_results = vector_store.search(query_vector, top_k=len(candidates))
                 for idx, (node_id, _sim) in enumerate(vec_results):
@@ -131,6 +139,8 @@ class MemoryRetriever:
         max_per_type: int = 2,
         vector_store: Optional[BaseVectorStore] = None,
         embedding_provider: Optional[BaseEmbeddingProvider] = None,
+        reinforce: bool = True,
+        update_index: bool = True,
     ) -> List[MemoryNode]:
         """Retrieves top relevant nodes applying RRF and Category Diversity Cap.
 
@@ -141,6 +151,8 @@ class MemoryRetriever:
             max_per_type: Diversity cap per MemoryType.
             vector_store: Optional BaseVectorStore instance.
             embedding_provider: Optional BaseEmbeddingProvider instance.
+            reinforce: Whether selected nodes count as an actual recall.
+            update_index: Whether candidate embeddings may be upserted before search.
 
         Returns:
             List of selected, reinforced MemoryNode objects.
@@ -153,6 +165,7 @@ class MemoryRetriever:
             candidates=all_nodes,
             vector_store=vector_store,
             embedding_provider=embedding_provider,
+            update_index=update_index,
         )
         selected_nodes: List[MemoryNode] = []
         type_counts: Dict[MemoryType, int] = defaultdict(int)
@@ -166,7 +179,8 @@ class MemoryRetriever:
                 if type_counts[node.node_type] >= max_per_type:
                     continue
 
-            node.reinforce_recall(boost=0.08)
+            if reinforce:
+                node.reinforce_recall(boost=0.08)
             selected_nodes.append(node)
             type_counts[node.node_type] += 1
 

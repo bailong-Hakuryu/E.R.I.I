@@ -7,10 +7,12 @@ represent the validated facts accepted by the relationship kernel.
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import hashlib
 import json
 import math
+import re
 from types import MappingProxyType
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, ClassVar, Dict, List, Mapping, Optional, Sequence
 
 
 RELATIONSHIP_DIMENSIONS = (
@@ -78,6 +80,25 @@ class IdentityKind(str, Enum):
     USER = "user"
 
 
+class RelationshipPremiseMode(str, Enum):
+    """Explicit narrative starting modes for one isolated relationship."""
+
+    FRESH = "fresh"
+    ADDRESS_ONLY = "address_only"
+    CANONICAL_CONTINUATION = "canonical_continuation"
+
+
+class BaselineLevel(str, Enum):
+    """Qualitative inputs accepted by the deterministic premise policy."""
+
+    MINIMAL = "minimal"
+    LOW = "low"
+    MODERATE = "moderate"
+    HIGH = "high"
+    DEEP = "deep"
+    MIXED = "mixed"
+
+
 class RelationshipEventType(str, Enum):
     """Canonical event categories accepted by the relationship kernel."""
 
@@ -105,10 +126,34 @@ class CharacterBlueprint:
     source_text: str
     compiled: Mapping[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now)
+    revision: int = 1
+    source_sha256: Optional[str] = None
+    source_format: str = "text/plain"
+    source_name: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "blueprint_id", _require_text(self.blueprint_id, "blueprint_id"))
-        object.__setattr__(self, "source_text", _require_text(self.source_text, "source_text"))
+        if not isinstance(self.source_text, str) or not self.source_text.strip():
+            raise ValueError("source_text must be a non-empty string")
+        # The imported source is the authority. Preserve it byte-for-byte at the
+        # Python string boundary, including intentional leading/trailing space.
+        expected_hash = hashlib.sha256(self.source_text.encode("utf-8")).hexdigest()
+        supplied_hash = self.source_sha256
+        if supplied_hash is not None:
+            if not isinstance(supplied_hash, str) or not re.fullmatch(
+                r"[0-9a-fA-F]{64}", supplied_hash
+            ):
+                raise ValueError("source_sha256 must be a 64-character hex digest")
+            if supplied_hash.lower() != expected_hash:
+                raise ValueError("source_sha256 does not match source_text")
+        object.__setattr__(self, "source_sha256", expected_hash)
+        if isinstance(self.revision, bool) or not isinstance(self.revision, int):
+            raise ValueError("revision must be a positive integer")
+        if self.revision < 1:
+            raise ValueError("revision must be a positive integer")
+        object.__setattr__(self, "source_format", _require_text(self.source_format, "source_format"))
+        if self.source_name is not None:
+            object.__setattr__(self, "source_name", _require_text(self.source_name, "source_name"))
         _require_json(self.compiled, "compiled")
         object.__setattr__(self, "compiled", _freeze_json(self.compiled))
         object.__setattr__(self, "created_at", _require_text(self.created_at, "created_at"))
@@ -119,6 +164,10 @@ class CharacterBlueprint:
             "source_text": self.source_text,
             "compiled": _thaw_json(self.compiled),
             "created_at": self.created_at,
+            "revision": self.revision,
+            "source_sha256": self.source_sha256,
+            "source_format": self.source_format,
+            "source_name": self.source_name,
         }
 
     @classmethod
@@ -128,6 +177,340 @@ class CharacterBlueprint:
             source_text=str(data["source_text"]),
             compiled=data.get("compiled", {}),
             created_at=str(data["created_at"]),
+            revision=int(data.get("revision", 1)),
+            source_sha256=data.get("source_sha256"),
+            source_format=str(data.get("source_format", "text/plain")),
+            source_name=data.get("source_name"),
+        )
+
+
+@dataclass(frozen=True)
+class PremiseExperience:
+    """An imported relationship premise experience grounded in source spans."""
+
+    experience_id: str
+    summary: str
+    source_spans: Sequence[Mapping[str, Any]]
+
+    _ALLOWED_SPAN_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "start",
+            "end",
+            "quote",
+            "source_sha256",
+            "section",
+            "blueprint_id",
+        }
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "experience_id",
+            _require_text(self.experience_id, "experience_id"),
+        )
+        object.__setattr__(self, "summary", _require_text(self.summary, "summary"))
+        if isinstance(self.source_spans, (str, bytes)) or not self.source_spans:
+            raise ValueError("source_spans must contain at least one source range")
+
+        normalized = []
+        for index, raw_span in enumerate(self.source_spans):
+            if not isinstance(raw_span, Mapping):
+                raise ValueError(f"source_spans[{index}] must be a mapping")
+            unknown = set(raw_span) - self._ALLOWED_SPAN_KEYS
+            if unknown:
+                raise ValueError(
+                    f"source_spans[{index}] contains unknown keys: {sorted(unknown)}"
+                )
+            if "start" not in raw_span or "end" not in raw_span:
+                raise ValueError(f"source_spans[{index}] requires start and end")
+            start = raw_span["start"]
+            end = raw_span["end"]
+            if (
+                isinstance(start, bool)
+                or isinstance(end, bool)
+                or not isinstance(start, int)
+                or not isinstance(end, int)
+                or start < 0
+                or end <= start
+            ):
+                raise ValueError(
+                    f"source_spans[{index}] must use integer offsets with 0 <= start < end"
+                )
+            span = dict(raw_span)
+            if "quote" in span:
+                if not isinstance(span["quote"], str) or not span["quote"]:
+                    raise ValueError(f"source_spans[{index}].quote must be a non-empty string")
+            for optional_text in ("source_sha256", "section", "blueprint_id"):
+                if optional_text in span:
+                    span[optional_text] = _require_text(
+                        span[optional_text],
+                        f"source_spans[{index}].{optional_text}",
+                    )
+            normalized.append(_freeze_json(span))
+        object.__setattr__(self, "source_spans", tuple(normalized))
+
+    def validate_against(self, blueprint: CharacterBlueprint) -> None:
+        """Checks every range, optional quote, and source identity exactly."""
+        for index, span in enumerate(self.source_spans):
+            start = span["start"]
+            end = span["end"]
+            if end > len(blueprint.source_text):
+                raise ValueError(f"source_spans[{index}] exceeds the Character Blueprint")
+            if span.get("source_sha256") not in (None, blueprint.source_sha256):
+                raise ValueError(f"source_spans[{index}] references a different source hash")
+            if span.get("blueprint_id") not in (None, blueprint.blueprint_id):
+                raise ValueError(f"source_spans[{index}] references a different blueprint")
+            if "quote" in span and blueprint.source_text[start:end] != span["quote"]:
+                raise ValueError(f"source_spans[{index}] quote does not match source_text")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "experience_id": self.experience_id,
+            "summary": self.summary,
+            "source_spans": [_thaw_json(span) for span in self.source_spans],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "PremiseExperience":
+        return cls(
+            experience_id=str(data["experience_id"]),
+            summary=str(data["summary"]),
+            source_spans=data.get("source_spans", ()),
+        )
+
+
+@dataclass(frozen=True)
+class RelationshipPremise:
+    """Explicit, relationship-local selection of a narrative starting point."""
+
+    premise_id: str = "fresh"
+    mode: RelationshipPremiseMode = RelationshipPremiseMode.FRESH
+    address_name: Optional[str] = None
+    canonical_role: Optional[str] = None
+    experiences: Sequence[PremiseExperience] = field(default_factory=tuple)
+    baseline_levels: Mapping[str, BaselineLevel] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "premise_id", _require_text(self.premise_id, "premise_id"))
+        mode = self.mode
+        if isinstance(mode, str):
+            mode = RelationshipPremiseMode(mode)
+            object.__setattr__(self, "mode", mode)
+        if self.address_name is not None:
+            object.__setattr__(
+                self,
+                "address_name",
+                _require_text(self.address_name, "address_name"),
+            )
+        if self.canonical_role is not None:
+            object.__setattr__(
+                self,
+                "canonical_role",
+                _require_text(self.canonical_role, "canonical_role"),
+            )
+
+        experiences = tuple(
+            item if isinstance(item, PremiseExperience) else PremiseExperience.from_dict(item)
+            for item in self.experiences
+        )
+        object.__setattr__(self, "experiences", experiences)
+
+        levels: Dict[str, BaselineLevel] = {}
+        for dimension, raw_level in self.baseline_levels.items():
+            if dimension not in RELATIONSHIP_DIMENSIONS:
+                raise ValueError(f"unknown baseline dimension: {dimension}")
+            if not isinstance(raw_level, (str, BaselineLevel)):
+                raise ValueError("baseline levels must be qualitative BaselineLevel values")
+            levels[dimension] = BaselineLevel(raw_level)
+        object.__setattr__(self, "baseline_levels", MappingProxyType(levels))
+
+        if mode == RelationshipPremiseMode.FRESH:
+            if self.address_name or self.canonical_role or experiences or levels:
+                raise ValueError(
+                    "fresh premise cannot carry an address, canonical role, "
+                    "premise experiences, or custom baseline"
+                )
+        elif mode == RelationshipPremiseMode.ADDRESS_ONLY:
+            if not self.address_name:
+                raise ValueError("address_only premise requires address_name")
+            if self.canonical_role or experiences or levels:
+                raise ValueError(
+                    "address_only premise cannot bind a canonical role, import "
+                    "experiences, or change the baseline"
+                )
+        else:
+            if not self.canonical_role:
+                raise ValueError("canonical_continuation requires canonical_role")
+            if not experiences:
+                raise ValueError("canonical_continuation requires premise experiences")
+            if set(levels) != set(RELATIONSHIP_DIMENSIONS):
+                raise ValueError(
+                    "canonical_continuation requires one qualitative level for "
+                    "every relationship dimension"
+                )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "premise_id": self.premise_id,
+            "mode": self.mode.value,
+            "address_name": self.address_name,
+            "canonical_role": self.canonical_role,
+            "experiences": [experience.to_dict() for experience in self.experiences],
+            "baseline_levels": {
+                dimension: level.value for dimension, level in self.baseline_levels.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "RelationshipPremise":
+        return cls(
+            premise_id=str(data.get("premise_id", "fresh")),
+            mode=RelationshipPremiseMode(
+                data.get("mode", RelationshipPremiseMode.FRESH.value)
+            ),
+            address_name=data.get("address_name"),
+            canonical_role=data.get("canonical_role"),
+            experiences=[
+                PremiseExperience.from_dict(item) for item in data.get("experiences", [])
+            ],
+            baseline_levels=data.get("baseline_levels", {}),
+        )
+
+
+@dataclass(frozen=True)
+class RelationshipBaseline:
+    """Immutable numeric starting state projected from qualitative premise levels."""
+
+    policy_version: str
+    premise_mode: RelationshipPremiseMode
+    qualitative_levels: Mapping[str, BaselineLevel]
+    state: Mapping[str, float]
+    supporting_experience_ids: Sequence[str] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "policy_version",
+            _require_text(self.policy_version, "policy_version"),
+        )
+        mode = self.premise_mode
+        if isinstance(mode, str):
+            mode = RelationshipPremiseMode(mode)
+            object.__setattr__(self, "premise_mode", mode)
+        if set(self.qualitative_levels) != set(RELATIONSHIP_DIMENSIONS):
+            raise ValueError("qualitative_levels must contain all relationship dimensions")
+        levels: Dict[str, BaselineLevel] = {}
+        for dimension in RELATIONSHIP_DIMENSIONS:
+            raw_level = self.qualitative_levels[dimension]
+            if not isinstance(raw_level, (str, BaselineLevel)):
+                raise ValueError("qualitative_levels must use BaselineLevel values")
+            levels[dimension] = BaselineLevel(raw_level)
+        object.__setattr__(self, "qualitative_levels", MappingProxyType(levels))
+
+        if set(self.state) != set(RELATIONSHIP_DIMENSIONS):
+            raise ValueError("baseline state must contain all relationship dimensions")
+        state: Dict[str, float] = {}
+        for dimension in RELATIONSHIP_DIMENSIONS:
+            value = self.state[dimension]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"baseline state for {dimension} must be numeric")
+            numeric = float(value)
+            if not math.isfinite(numeric) or not 0.0 <= numeric <= 1.0:
+                raise ValueError(f"baseline state for {dimension} must be between 0 and 1")
+            state[dimension] = numeric
+        object.__setattr__(self, "state", MappingProxyType(state))
+
+        experience_ids = tuple(
+            _require_text(item, "supporting_experience_id")
+            for item in self.supporting_experience_ids
+        )
+        if len(set(experience_ids)) != len(experience_ids):
+            raise ValueError("supporting_experience_ids cannot contain duplicates")
+        object.__setattr__(self, "supporting_experience_ids", experience_ids)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "policy_version": self.policy_version,
+            "premise_mode": self.premise_mode.value,
+            "qualitative_levels": {
+                dimension: level.value
+                for dimension, level in self.qualitative_levels.items()
+            },
+            "state": dict(self.state),
+            "supporting_experience_ids": list(self.supporting_experience_ids),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "RelationshipBaseline":
+        return cls(
+            policy_version=str(data["policy_version"]),
+            premise_mode=RelationshipPremiseMode(data["premise_mode"]),
+            qualitative_levels=data["qualitative_levels"],
+            state=data["state"],
+            supporting_experience_ids=data.get("supporting_experience_ids", ()),
+        )
+
+
+@dataclass(frozen=True)
+class PremisePolicy:
+    """Deterministically maps qualitative premise inputs to a numeric baseline."""
+
+    version: str = "premise-v1"
+
+    LEVEL_VALUES: ClassVar[Mapping[BaselineLevel, float]] = MappingProxyType(
+        {
+            BaselineLevel.MINIMAL: 0.0,
+            BaselineLevel.LOW: 0.25,
+            BaselineLevel.MODERATE: 0.5,
+            BaselineLevel.HIGH: 0.75,
+            BaselineLevel.DEEP: 1.0,
+            BaselineLevel.MIXED: 0.5,
+        }
+    )
+    DEFAULT_LEVELS: ClassVar[Mapping[str, BaselineLevel]] = MappingProxyType(
+        {
+            "familiarity": BaselineLevel.MINIMAL,
+            "trust": BaselineLevel.MODERATE,
+            "intimacy": BaselineLevel.MINIMAL,
+            "safety": BaselineLevel.MODERATE,
+            "conflict_tension": BaselineLevel.MINIMAL,
+        }
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "version", _require_text(self.version, "premise policy version"))
+
+    def project(
+        self,
+        premise: RelationshipPremise,
+        blueprint: Optional[CharacterBlueprint] = None,
+    ) -> RelationshipBaseline:
+        """Builds the only valid baseline for a premise under this policy."""
+        if not isinstance(premise, RelationshipPremise):
+            premise = RelationshipPremise.from_dict(premise)
+        if premise.experiences and blueprint is None:
+            raise ValueError("a Character Blueprint is required to validate premise source spans")
+        if blueprint is not None:
+            for experience in premise.experiences:
+                experience.validate_against(blueprint)
+
+        levels = (
+            dict(premise.baseline_levels)
+            if premise.mode == RelationshipPremiseMode.CANONICAL_CONTINUATION
+            else dict(self.DEFAULT_LEVELS)
+        )
+        return RelationshipBaseline(
+            policy_version=self.version,
+            premise_mode=premise.mode,
+            qualitative_levels=levels,
+            state={
+                dimension: self.LEVEL_VALUES[levels[dimension]]
+                for dimension in RELATIONSHIP_DIMENSIONS
+            },
+            supporting_experience_ids=tuple(
+                experience.experience_id for experience in premise.experiences
+            ),
         )
 
 
@@ -143,6 +526,9 @@ class RelationshipProfile:
     user_id: str
     blueprint: CharacterBlueprint
     created_at: str = field(default_factory=utc_now)
+    premise: RelationshipPremise = field(default_factory=RelationshipPremise)
+    baseline: Optional[RelationshipBaseline] = None
+    manifest_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -157,6 +543,28 @@ class RelationshipProfile:
             object.__setattr__(self, field_name, _require_text(getattr(self, field_name), field_name))
         if not isinstance(self.blueprint, CharacterBlueprint):
             object.__setattr__(self, "blueprint", CharacterBlueprint.from_dict(self.blueprint))
+        premise = self.premise
+        if not isinstance(premise, RelationshipPremise):
+            premise = RelationshipPremise.from_dict(premise)
+            object.__setattr__(self, "premise", premise)
+        expected_baseline = PremisePolicy().project(premise, self.blueprint)
+        baseline = self.baseline
+        if baseline is None:
+            baseline = expected_baseline
+            object.__setattr__(self, "baseline", baseline)
+        elif not isinstance(baseline, RelationshipBaseline):
+            baseline = RelationshipBaseline.from_dict(baseline)
+            object.__setattr__(self, "baseline", baseline)
+        if baseline.to_dict() != expected_baseline.to_dict():
+            raise ValueError(
+                "relationship baseline does not match its qualitative premise and policy"
+            )
+        if self.manifest_id is not None:
+            object.__setattr__(
+                self,
+                "manifest_id",
+                _require_text(self.manifest_id, "manifest_id"),
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -168,10 +576,15 @@ class RelationshipProfile:
             "user_id": self.user_id,
             "blueprint": self.blueprint.to_dict(),
             "created_at": self.created_at,
+            "premise": self.premise.to_dict(),
+            "baseline": self.baseline.to_dict(),
+            "manifest_id": self.manifest_id,
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "RelationshipProfile":
+        blueprint = CharacterBlueprint.from_dict(data["blueprint"])
+        premise = RelationshipPremise.from_dict(data.get("premise", {}))
         return cls(
             relationship_id=str(data["relationship_id"]),
             persona_id=str(data["persona_id"]),
@@ -179,8 +592,15 @@ class RelationshipProfile:
             user_identity_id=str(data["user_identity_id"]),
             agent_id=str(data["agent_id"]),
             user_id=str(data["user_id"]),
-            blueprint=CharacterBlueprint.from_dict(data["blueprint"]),
+            blueprint=blueprint,
             created_at=str(data["created_at"]),
+            premise=premise,
+            baseline=(
+                RelationshipBaseline.from_dict(data["baseline"])
+                if data.get("baseline") is not None
+                else PremisePolicy().project(premise, blueprint)
+            ),
+            manifest_id=data.get("manifest_id"),
         )
 
 

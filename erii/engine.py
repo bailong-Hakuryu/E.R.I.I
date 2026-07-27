@@ -22,6 +22,8 @@ from erii.core.adjudication import (
     relationship_occurrence_fingerprint,
 )
 from erii.core.relationship import RelationshipProjector
+from erii.core.persona_compilation import PersonaCompiler
+from erii.core.recall import RecallAssembler
 from erii.core.queue.base import BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.models.config import ERIIConfig
@@ -37,6 +39,17 @@ from erii.models.adjudication import (
 )
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
 from erii.models.pack import MemoryPack
+from erii.models.persona import (
+    PersonaCompilationDecision,
+    PersonaCompilationProposal,
+    PersonaCompilationStatus,
+    PersonaManifest,
+    PersonaManifestCandidate,
+)
+from erii.models.recall import (
+    RecallRequest,
+    RecallResult,
+)
 from erii.models.relationship import (
     BeliefUpdate,
     CharacterBlueprint,
@@ -46,8 +59,10 @@ from erii.models.relationship import (
     RelationshipEventType,
     RelationshipNotFoundError,
     RelationshipProfile,
+    RelationshipPremise,
     RelationshipSnapshot,
 )
+from erii.renderers.markdown import MarkdownRecallRenderer
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 from erii.storage.file_storage import FileStorage
@@ -125,6 +140,12 @@ class ERIIEngine:
             dynamic_budget=self.config.dynamic_budget,
         )
         self.relationship_adjudicator = RelationshipAdjudicator(self.storage)
+        self.recall_assembler = RecallAssembler(
+            storage=self.storage,
+            retriever=self.retriever,
+            vector_store=self.vector_store,
+            embedding_provider=self.embedding_provider,
+        )
 
         # 5. Keep the default persistent queue alongside the selected storage.
         if task_queue is None:
@@ -218,17 +239,17 @@ class ERIIEngine:
         Returns:
             Formatted Markdown context string ready for prompt injection.
         """
+        # This facade intentionally keeps the pre-a3 lifecycle and Markdown
+        # contract. Structured recall is exposed separately by
+        # ``recall_structured`` and must not silently change existing callers.
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
 
         if self.config.enable_security_sanitizer:
             query = SecuritySanitizer.sanitize_text(query)
 
-        # 1. Load memory nodes and run decay evaluation
         nodes = self.storage.load_nodes(clean_agent, clean_user)
         nodes = self.decay_evaluator.sweep_nodes(nodes)
-
-        # 2. Retrieve relevant nodes via RRF Hybrid Search & Diversity Cap
         selected_nodes = self.retriever.retrieve_relevant_nodes(
             query=query,
             all_nodes=nodes,
@@ -236,36 +257,30 @@ class ERIIEngine:
             vector_store=self.vector_store,
             embedding_provider=self.embedding_provider,
         )
-
-        # 3. Persist updated node access counts & reinforced scores
         if selected_nodes:
             self.storage.save_nodes(clean_agent, clean_user, nodes)
 
-        # 4. Extract Core Memory & Experiential Timeline
         core_memory = self.storage.get_core_memory(clean_agent, clean_user)
         timeline_entries = self.storage.get_recent_timeline(
-            clean_agent, clean_user, limit=4
+            clean_agent,
+            clean_user,
+            limit=4,
         )
-
-        # Format dynamic nodes with creation timestamp anchoring
         dynamic_lines = []
         for idx, node in enumerate(selected_nodes, 1):
             weight = self.decay_evaluator.evaluate_node(node)
             type_tag = f"[{node.node_type.value.upper()}]"
-            time_prefix = f"[{node.created_at}] " if hasattr(node, "created_at") and node.created_at else ""
+            time_prefix = f"[{node.created_at}] " if node.created_at else ""
             dynamic_lines.append(
-                f"{idx}. {time_prefix}{type_tag} {node.content} (weight: {weight:.2f})"
+                f"{idx}. {time_prefix}{type_tag} {node.content} "
+                f"(weight: {weight:.2f})"
             )
-        dynamic_formatted = "\n".join(dynamic_lines)
 
-        # 5. Apply Token Budget Allocator
         budgeted = self.budget_manager.allocate_memory_context(
             core_memory=core_memory,
             timeline_entries=timeline_entries,
-            dynamic_nodes_formatted=dynamic_formatted,
+            dynamic_nodes_formatted="\n".join(dynamic_lines),
         )
-
-        # Assemble final prompt sections
         sections = []
         if budgeted["core_memory"]:
             sections.append(f"# Core Persona Memory\n{budgeted['core_memory']}")
@@ -273,8 +288,36 @@ class ERIIEngine:
             sections.append(f"# Relevant Memories\n{budgeted['dynamic_memory']}")
         if budgeted["timeline_context"]:
             sections.append(f"# Experiential Timeline\n{budgeted['timeline_context']}")
-
         return "\n\n".join(sections)
+
+    def recall_structured(
+        self,
+        request: Union[RecallRequest, Mapping[str, Any]],
+    ) -> RecallResult:
+        """Returns an audience-filtered, renderer-neutral structured recall.
+
+        Structured recall is read-only unless ``request.options.reinforce`` is
+        explicitly true. It never initializes a missing relationship.
+        """
+        validated = RecallRequest.model_validate(request)
+        if self.config.enable_security_sanitizer:
+            validated = validated.model_copy(
+                update={"query": SecuritySanitizer.sanitize_text(validated.query)}
+            )
+        return self.recall_assembler.assemble(validated)
+
+    def render_recall(
+        self,
+        result: RecallResult,
+        *,
+        max_output_cost: Optional[int] = None,
+    ) -> str:
+        """Deterministically renders an already assembled result without writes."""
+        renderer = MarkdownRecallRenderer(
+            audience=result.audience,
+            max_output_cost=max_output_cost,
+        )
+        return renderer.render(result)
 
     def set_core_memory(self, agent_id: str, user_id: str, content: str) -> None:
         """Sets Core Persona memory string for given agent and user."""
@@ -294,6 +337,12 @@ class ERIIEngine:
         user_id: str,
         persona_source: str,
         compiled_persona: Optional[Mapping[str, Any]] = None,
+        *,
+        relationship_premise: Optional[
+            Union[RelationshipPremise, Mapping[str, Any]]
+        ] = None,
+        source_format: str = "text/plain",
+        source_name: Optional[str] = None,
     ) -> RelationshipProfile:
         """Initializes one isolated Agent x User relationship idempotently.
 
@@ -303,13 +352,27 @@ class ERIIEngine:
         """
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
-        source_text = persona_source.strip() if isinstance(persona_source, str) else ""
-        if not source_text:
+        source_text = persona_source if isinstance(persona_source, str) else ""
+        if not source_text.strip():
             raise ValueError("persona_source must be a non-empty string")
+        premise = (
+            RelationshipPremise()
+            if relationship_premise is None
+            else (
+                relationship_premise
+                if isinstance(relationship_premise, RelationshipPremise)
+                else RelationshipPremise.from_dict(relationship_premise)
+            )
+        )
 
         existing = self.storage.get_relationship(clean_agent, clean_user)
         if existing is not None:
-            self._ensure_persona_matches(existing, source_text, compiled_persona)
+            self._ensure_persona_matches(
+                existing,
+                source_text,
+                compiled_persona,
+                premise,
+            )
             return existing
 
         agent_identity_id = self.storage.get_or_create_identity(
@@ -331,10 +394,13 @@ class ERIIEngine:
                 blueprint_id=str(uuid.uuid4()),
                 source_text=source_text,
                 compiled=compiled_persona or {},
+                source_format=source_format,
+                source_name=source_name,
             ),
+            premise=premise,
         )
         stored = self.storage.create_relationship(profile)
-        self._ensure_persona_matches(stored, source_text, compiled_persona)
+        self._ensure_persona_matches(stored, source_text, compiled_persona, premise)
         return stored
 
     @staticmethod
@@ -342,6 +408,7 @@ class ERIIEngine:
         profile: RelationshipProfile,
         persona_source: str,
         compiled_persona: Optional[Mapping[str, Any]],
+        premise: Optional[RelationshipPremise] = None,
     ) -> None:
         """Rejects attempts to mutate the immutable authority snapshot."""
         if profile.blueprint.source_text != persona_source:
@@ -359,6 +426,174 @@ class ERIIEngine:
                 raise PersonaConflictError(
                     "this relationship already has a different compiled persona snapshot"
                 )
+        if premise is not None and profile.premise.to_dict() != premise.to_dict():
+            raise PersonaConflictError(
+                "this relationship already has a different immutable relationship premise"
+            )
+
+    def propose_persona_compilation(
+        self,
+        agent_id: str,
+        user_id: str,
+        compiler_or_candidate: Any,
+        *,
+        created_by: Optional[str] = None,
+        proposal_id: Optional[str] = None,
+    ) -> PersonaCompilationProposal:
+        """Explicitly compiles or validates one reviewable Persona proposal.
+
+        A mapping or ``PersonaManifestCandidate`` is treated as advanced host
+        input. A callable or compiler adapter is invoked exactly here, never by
+        relationship initialization or a background worker.
+        """
+        profile = self._require_relationship(agent_id, user_id, "compiling a persona")
+        if isinstance(compiler_or_candidate, (Mapping, PersonaManifestCandidate)):
+            proposal = PersonaCompiler.propose(
+                profile.blueprint,
+                compiler_or_candidate,
+                proposal_id=proposal_id,
+                created_by=created_by,
+            )
+        else:
+            proposal = PersonaCompiler.compile(
+                profile.blueprint,
+                compiler_or_candidate,
+                proposal_id=proposal_id,
+                created_by=created_by,
+            )
+        return self.storage.save_persona_compilation_proposal(proposal)
+
+    def revise_persona_compilation(
+        self,
+        agent_id: str,
+        user_id: str,
+        proposal_id: str,
+        expected_revision: int,
+        candidate: Union[PersonaManifestCandidate, Mapping[str, Any]],
+        actor_id: str,
+    ) -> PersonaCompilationProposal:
+        """Creates a complete immutable revision; approval never edits content."""
+        profile = self._require_relationship(agent_id, user_id, "revising a persona")
+        proposals = self.storage.list_persona_compilation_proposals(
+            profile.blueprint.blueprint_id
+        )
+        matching = [item for item in proposals if item.proposal_id == proposal_id]
+        if not matching:
+            raise LookupError("persona compilation proposal does not exist")
+        current = max(matching, key=lambda item: item.revision)
+        revised = PersonaCompiler.revise(
+            profile.blueprint,
+            current,
+            candidate,
+            expected_revision=expected_revision,
+            actor_id=actor_id,
+        )
+        return self.storage.save_persona_compilation_proposal(revised)
+
+    def decide_persona_compilation(
+        self,
+        agent_id: str,
+        user_id: str,
+        proposal_id: str,
+        revision: int,
+        actor_id: str,
+        decision: Union[PersonaCompilationDecision, str],
+        *,
+        reason: Optional[str] = None,
+    ) -> Union[PersonaCompilationProposal, PersonaManifest]:
+        """Decides an exact latest revision and atomically materializes approval."""
+        profile = self._require_relationship(agent_id, user_id, "deciding a persona")
+        proposals = self.storage.list_persona_compilation_proposals(
+            profile.blueprint.blueprint_id
+        )
+        matching = [item for item in proposals if item.proposal_id == proposal_id]
+        if not matching:
+            raise LookupError("persona compilation proposal does not exist")
+        current = max(matching, key=lambda item: item.revision)
+        if current.revision != revision:
+            raise ValueError("persona compilation proposal revision changed")
+        parsed_decision = PersonaCompilationDecision(decision)
+        if (
+            parsed_decision == PersonaCompilationDecision.APPROVE
+            and current.status == PersonaCompilationStatus.APPROVED
+        ):
+            matching_manifests = [
+                item
+                for item in self.storage.list_persona_manifests(
+                    profile.blueprint.blueprint_id
+                )
+                if item.approved_proposal_id == current.proposal_id
+                and item.approved_revision == current.revision
+                and item.content_fingerprint == current.content_fingerprint
+            ]
+            if len(matching_manifests) != 1:
+                raise ValueError(
+                    "approved persona compilation does not have exactly one Manifest"
+                )
+            return self.storage.approve_and_bind_persona_manifest(
+                profile,
+                current,
+                matching_manifests[0],
+                PersonaCompilationStatus.APPROVED,
+            )
+        decided = PersonaCompiler.decide(
+            current,
+            revision=revision,
+            actor_id=actor_id,
+            decision=parsed_decision,
+            reason=reason,
+        )
+        if parsed_decision == PersonaCompilationDecision.APPROVE:
+            manifest = PersonaCompiler.manifest_from_approved(decided)
+            return self.storage.approve_and_bind_persona_manifest(
+                profile,
+                decided,
+                manifest,
+                PersonaCompilationStatus.PENDING,
+            )
+        expected = (
+            PersonaCompilationStatus.APPROVED
+            if parsed_decision == PersonaCompilationDecision.REVOKE
+            else PersonaCompilationStatus.PENDING
+        )
+        return self.storage.save_persona_compilation_proposal(decided, expected)
+
+    def list_persona_compilation_proposals(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> List[PersonaCompilationProposal]:
+        """Returns compilation revisions for this relationship's Blueprint."""
+        profile = self._require_relationship(agent_id, user_id, "reading persona proposals")
+        return self.storage.list_persona_compilation_proposals(
+            profile.blueprint.blueprint_id
+        )
+
+    def get_persona_manifest(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> Optional[PersonaManifest]:
+        """Returns the exact Manifest pinned to the relationship, if any."""
+        profile = self._require_relationship(agent_id, user_id, "reading a persona Manifest")
+        if profile.manifest_id is None:
+            return None
+        return self.storage.get_persona_manifest(profile.manifest_id)
+
+    def _require_relationship(
+        self,
+        agent_id: str,
+        user_id: str,
+        operation: str,
+    ) -> RelationshipProfile:
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        profile = self.storage.get_relationship(clean_agent, clean_user)
+        if profile is None:
+            raise RelationshipNotFoundError(
+                f"initialize_relationship() must be called before {operation}"
+            )
+        return profile
 
     def record_relationship_event(
         self,
@@ -703,26 +938,50 @@ class ERIIEngine:
         timeline = self.storage.get_recent_timeline(clean_agent, clean_user, limit=1000)
         try:
             relationship = self.storage.get_relationship(clean_agent, clean_user)
-            relationship_events = (
-                list_complete_relationship_events(self.storage, relationship.relationship_id)
-                if relationship is not None
-                else []
-            )
-            relationship_adjudications = (
-                self.storage.list_relationship_adjudications(relationship.relationship_id)
-                if relationship is not None
-                else []
-            )
-            persona_growth_proposals = (
-                self.storage.list_persona_growth_proposals(relationship.relationship_id)
-                if relationship is not None
-                else []
-            )
         except NotImplementedError:
             relationship = None
-            relationship_events = []
-            relationship_adjudications = []
-            persona_growth_proposals = []
+
+        relationship_events = []
+        relationship_adjudications = []
+        persona_growth_proposals = []
+        persona_compilation_proposals = []
+        persona_manifests = []
+        if relationship is not None:
+            try:
+                relationship_events = list_complete_relationship_events(
+                    self.storage,
+                    relationship.relationship_id,
+                )
+            except NotImplementedError:
+                pass
+            try:
+                relationship_adjudications = (
+                    self.storage.list_relationship_adjudications(
+                        relationship.relationship_id
+                    )
+                )
+            except NotImplementedError:
+                pass
+            try:
+                persona_growth_proposals = self.storage.list_persona_growth_proposals(
+                    relationship.relationship_id
+                )
+            except NotImplementedError:
+                pass
+            try:
+                persona_compilation_proposals = (
+                    self.storage.list_persona_compilation_proposals(
+                        relationship.blueprint.blueprint_id
+                    )
+                )
+            except NotImplementedError:
+                pass
+            try:
+                persona_manifests = self.storage.list_persona_manifests(
+                    relationship.blueprint.blueprint_id
+                )
+            except NotImplementedError:
+                pass
 
         raw_timeline = []
         for line in timeline:
@@ -744,6 +1003,8 @@ class ERIIEngine:
             relationship_events=relationship_events,
             relationship_adjudications=relationship_adjudications,
             persona_growth_proposals=persona_growth_proposals,
+            persona_compilation_proposals=persona_compilation_proposals,
+            persona_manifests=persona_manifests,
         )
 
         if export_path:
@@ -800,6 +1061,7 @@ class ERIIEngine:
                     existing_profile,
                     pack.relationship.blueprint.source_text,
                     pack.relationship.blueprint.compiled,
+                    pack.relationship.premise,
                 )
                 target_profile = existing_profile
             elif (
@@ -814,6 +1076,9 @@ class ERIIEngine:
                         clean_user,
                         pack.relationship.blueprint.source_text,
                         pack.relationship.blueprint.compiled,
+                        relationship_premise=pack.relationship.premise,
+                        source_format=pack.relationship.blueprint.source_format,
+                        source_name=pack.relationship.blueprint.source_name,
                     )
             else:
                 target_profile = self.initialize_relationship(
@@ -821,7 +1086,18 @@ class ERIIEngine:
                     clean_user,
                     pack.relationship.blueprint.source_text,
                     pack.relationship.blueprint.compiled,
+                    relationship_premise=pack.relationship.premise,
+                    source_format=pack.relationship.blueprint.source_format,
+                    source_name=pack.relationship.blueprint.source_name,
                 )
+
+            has_persona_compilation_payload = bool(
+                pack.persona_compilation_proposals
+                or pack.persona_manifests
+                or pack.relationship.manifest_id
+            )
+            if has_persona_compilation_payload:
+                target_profile = self._import_persona_compilation(pack, target_profile)
 
             source_relationship_id = pack.relationship.relationship_id
             target_relationship_id = target_profile.relationship_id
@@ -983,6 +1259,407 @@ class ERIIEngine:
                 self.storage.save_persona_growth_proposal(imported_proposal)
 
         return pack
+
+    def _import_persona_compilation(
+        self,
+        pack: MemoryPack,
+        target_profile: RelationshipProfile,
+    ) -> RelationshipProfile:
+        """Validates, remaps, then imports one Blueprint's compilation history."""
+        if pack.relationship is None:
+            return target_profile
+        source_blueprint = pack.relationship.blueprint
+        target_blueprint = target_profile.blueprint
+        source_blueprint_id = source_blueprint.blueprint_id
+        target_blueprint_id = target_blueprint.blueprint_id
+        remapped = source_blueprint_id != target_blueprint_id
+
+        if source_blueprint.source_text != target_blueprint.source_text:
+            raise ValueError(
+                "MemoryPack Persona Compilation cannot be remapped to different source text"
+            )
+
+        def immutable_proposal_content(
+            proposal: PersonaCompilationProposal,
+        ) -> Dict[str, Any]:
+            data = proposal.to_dict()
+            for key in (
+                "status",
+                "created_at",
+                "created_by",
+                "decided_by",
+                "decided_at",
+                "decision_reason",
+            ):
+                data.pop(key, None)
+            return data
+
+        def proposal_lifecycle(proposal: PersonaCompilationProposal):
+            return (
+                proposal.status,
+                proposal.decided_by,
+                proposal.decided_at,
+                proposal.decision_reason,
+            )
+
+        source_proposals: Dict[
+            tuple[str, int], PersonaCompilationProposal
+        ] = {}
+        validated_source_candidates = {}
+        for source_proposal in pack.persona_compilation_proposals:
+            source_key = (source_proposal.proposal_id, source_proposal.revision)
+            if source_key in source_proposals:
+                raise ValueError("MemoryPack contains a duplicate Persona proposal revision")
+            if (
+                source_proposal.blueprint_id != source_blueprint_id
+                or source_proposal.blueprint_revision != source_blueprint.revision
+                or source_proposal.source_sha256 != source_blueprint.source_sha256
+            ):
+                raise ValueError(
+                    "MemoryPack Persona proposal belongs to a different Blueprint revision"
+                )
+            validated_source = PersonaCompiler._validate_against_source(
+                source_proposal.candidate,
+                source_blueprint.source_text,
+            )
+            if validated_source.model_dump(mode="json") != source_proposal.candidate.model_dump(
+                mode="json"
+            ):
+                raise ValueError(
+                    "MemoryPack Persona proposal lacks canonical source-span hashes"
+                )
+            expected_fingerprint = PersonaCompiler.content_fingerprint(
+                source_blueprint_id,
+                source_blueprint.revision,
+                source_blueprint.source_sha256,
+                validated_source,
+            )
+            if source_proposal.content_fingerprint != expected_fingerprint:
+                raise ValueError("MemoryPack Persona proposal fingerprint is invalid")
+            if source_proposal.status == PersonaCompilationStatus.PENDING:
+                if any(
+                    value is not None
+                    for value in (
+                        source_proposal.decided_by,
+                        source_proposal.decided_at,
+                        source_proposal.decision_reason,
+                    )
+                ):
+                    raise ValueError("pending MemoryPack Persona proposal has decision state")
+            elif source_proposal.decided_by is None or source_proposal.decided_at is None:
+                raise ValueError("decided MemoryPack Persona proposal lacks provenance")
+            source_proposals[source_key] = source_proposal
+            validated_source_candidates[source_key] = validated_source
+
+        for source_proposal in source_proposals.values():
+            if source_proposal.revision > 1 and (
+                source_proposal.proposal_id,
+                source_proposal.parent_revision,
+            ) not in source_proposals:
+                raise ValueError("MemoryPack Persona proposal parent revision is missing")
+
+        source_manifests_by_id: Dict[str, PersonaManifest] = {}
+        source_manifests_by_revision: Dict[tuple[str, int], PersonaManifest] = {}
+        for source_manifest in pack.persona_manifests:
+            manifest_key = (
+                source_manifest.approved_proposal_id,
+                source_manifest.approved_revision,
+            )
+            if (
+                source_manifest.manifest_id in source_manifests_by_id
+                or manifest_key in source_manifests_by_revision
+            ):
+                raise ValueError("MemoryPack contains a duplicate Persona Manifest")
+            if (
+                source_manifest.blueprint_id != source_blueprint_id
+                or source_manifest.blueprint_revision != source_blueprint.revision
+                or source_manifest.source_sha256 != source_blueprint.source_sha256
+            ):
+                raise ValueError(
+                    "MemoryPack Persona Manifest belongs to a different Blueprint revision"
+                )
+            source_proposal = source_proposals.get(manifest_key)
+            if source_proposal is None:
+                raise ValueError("MemoryPack Manifest references a missing proposal revision")
+            if source_proposal.status not in (
+                PersonaCompilationStatus.APPROVED,
+                PersonaCompilationStatus.REVOKED,
+            ):
+                raise ValueError("MemoryPack Manifest references an unapproved proposal")
+            validated_manifest_candidate = PersonaCompiler._validate_against_source(
+                source_manifest.candidate,
+                source_blueprint.source_text,
+            )
+            if validated_manifest_candidate.model_dump(
+                mode="json"
+            ) != source_manifest.candidate.model_dump(mode="json"):
+                raise ValueError(
+                    "MemoryPack Persona Manifest lacks canonical source-span hashes"
+                )
+            source_approval = replace(
+                source_proposal,
+                status=PersonaCompilationStatus.APPROVED,
+                decided_by=source_manifest.approved_by,
+                decided_at=source_manifest.approved_at,
+                decision_reason=None,
+            )
+            expected_source_manifest = PersonaCompiler.manifest_from_approved(
+                source_approval
+            )
+            if expected_source_manifest.to_dict() != source_manifest.to_dict():
+                raise ValueError(
+                    "MemoryPack Persona Manifest does not match its approved proposal"
+                )
+            if source_proposal.status == PersonaCompilationStatus.APPROVED and (
+                source_proposal.decided_by != source_manifest.approved_by
+                or source_proposal.decided_at != source_manifest.approved_at
+            ):
+                raise ValueError(
+                    "approved MemoryPack Persona proposal has different Manifest provenance"
+                )
+            source_manifests_by_id[source_manifest.manifest_id] = source_manifest
+            source_manifests_by_revision[manifest_key] = source_manifest
+
+        for source_proposal in source_proposals.values():
+            if source_proposal.status in (
+                PersonaCompilationStatus.APPROVED,
+                PersonaCompilationStatus.REVOKED,
+            ) and (
+                source_proposal.proposal_id,
+                source_proposal.revision,
+            ) not in source_manifests_by_revision:
+                raise ValueError("approved MemoryPack proposal is missing its Manifest")
+
+        proposal_id_map: Dict[str, str] = {}
+        mapped_proposals: List[PersonaCompilationProposal] = []
+        for source_proposal in sorted(
+            source_proposals.values(),
+            key=lambda item: (item.proposal_id, item.revision),
+        ):
+            proposal_id_map.setdefault(
+                source_proposal.proposal_id,
+                (
+                    str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            (
+                                f"erii:{target_blueprint_id}:persona-compilation:"
+                                f"{source_proposal.proposal_id}"
+                            ),
+                        )
+                    )
+                    if remapped
+                    else source_proposal.proposal_id
+                ),
+            )
+            source_key = (source_proposal.proposal_id, source_proposal.revision)
+            validated_target = PersonaCompiler._validate_against_source(
+                validated_source_candidates[source_key],
+                target_blueprint.source_text,
+            )
+            fingerprint = PersonaCompiler.content_fingerprint(
+                target_blueprint_id,
+                target_blueprint.revision,
+                target_blueprint.source_sha256,
+                validated_target,
+            )
+            mapped = replace(
+                source_proposal,
+                proposal_id=proposal_id_map[source_proposal.proposal_id],
+                blueprint_id=target_blueprint_id,
+                blueprint_revision=target_blueprint.revision,
+                source_sha256=target_blueprint.source_sha256,
+                candidate=validated_target,
+                content_fingerprint=fingerprint,
+            )
+            mapped_proposals.append(mapped)
+
+        mapped_manifest_by_source_id: Dict[str, PersonaManifest] = {}
+        proposal_by_key = {
+            (item.proposal_id, item.revision): item for item in mapped_proposals
+        }
+        for source_manifest in source_manifests_by_id.values():
+            mapped_proposal_id = proposal_id_map.get(source_manifest.approved_proposal_id)
+            if mapped_proposal_id is None:
+                raise ValueError("MemoryPack manifest references a missing proposal revision")
+            mapped_proposal = proposal_by_key.get(
+                (mapped_proposal_id, source_manifest.approved_revision)
+            )
+            if mapped_proposal is None:
+                raise ValueError("MemoryPack manifest references a missing proposal revision")
+            mapped_approval = replace(
+                mapped_proposal,
+                status=PersonaCompilationStatus.APPROVED,
+                decided_by=source_manifest.approved_by,
+                decided_at=source_manifest.approved_at,
+                decision_reason=None,
+            )
+            mapped_manifest_by_source_id[
+                source_manifest.manifest_id
+            ] = PersonaCompiler.manifest_from_approved(mapped_approval)
+
+        selected_source_manifest_id = pack.relationship.manifest_id
+        selected_manifest = None
+        selected_proposal_key = None
+        if selected_source_manifest_id is not None:
+            selected_manifest = mapped_manifest_by_source_id.get(
+                selected_source_manifest_id
+            )
+            if selected_manifest is None:
+                raise ValueError("relationship references a Manifest missing from MemoryPack")
+            selected_proposal_key = (
+                selected_manifest.approved_proposal_id,
+                selected_manifest.approved_revision,
+            )
+            if target_profile.manifest_id not in (None, selected_manifest.manifest_id):
+                raise ValueError("target relationship is pinned to a different Manifest")
+
+        existing_compilations = {
+            (item.proposal_id, item.revision): item
+            for item in self.storage.list_persona_compilation_proposals(target_blueprint_id)
+        }
+        existing_manifests = self.storage.list_persona_manifests(target_blueprint_id)
+        existing_manifest_by_id = {item.manifest_id: item for item in existing_manifests}
+        existing_manifest_by_revision = {
+            (item.approved_proposal_id, item.approved_revision): item
+            for item in existing_manifests
+        }
+        for mapped in mapped_proposals:
+            key = (mapped.proposal_id, mapped.revision)
+            existing = existing_compilations.get(key)
+            if existing is None:
+                continue
+            if immutable_proposal_content(existing) != immutable_proposal_content(mapped):
+                raise ValueError("MemoryPack proposal identity conflicts with stored content")
+            if existing.status == mapped.status:
+                if proposal_lifecycle(existing) != proposal_lifecycle(mapped):
+                    raise ValueError("MemoryPack proposal lifecycle conflicts with storage")
+            elif not (
+                existing.status == PersonaCompilationStatus.PENDING
+                or (
+                    existing.status == PersonaCompilationStatus.APPROVED
+                    and mapped.status == PersonaCompilationStatus.REVOKED
+                )
+            ):
+                raise ValueError("MemoryPack proposal status conflicts with storage")
+
+        for mapped_manifest in mapped_manifest_by_source_id.values():
+            existing = existing_manifest_by_id.get(mapped_manifest.manifest_id)
+            by_revision = existing_manifest_by_revision.get(
+                (
+                    mapped_manifest.approved_proposal_id,
+                    mapped_manifest.approved_revision,
+                )
+            )
+            for candidate in (existing, by_revision):
+                if candidate is not None and candidate.to_dict() != mapped_manifest.to_dict():
+                    raise ValueError("MemoryPack Manifest identity conflicts with storage")
+
+        # No writes occur until the complete source graph and every target
+        # conflict have been validated.
+        for mapped in mapped_proposals:
+            key = (mapped.proposal_id, mapped.revision)
+            if key in existing_compilations:
+                continue
+            pending = replace(
+                mapped,
+                status=PersonaCompilationStatus.PENDING,
+                decided_by=None,
+                decided_at=None,
+                decision_reason=None,
+            )
+            self.storage.save_persona_compilation_proposal(pending)
+            existing_compilations[key] = pending
+
+        for mapped in mapped_proposals:
+            key = (mapped.proposal_id, mapped.revision)
+            current = existing_compilations[key]
+            if mapped.status == PersonaCompilationStatus.PENDING:
+                continue
+            matching_manifest = next(
+                (
+                    item
+                    for item in mapped_manifest_by_source_id.values()
+                    if (
+                        item.approved_proposal_id,
+                        item.approved_revision,
+                    )
+                    == key
+                ),
+                None,
+            )
+            if mapped.status in (
+                PersonaCompilationStatus.APPROVED,
+                PersonaCompilationStatus.REVOKED,
+            ):
+                if matching_manifest is None:
+                    raise ValueError("approved MemoryPack proposal is missing its Manifest")
+                approved = replace(
+                    mapped,
+                    status=PersonaCompilationStatus.APPROVED,
+                    decided_by=matching_manifest.approved_by,
+                    decided_at=matching_manifest.approved_at,
+                    decision_reason=None,
+                )
+                manifest_already_exists = (
+                    matching_manifest.manifest_id in existing_manifest_by_id
+                )
+                if key == selected_proposal_key and mapped.status == PersonaCompilationStatus.APPROVED:
+                    expected = current.status
+                    self.storage.approve_and_bind_persona_manifest(
+                        target_profile,
+                        approved,
+                        matching_manifest,
+                        expected,
+                    )
+                    target_profile = self.storage.get_relationship(
+                        target_profile.agent_id,
+                        target_profile.user_id,
+                    ) or target_profile
+                elif current.status == PersonaCompilationStatus.PENDING:
+                    self.storage.approve_persona_manifest(
+                        approved,
+                        matching_manifest,
+                        PersonaCompilationStatus.PENDING,
+                    )
+                elif (
+                    current.status == PersonaCompilationStatus.APPROVED
+                    and not manifest_already_exists
+                ):
+                    self.storage.approve_persona_manifest(
+                        approved,
+                        matching_manifest,
+                        PersonaCompilationStatus.APPROVED,
+                    )
+                elif current.status == PersonaCompilationStatus.REVOKED and not manifest_already_exists:
+                    raise ValueError("revoked stored proposal is missing its Persona Manifest")
+
+                if (
+                    mapped.status == PersonaCompilationStatus.REVOKED
+                    and current.status != PersonaCompilationStatus.REVOKED
+                ):
+                    self.storage.save_persona_compilation_proposal(
+                        mapped,
+                        PersonaCompilationStatus.APPROVED,
+                    )
+                existing_compilations[key] = mapped
+                existing_manifest_by_id[matching_manifest.manifest_id] = matching_manifest
+            elif (
+                mapped.status == PersonaCompilationStatus.REJECTED
+                and current.status == PersonaCompilationStatus.PENDING
+            ):
+                self.storage.save_persona_compilation_proposal(
+                    mapped,
+                    PersonaCompilationStatus.PENDING,
+                )
+                existing_compilations[key] = mapped
+
+        if selected_manifest is not None and target_profile.manifest_id is None:
+            target_profile = self.storage.bind_relationship_manifest(
+                target_profile,
+                selected_manifest.manifest_id,
+            )
+        return target_profile
 
     def start(self) -> "ERIIEngine":
         """Explicitly starts background archival and returns this engine."""

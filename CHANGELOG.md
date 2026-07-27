@@ -2,6 +2,32 @@
 
 本项目的用户可感知变化记录在此文件。版本遵循语义化版本；`0.x` 阶段仍可能出现受控的破坏性变更。
 
+## [0.4.0a3] - 2026-07-28
+
+### Added
+
+- 显式 `PersonaCompiler` Interface、Callable/LLM Adapter、严格的原文区间引用、类型化形成性连接、Meaning Capsule 与完整候选图校验。
+- 不可变 Persona Compilation Proposal revision，以及按精确 revision 批准、拒绝、撤销和生成确定性 Manifest 的流程。
+- `fresh`、`address_only`、`canonical_continuation` 三种关系前提，Premise Experience 原文核验和定性 Relationship Baseline。
+- `recall_structured()`、不可变 `RecallResult`、Agent Private/Public 受众、World Time、Purpose-built Projection、预算报告和强化回执。
+- 确定性 Markdown Renderer 与 `render_recall()`；Renderer 不访问存储或 LLM，不截断或静默删除已选语义项。
+- `POST /api/v1/recall/structured` REST Interface。
+- SQLite Schema v3；MemoryPack `0.4.0a3` 携带 Persona Proposal、Manifest、Premise 与 Baseline。
+
+### Changed
+
+- 结构化召回默认只读；只有显式 `reinforce=True` 才强化预算后最终入选的 MemoryNode。
+- `recall()` 保留字符串返回、旧 Markdown 区段和自动强化，内部复用结构化组装链。
+- Character Blueprint 精确保留原文首尾，记录 revision、SHA-256、来源格式与名称；旧 `compiled` 字段仅作兼容，不视为获批 Manifest。
+- Relationship Projector 从不可变 Baseline 开始折叠真实事件，`event_count` 不包含 Premise Experience。
+- 包版本升级为 `0.4.0a3`。
+
+### Compatibility
+
+- 未初始化关系的结构化召回返回明确 `uninitialized`，继续提供旧记忆但不创建人设或关系。
+- 旧 FileStorage、SQLite v2 与缺少 a3 字段的 MemoryPack 继续可读；SQLite 原地迁移到 v3。
+- Public Recall 在组装阶段排除人设原文、内部独白、内部关系数值和默认私有关系事件。
+
 ## [0.4.0a2] - Unreleased
 
 ### Added

@@ -19,6 +19,8 @@ from erii.models.relationship import (
 class RelationshipProjector:
     """Rebuilds current state and beliefs from accepted historical events."""
 
+    # Kept for callers that used the pre-alpha.3 constant directly. New
+    # projections start from the immutable relationship-specific baseline.
     INITIAL_STATE = RelationshipState()
 
     @classmethod
@@ -29,7 +31,7 @@ class RelationshipProjector:
         observed_at: Optional[str] = None,
     ) -> RelationshipSnapshot:
         """Projects a relationship snapshot in event storage order."""
-        state_values = cls.INITIAL_STATE.to_dict()
+        state_values = dict(profile.baseline.state)
         beliefs: Dict[str, CurrentBelief] = {}
         reasons: Dict[str, StateReason] = {}
 
@@ -86,6 +88,7 @@ class RelationshipProjector:
             state_reasons=reasons,
             event_count=len(events),
             last_event_id=events[-1].event_id if events else None,
+            projection_version=2,
             temporal_context=temporal_context,
         )
 

@@ -6,6 +6,7 @@ core persona impressions, and experiential timeline events.
 Follows Google Python Style Guide.
 """
 
+from dataclasses import replace
 from datetime import datetime
 import hashlib
 import json
@@ -23,9 +24,16 @@ from erii.models.adjudication import (
     PersonaGrowthStatus,
 )
 from erii.models.node import MemoryNode
+from erii.models.persona import (
+    PersonaCompilationConflictError,
+    PersonaCompilationProposal,
+    PersonaCompilationStatus,
+    PersonaManifest,
+)
 from erii.models.relationship import (
     EventConflictError,
     IdentityKind,
+    PersonaConflictError,
     RelationshipEvent,
     RelationshipProfile,
 )
@@ -47,6 +55,7 @@ class FileStorage(BaseStorage):
         super().__init__()
         self.root_dir = os.path.abspath(root_dir)
         os.makedirs(self.root_dir, exist_ok=True)
+        self._recover_persona_approval_transactions()
 
     def _get_user_dir(self, agent_id: str, user_id: str) -> str:
         """Computes and validates target directory path.
@@ -105,6 +114,28 @@ class FileStorage(BaseStorage):
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
 
+    def _get_persona_compilation_path(self, blueprint_id: str) -> str:
+        digest = hashlib.sha256(blueprint_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self.root_dir, "_persona_compilations")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.json")
+
+    def _get_persona_approval_journal_dir(self) -> str:
+        directory = os.path.join(self.root_dir, "_persona_approval_transactions")
+        os.makedirs(directory, exist_ok=True)
+        return directory
+
+    def _get_persona_approval_journal_path(
+        self,
+        relationship_id: str,
+        proposal_id: str,
+        revision: int,
+    ) -> str:
+        digest = hashlib.sha256(
+            f"{relationship_id}\0{proposal_id}\0{revision}".encode("utf-8")
+        ).hexdigest()
+        return os.path.join(self._get_persona_approval_journal_dir(), f"{digest}.json")
+
     @staticmethod
     def _write_json_atomic(file_path: str, data: Any) -> None:
         """Writes JSON via replace so readers never observe a partial document."""
@@ -118,6 +149,52 @@ class FileStorage(BaseStorage):
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+
+    def _recover_persona_approval_transactions(self) -> None:
+        """Rolls prepared cross-file approvals forward after an interrupted write."""
+        directory = self._get_persona_approval_journal_dir()
+        for name in sorted(os.listdir(directory)):
+            if not name.endswith(".json"):
+                continue
+            self._complete_persona_approval_journal(os.path.join(directory, name))
+
+    def _complete_persona_approval_journal(self, journal_path: str) -> None:
+        """Idempotently installs both after-images from one durable journal."""
+        with open(journal_path, "r", encoding="utf-8") as file_obj:
+            transaction = json.load(file_obj)
+        if transaction.get("version") != 1:
+            raise PersonaCompilationConflictError(
+                "unsupported persona approval transaction journal"
+            )
+        profile = RelationshipProfile.from_dict(transaction["relationship_profile"])
+        aggregate = transaction["compilation_aggregate"]
+        proposals = [
+            PersonaCompilationProposal.from_dict(item)
+            for item in aggregate.get("proposals", [])
+        ]
+        manifests = [
+            PersonaManifest.from_dict(item) for item in aggregate.get("manifests", [])
+        ]
+        if any(item.blueprint_id != profile.blueprint.blueprint_id for item in proposals):
+            raise PersonaCompilationConflictError(
+                "persona approval journal contains a foreign proposal"
+            )
+        if any(item.blueprint_id != profile.blueprint.blueprint_id for item in manifests):
+            raise PersonaCompilationConflictError(
+                "persona approval journal contains a foreign Manifest"
+            )
+        self._write_json_atomic(
+            self._get_persona_compilation_path(profile.blueprint.blueprint_id),
+            aggregate,
+        )
+        self._write_json_atomic(
+            self._get_relationship_path(profile.agent_id, profile.user_id),
+            profile.to_dict(),
+        )
+        try:
+            os.remove(journal_path)
+        except OSError:
+            pass
 
     def _load_identity_registry(self) -> Dict[str, Dict[str, str]]:
         file_path = self._get_identity_registry_path()
@@ -258,7 +335,12 @@ class FileStorage(BaseStorage):
         with self.lock_manager.lock(clean_agent, clean_user):
             if os.path.exists(profile_path):
                 with open(profile_path, "r", encoding="utf-8") as file_obj:
-                    return RelationshipProfile.from_dict(json.load(file_obj))
+                    existing = RelationshipProfile.from_dict(json.load(file_obj))
+                if existing.to_dict() != profile.to_dict():
+                    raise PersonaConflictError(
+                        "relationship initialization conflicts with its immutable profile"
+                    )
+                return existing
 
             with self.lock_manager.lock("__domain_registry__", "identities"):
                 registry = self._load_identity_registry()
@@ -447,6 +529,372 @@ class FileStorage(BaseStorage):
                 return []
             with open(file_path, "r", encoding="utf-8") as file_obj:
                 return [PersonaGrowthProposal.from_dict(item) for item in json.load(file_obj)]
+
+    def save_persona_compilation_proposal(
+        self,
+        proposal: PersonaCompilationProposal,
+        expected_status: Optional[PersonaCompilationStatus] = None,
+    ) -> PersonaCompilationProposal:
+        """Appends or conditionally updates one compilation revision atomically."""
+        with self.lock_manager.lock("__persona_compilation__", proposal.blueprint_id):
+            file_path = self._get_persona_compilation_path(proposal.blueprint_id)
+            aggregate: Dict[str, Any] = {"proposals": [], "manifests": []}
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as file_obj:
+                    aggregate.update(json.load(file_obj))
+            raw_proposals = list(aggregate.get("proposals", []))
+            for index, raw_proposal in enumerate(raw_proposals):
+                existing = PersonaCompilationProposal.from_dict(raw_proposal)
+                if (existing.proposal_id, existing.revision) != (
+                    proposal.proposal_id,
+                    proposal.revision,
+                ):
+                    continue
+                if self._compilation_content(existing) != self._compilation_content(proposal):
+                    raise PersonaCompilationConflictError(
+                        "persona compilation revision content is immutable"
+                    )
+                if expected_status is None:
+                    if self._compilation_lifecycle(existing) != self._compilation_lifecycle(
+                        proposal
+                    ):
+                        raise PersonaCompilationConflictError(
+                            "updating a compilation decision requires its expected status"
+                        )
+                    return existing
+                if existing.status != expected_status:
+                    raise PersonaCompilationConflictError(
+                        "persona compilation proposal status changed"
+                    )
+                raw_proposals[index] = proposal.to_dict()
+                aggregate["proposals"] = raw_proposals
+                self._write_json_atomic(file_path, aggregate)
+                return proposal
+
+            if expected_status is not None:
+                raise PersonaCompilationConflictError(
+                    "persona compilation proposal revision no longer exists"
+                )
+            if proposal.revision > 1:
+                parent = next(
+                    (
+                        PersonaCompilationProposal.from_dict(item)
+                        for item in raw_proposals
+                        if item.get("proposal_id") == proposal.proposal_id
+                        and int(item.get("revision", 0)) == proposal.parent_revision
+                    ),
+                    None,
+                )
+                if parent is None:
+                    raise PersonaCompilationConflictError(
+                        "persona compilation parent revision does not exist"
+                    )
+            raw_proposals.append(proposal.to_dict())
+            raw_proposals.sort(key=lambda item: (item["proposal_id"], item["revision"]))
+            aggregate["proposals"] = raw_proposals
+            self._write_json_atomic(file_path, aggregate)
+            return proposal
+
+    def list_persona_compilation_proposals(
+        self,
+        blueprint_id: str,
+    ) -> List[PersonaCompilationProposal]:
+        """Loads every proposal revision for one Blueprint."""
+        with self.lock_manager.lock("__persona_compilation__", blueprint_id):
+            file_path = self._get_persona_compilation_path(blueprint_id)
+            if not os.path.exists(file_path):
+                return []
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                aggregate = json.load(file_obj)
+            return [
+                PersonaCompilationProposal.from_dict(item)
+                for item in aggregate.get("proposals", [])
+            ]
+
+    def approve_persona_manifest(
+        self,
+        proposal: PersonaCompilationProposal,
+        manifest: PersonaManifest,
+        expected_status: PersonaCompilationStatus = PersonaCompilationStatus.PENDING,
+    ) -> PersonaManifest:
+        """Atomically approves an exact proposal revision and stores its Manifest."""
+        self._validate_manifest_approval(proposal, manifest)
+        with self.lock_manager.lock("__persona_compilation__", proposal.blueprint_id):
+            file_path = self._get_persona_compilation_path(proposal.blueprint_id)
+            if not os.path.exists(file_path):
+                raise PersonaCompilationConflictError("persona compilation proposal is missing")
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                aggregate = json.load(file_obj)
+            raw_proposals = list(aggregate.get("proposals", []))
+            raw_manifests = list(aggregate.get("manifests", []))
+            for raw_manifest in raw_manifests:
+                existing_manifest = PersonaManifest.from_dict(raw_manifest)
+                if existing_manifest.manifest_id != manifest.manifest_id:
+                    continue
+                if existing_manifest.to_dict() != manifest.to_dict():
+                    raise PersonaCompilationConflictError("manifest ID has different content")
+                return existing_manifest
+
+            matched = False
+            for index, raw_proposal in enumerate(raw_proposals):
+                existing = PersonaCompilationProposal.from_dict(raw_proposal)
+                if (existing.proposal_id, existing.revision) != (
+                    proposal.proposal_id,
+                    proposal.revision,
+                ):
+                    continue
+                if existing.status != expected_status:
+                    raise PersonaCompilationConflictError(
+                        "persona compilation proposal status changed"
+                    )
+                if self._compilation_content(existing) != self._compilation_content(proposal):
+                    raise PersonaCompilationConflictError(
+                        "approved proposal content differs from persisted revision"
+                    )
+                raw_proposals[index] = proposal.to_dict()
+                matched = True
+                break
+            if not matched:
+                raise PersonaCompilationConflictError("persona compilation revision is missing")
+            raw_manifests.append(manifest.to_dict())
+            aggregate["proposals"] = raw_proposals
+            aggregate["manifests"] = raw_manifests
+            self._write_json_atomic(file_path, aggregate)
+            return manifest
+
+    def approve_and_bind_persona_manifest(
+        self,
+        profile: RelationshipProfile,
+        proposal: PersonaCompilationProposal,
+        manifest: PersonaManifest,
+        expected_status: PersonaCompilationStatus = PersonaCompilationStatus.PENDING,
+    ) -> PersonaManifest:
+        """Crash-recoverably approves and binds one exact Manifest."""
+        self._validate_manifest_approval(proposal, manifest)
+        journal_path = self._get_persona_approval_journal_path(
+            profile.relationship_id,
+            proposal.proposal_id,
+            proposal.revision,
+        )
+        with self.lock_manager.lock("__persona_compilation__", proposal.blueprint_id):
+            with self.lock_manager.lock(profile.agent_id, profile.user_id):
+                if os.path.exists(journal_path):
+                    self._complete_persona_approval_journal(journal_path)
+
+                profile_path = self._get_relationship_path(
+                    profile.agent_id,
+                    profile.user_id,
+                )
+                if not os.path.exists(profile_path):
+                    raise ValueError("relationship profile does not exist")
+                with open(profile_path, "r", encoding="utf-8") as file_obj:
+                    existing_profile = RelationshipProfile.from_dict(json.load(file_obj))
+                if (
+                    existing_profile.relationship_id != profile.relationship_id
+                    or existing_profile.blueprint.blueprint_id != proposal.blueprint_id
+                ):
+                    raise PersonaCompilationConflictError(
+                        "Manifest approval targets a different relationship or Blueprint"
+                    )
+                if existing_profile.manifest_id not in (None, manifest.manifest_id):
+                    raise PersonaCompilationConflictError(
+                        "relationship is already pinned to a different Manifest"
+                    )
+
+                compilation_path = self._get_persona_compilation_path(
+                    proposal.blueprint_id
+                )
+                if not os.path.exists(compilation_path):
+                    raise PersonaCompilationConflictError(
+                        "persona compilation proposal is missing"
+                    )
+                with open(compilation_path, "r", encoding="utf-8") as file_obj:
+                    aggregate = json.load(file_obj)
+                raw_proposals = list(aggregate.get("proposals", []))
+                raw_manifests = list(aggregate.get("manifests", []))
+
+                proposal_index = None
+                persisted_proposal = None
+                for index, raw_proposal in enumerate(raw_proposals):
+                    candidate = PersonaCompilationProposal.from_dict(raw_proposal)
+                    if (candidate.proposal_id, candidate.revision) == (
+                        proposal.proposal_id,
+                        proposal.revision,
+                    ):
+                        proposal_index = index
+                        persisted_proposal = candidate
+                        break
+                if persisted_proposal is None or proposal_index is None:
+                    raise PersonaCompilationConflictError(
+                        "persona compilation revision is missing"
+                    )
+                if self._compilation_content(persisted_proposal) != self._compilation_content(
+                    proposal
+                ):
+                    raise PersonaCompilationConflictError(
+                        "approved proposal content differs from persisted revision"
+                    )
+                if persisted_proposal.status != expected_status:
+                    raise PersonaCompilationConflictError(
+                        "persona compilation proposal status changed"
+                    )
+                if expected_status == PersonaCompilationStatus.APPROVED:
+                    if self._compilation_lifecycle(
+                        persisted_proposal
+                    ) != self._compilation_lifecycle(proposal):
+                        raise PersonaCompilationConflictError(
+                            "approved proposal lifecycle differs from persisted revision"
+                        )
+                else:
+                    raw_proposals[proposal_index] = proposal.to_dict()
+
+                persisted_manifest = None
+                for raw_manifest in raw_manifests:
+                    candidate = PersonaManifest.from_dict(raw_manifest)
+                    same_revision = (
+                        candidate.approved_proposal_id == proposal.proposal_id
+                        and candidate.approved_revision == proposal.revision
+                    )
+                    if candidate.manifest_id == manifest.manifest_id or same_revision:
+                        if candidate.to_dict() != manifest.to_dict():
+                            raise PersonaCompilationConflictError(
+                                "proposal revision already has a different Manifest"
+                            )
+                        persisted_manifest = candidate
+                if persisted_manifest is None:
+                    raw_manifests.append(manifest.to_dict())
+
+                aggregate_after = dict(aggregate)
+                aggregate_after["proposals"] = raw_proposals
+                aggregate_after["manifests"] = raw_manifests
+                bound_profile = replace(existing_profile, manifest_id=manifest.manifest_id)
+                if (
+                    aggregate_after == aggregate
+                    and bound_profile.to_dict() == existing_profile.to_dict()
+                ):
+                    return persisted_manifest or manifest
+
+                transaction = {
+                    "version": 1,
+                    "relationship_profile": bound_profile.to_dict(),
+                    "compilation_aggregate": aggregate_after,
+                }
+                self._write_json_atomic(journal_path, transaction)
+                try:
+                    self._complete_persona_approval_journal(journal_path)
+                except Exception:
+                    # A transient second-file failure can be repaired immediately;
+                    # a persistent failure leaves the durable journal for startup.
+                    if not os.path.exists(journal_path):
+                        raise
+                    self._complete_persona_approval_journal(journal_path)
+                return persisted_manifest or manifest
+
+    def get_persona_manifest(self, manifest_id: str) -> Optional[PersonaManifest]:
+        """Loads a Persona Manifest by scanning compact Blueprint aggregates."""
+        directory = os.path.join(self.root_dir, "_persona_compilations")
+        if not os.path.isdir(directory):
+            return None
+        with self.lock_manager.lock("__persona_manifest__", manifest_id):
+            for name in sorted(os.listdir(directory)):
+                if not name.endswith(".json"):
+                    continue
+                with open(os.path.join(directory, name), "r", encoding="utf-8") as file_obj:
+                    aggregate = json.load(file_obj)
+                for raw_manifest in aggregate.get("manifests", []):
+                    if raw_manifest.get("manifest_id") == manifest_id:
+                        return PersonaManifest.from_dict(raw_manifest)
+        return None
+
+    def list_persona_manifests(self, blueprint_id: str) -> List[PersonaManifest]:
+        """Loads approved Persona Manifests for one Blueprint."""
+        with self.lock_manager.lock("__persona_compilation__", blueprint_id):
+            file_path = self._get_persona_compilation_path(blueprint_id)
+            if not os.path.exists(file_path):
+                return []
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                aggregate = json.load(file_obj)
+            return [
+                PersonaManifest.from_dict(item)
+                for item in aggregate.get("manifests", [])
+            ]
+
+    def bind_relationship_manifest(
+        self,
+        profile: RelationshipProfile,
+        manifest_id: str,
+    ) -> RelationshipProfile:
+        """Pins an approved Manifest to one existing relationship exactly once."""
+        manifest = self.get_persona_manifest(manifest_id)
+        if manifest is None or manifest.blueprint_id != profile.blueprint.blueprint_id:
+            raise PersonaCompilationConflictError(
+                "manifest is missing or belongs to a different Character Blueprint"
+            )
+        with self.lock_manager.lock(profile.agent_id, profile.user_id):
+            profile_path = self._get_relationship_path(profile.agent_id, profile.user_id)
+            if not os.path.exists(profile_path):
+                raise ValueError("relationship profile does not exist")
+            with open(profile_path, "r", encoding="utf-8") as file_obj:
+                existing = RelationshipProfile.from_dict(json.load(file_obj))
+            if existing.relationship_id != profile.relationship_id:
+                raise PersonaConflictError("relationship profile identity changed")
+            if existing.manifest_id is not None:
+                if existing.manifest_id != manifest_id:
+                    raise PersonaCompilationConflictError(
+                        "relationship is already pinned to a different Manifest"
+                    )
+                return existing
+            bound = replace(existing, manifest_id=manifest_id)
+            self._write_json_atomic(profile_path, bound.to_dict())
+            return bound
+
+    @staticmethod
+    def _validate_manifest_approval(
+        proposal: PersonaCompilationProposal,
+        manifest: PersonaManifest,
+    ) -> None:
+        if proposal.status != PersonaCompilationStatus.APPROVED:
+            raise PersonaCompilationConflictError(
+                "approval requires an approved proposal value"
+            )
+        if (
+            manifest.blueprint_id != proposal.blueprint_id
+            or manifest.blueprint_revision != proposal.blueprint_revision
+            or manifest.source_sha256 != proposal.source_sha256
+            or manifest.approved_proposal_id != proposal.proposal_id
+            or manifest.approved_revision != proposal.revision
+            or manifest.content_fingerprint != proposal.content_fingerprint
+            or manifest.candidate.model_dump(mode="json")
+            != proposal.candidate.model_dump(mode="json")
+            or manifest.approved_by != proposal.decided_by
+            or manifest.approved_at != proposal.decided_at
+        ):
+            raise PersonaCompilationConflictError(
+                "manifest does not match the exact approved proposal"
+            )
+
+    @staticmethod
+    def _compilation_content(proposal: PersonaCompilationProposal) -> Dict[str, Any]:
+        data = proposal.to_dict()
+        for key in (
+            "status",
+            "created_at",
+            "created_by",
+            "decided_by",
+            "decided_at",
+            "decision_reason",
+        ):
+            data.pop(key, None)
+        return data
+
+    @staticmethod
+    def _compilation_lifecycle(proposal: PersonaCompilationProposal):
+        return (
+            proposal.status,
+            proposal.decided_by,
+            proposal.decided_at,
+            proposal.decision_reason,
+        )
 
     @staticmethod
     def _proposal_content(proposal: PersonaGrowthProposal) -> Dict[str, Any]:

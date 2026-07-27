@@ -31,12 +31,22 @@
 - 重大人格变化经过独立内在审视后转为待确认提案；
 - FileStorage、SQLiteStorage 与 MemoryPack 携带裁决记录。
 
-### alpha.3：结构化召回
+### alpha.3：人设感知结构化召回（已完成：`0.4.0a3`）
 
 - `RecallResult`；
 - 可替换 Prompt Renderer；
-- recorded、occurred 和 world time；
+- Persona Compiler、审批 Manifest 与规划/完整人设交付；
+- 关系前提、定性 Baseline、显式受众和原子预算；
+- recorded、occurred 和 world time 携带；
+- 默认只读召回与显式 Recall Reinforcement；
+- SQLite Schema v3 与 MemoryPack `0.4.0a3`。
+
+### alpha.4：时间承诺与开放事项（下一阶段：`0.4.0a4`）
+
 - 到期承诺与未完成事件信号。
+- Promise/Open Loop 的追加式 Resolution；
+- 同一 World Time 时钟内的到期与逾期判断；
+- 旧 `is_unresolved` 的低权威兼容投影。
 
 ### beta.1：迁移与长期评测
 

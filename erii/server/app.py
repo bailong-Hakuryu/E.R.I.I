@@ -10,7 +10,10 @@ import sys
 from typing import Optional
 
 from erii._version import __version__
+from erii.core.persona_context import PersonaManifestRequiredError
+from erii.core.recall import RecallBudgetUnsatisfiedError
 from erii.engine import ERIIEngine
+from erii.models.recall import RecallRequest as DomainRecallRequest
 
 logger = logging.getLogger("erii.server")
 
@@ -63,6 +66,9 @@ try:
         user_id: str
         query: str
         top_k: int = 5
+
+    class StructuredRecallBody(DomainRecallRequest):
+        """Renderer-neutral structured recall request body."""
 
     class CoreMemoryRequest(BaseModel):
         agent_id: str = "default_agent"
@@ -134,6 +140,21 @@ try:
                 top_k=req.top_k,
             )
             return {"status": "success", "context": context}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/v1/recall/structured")
+    def api_recall_structured(req: StructuredRecallBody):
+        """Returns an audience-filtered RecallResult without prompt rendering."""
+        try:
+            result = get_engine().recall_structured(req)
+            return {"status": "success", "result": result.model_dump(mode="json")}
+        except PersonaManifestRequiredError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except RecallBudgetUnsatisfiedError as e:
+            raise HTTPException(status_code=422, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:

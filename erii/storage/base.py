@@ -13,6 +13,11 @@ from erii.models.adjudication import (
     PersonaGrowthStatus,
 )
 from erii.models.node import MemoryNode
+from erii.models.persona import (
+    PersonaCompilationProposal,
+    PersonaCompilationStatus,
+    PersonaManifest,
+)
 from erii.models.relationship import (
     IdentityKind,
     RelationshipEvent,
@@ -185,3 +190,59 @@ class BaseStorage(ABC):
     ) -> List[PersonaGrowthProposal]:
         """Returns persona growth proposals for one relationship."""
         raise NotImplementedError("storage adapter does not support persona growth proposals")
+
+    def save_persona_compilation_proposal(
+        self,
+        proposal: PersonaCompilationProposal,
+        expected_status: Optional[PersonaCompilationStatus] = None,
+    ) -> PersonaCompilationProposal:
+        """Appends a proposal revision or conditionally updates its lifecycle."""
+        raise NotImplementedError("storage adapter does not support persona compilation")
+
+    def list_persona_compilation_proposals(
+        self,
+        blueprint_id: str,
+    ) -> List[PersonaCompilationProposal]:
+        """Returns every immutable compilation revision for one Blueprint."""
+        raise NotImplementedError("storage adapter does not support persona compilation")
+
+    def approve_persona_manifest(
+        self,
+        proposal: PersonaCompilationProposal,
+        manifest: PersonaManifest,
+        expected_status: PersonaCompilationStatus = PersonaCompilationStatus.PENDING,
+    ) -> PersonaManifest:
+        """Atomically applies an exact approval and stores its immutable Manifest."""
+        raise NotImplementedError("storage adapter does not support persona manifests")
+
+    def approve_and_bind_persona_manifest(
+        self,
+        profile: RelationshipProfile,
+        proposal: PersonaCompilationProposal,
+        manifest: PersonaManifest,
+        expected_status: PersonaCompilationStatus = PersonaCompilationStatus.PENDING,
+    ) -> PersonaManifest:
+        """Atomically approves a Manifest and pins it to one relationship.
+
+        Storage adapters implementing Persona Compilation must make this
+        operation transactional or crash-recoverable.  The separate approval
+        and binding methods remain available for MemoryPack restoration and
+        low-level maintenance, but the Engine never composes them itself.
+        """
+        raise NotImplementedError("storage adapter does not support atomic persona approval")
+
+    def get_persona_manifest(self, manifest_id: str) -> Optional[PersonaManifest]:
+        """Loads one approved Persona Manifest by stable ID."""
+        raise NotImplementedError("storage adapter does not support persona manifests")
+
+    def list_persona_manifests(self, blueprint_id: str) -> List[PersonaManifest]:
+        """Returns approved manifests for one Character Blueprint."""
+        raise NotImplementedError("storage adapter does not support persona manifests")
+
+    def bind_relationship_manifest(
+        self,
+        profile: RelationshipProfile,
+        manifest_id: str,
+    ) -> RelationshipProfile:
+        """Pins the first approved Manifest to a relationship exactly once."""
+        raise NotImplementedError("storage adapter does not support persona manifests")
