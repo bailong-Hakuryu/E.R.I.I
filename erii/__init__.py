@@ -11,6 +11,31 @@ from erii.core.queue.base import BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.engine import ERIIEngine
 from erii.models.config import ERIIConfig
+from erii.models.adjudication import (
+    AdjudicationBatchResult,
+    AdjudicationRecord,
+    CandidateConflictError,
+    DecisionOutcome,
+    DecisionReceipt,
+    EvidenceCitation,
+    EvidenceReference,
+    GrowthTriggerKind,
+    PersonaGrowthConflictError,
+    PersonaGrowthDecision,
+    PersonaGrowthIntentCandidate,
+    PersonaGrowthProposal,
+    PersonaGrowthStatus,
+    RelationshipCandidateBatch,
+    RelationshipEventCandidate,
+    RelationshipPolicySpec,
+    RelationshipSignal,
+    RelationshipSignalType,
+    SignalStrength,
+    SourceMessage,
+    SourceProcessingMode,
+    SourceRole,
+    SourceTurn,
+)
 from erii.models.node import MemoryNode, MemoryState, MemoryType, MemoryVisibility
 from erii.models.pack import MemoryPack
 from erii.models.relationship import (
@@ -28,6 +53,7 @@ from erii.models.relationship import (
     RelationshipSnapshot,
     RelationshipState,
     StateReason,
+    TemporalContext,
 )
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
@@ -43,6 +69,8 @@ from erii._version import __version__
 
 __all__ = [
     "__version__",
+    "AdjudicationBatchResult",
+    "AdjudicationRecord",
     "ERIIEngine",
     "ERIIConfig",
     "MemoryNode",
@@ -53,17 +81,39 @@ __all__ = [
     "BeliefOperation",
     "BeliefUpdate",
     "CharacterBlueprint",
+    "CandidateConflictError",
     "CurrentBelief",
+    "DecisionOutcome",
+    "DecisionReceipt",
     "EventConflictError",
+    "EvidenceCitation",
+    "EvidenceReference",
+    "GrowthTriggerKind",
     "IdentityKind",
     "PersonaConflictError",
+    "PersonaGrowthConflictError",
+    "PersonaGrowthDecision",
+    "PersonaGrowthIntentCandidate",
+    "PersonaGrowthProposal",
+    "PersonaGrowthStatus",
+    "RelationshipCandidateBatch",
     "RelationshipEvent",
+    "RelationshipEventCandidate",
     "RelationshipEventType",
     "RelationshipNotFoundError",
     "RelationshipProfile",
+    "RelationshipPolicySpec",
+    "RelationshipSignal",
+    "RelationshipSignalType",
     "RelationshipSnapshot",
     "RelationshipState",
     "StateReason",
+    "TemporalContext",
+    "SignalStrength",
+    "SourceMessage",
+    "SourceProcessingMode",
+    "SourceRole",
+    "SourceTurn",
     "BaseLLMAdapter",
     "CallableLLMAdapter",
     "OpenAIAdapter",

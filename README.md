@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0a1-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-0.4.0a2-orange.svg)]()
 
 E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI 伴侣、虚拟角色和叙事型 Agent。
 
@@ -19,7 +19,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 当前版本能够做什么
 
-`v0.4.0a1` 已实现：
+`v0.4.0a2` 已实现：
 
 - 按 `(agent_id, user_id)` 隔离记忆；
 - 核心人格文本、体验时间线和分类印象节点；
@@ -38,12 +38,17 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - 熟悉、信任、亲密、安全感与冲突张力的有限幅度状态投影；
 - 每项当前状态对应的事件证据和叙事解释；
 - 关系档案与事件的 MemoryPack 携带能力；
+- 不可信候选的 Pydantic Schema、精确证据核验和逐候选裁决；
+- LLM 定性关系信号到五维状态的确定性、有界映射；
+- 技术重试幂等、底层经历去重、历史佐证和显式历史重处理；
+- 不可变 Persona Reflection，以及积累型/转折型人格成长提案；
+- 宿主在对话外按提案版本批准、拒绝或撤销人格成长；
+- 证据、裁决回执和人格成长提案的 MemoryPack 携带能力；
+- 显式观察但不暗改关系状态的时间上下文；
 - 由宿主显式控制的后台归档生命周期。
 
 当前版本尚未实现：
 
-- 人格变化提案与人工确认；
-- LLM 候选事件的证据校验和规则裁决；
 - 事件、情节和关系阶段的分层巩固；
 - 关系状态进入结构化召回结果；
 - 完整的授权、加密或多租户安全边界。
@@ -173,7 +178,72 @@ with ERIIEngine(storage_dir="./erii_memory") as engine:
 
 同一关系重复初始化会返回原有稳定 ID；试图换掉原始人设会抛出 `PersonaConflictError`。另一个用户会得到独立 `persona_id`、关系历史和状态。单个事件的状态变化绝对值上限为 `0.1`，巨大跃迁不会静默生效。
 
-`compiled_persona` 在 alpha.1 由宿主提供并与原文一同保存；LLM 编译、候选校验和重大人格变更提案属于后续 alpha。
+`record_relationship_event()` 是可信宿主兼容接口，因此允许宿主直接提供有界数值变化。不可信 LLM 输出应使用下面的候选裁决接口，不能提交 `state_delta` 或人格补丁。
+
+## 候选证据与规则裁决
+
+```python
+from erii import ERIIEngine
+
+with ERIIEngine(storage_dir="./erii_memory") as engine:
+    engine.initialize_relationship(
+        "agent_lumi",
+        "user_chen",
+        persona_source="Lumi 重视诚实，也会珍惜共同经历。",
+        compiled_persona={
+            "relationship_policy": {
+                "version": "lumi-v1",
+                "signal_modifiers": {"shared_experience": 1.2},
+            }
+        },
+    )
+
+    result = engine.adjudicate_relationship_candidates(
+        "agent_lumi",
+        "user_chen",
+        source_turn={
+            "turn_id": "turn-2026-07-27-1",
+            "revision": "1",
+            "extractor_version": "my-extractor-v1",
+            "messages": [
+                {
+                    "source_id": "message-1",
+                    "role": "user",
+                    "content": "我们第一次一起看雪。",
+                }
+            ],
+        },
+        candidates=[
+            {
+                "candidate_key": "first-snow",
+                "event_type": "shared_experience",
+                "summary": "我们第一次一起看雪。",
+                "signal": {
+                    "signal_type": "shared_experience",
+                    "strength": "moderate",
+                    "extraction_confidence": 0.98,
+                    "interpretation_confidence": 0.91,
+                },
+                "evidence": [
+                    {"source_id": "message-1", "quote": "我们第一次一起看雪。"}
+                ],
+                "occurrence_key": "shared:first-snow",
+                "persona_reflection": "我想把这场雪好好记住。",
+            }
+        ],
+    )
+
+    print(result.receipts[0].outcome)
+    print(engine.get_relationship_snapshot("agent_lumi", "user_chen").state.intimacy)
+```
+
+宿主临时提供完整 turn 供精确引文校验；内核长期只保留来源身份、角色、精确片段、全文哈希和时间，不默认复制整段聊天。拒绝候选只留下指纹、原因、版本和时间，不保存幻觉文本或敏感引文。
+
+模型置信度被拆成提取置信度与解释置信度，只参与路由和限幅。关系数值始终由版本化规则计算；低解释置信度的有效事实可以进入中性历史，但不会自动改变关系或保存 Persona Reflection。
+
+相同来源处理身份的首次提交会固定整批候选；普通重试不能新增、删除或改写候选，只会继续未完成项或返回原回执。用新模型复核旧来源时，宿主必须显式提交 `processing_mode="historical_reprocessing"` 和稳定的 `reprocessing_id`；复核只追加佐证、更正或重新理解，不覆盖旧历史。
+
+人格成长不能与当前 turn 的事件提取在同一次输出中完成。事件和 Persona Reflection 必须先提交，之后宿主再调用 `propose_persona_growth()` 提交独立 Inner Review 结果；`decide_persona_growth_proposal()` 仅记录宿主在对话外完成鉴权后的精确版本决定。
 
 ## 使用 SQLite 保存记忆
 
@@ -282,7 +352,7 @@ python -m unittest discover -s tests -v
 python -m compileall -q erii examples tests
 ```
 
-仓库的测试覆盖存储、衰减、召回、任务队列、MemoryPack、时间锚定、独白可见性、安全过滤、显式服务生命周期、关系隔离、人设不可变性、事件幂等和投影重建。
+仓库的测试覆盖存储、衰减、召回、任务队列、MemoryPack、时间锚定、独白可见性、安全过滤、显式服务生命周期、关系隔离、人设不可变性、事件幂等、证据裁决、历史重处理、人格成长和投影重建。
 
 ## 路线图
 
@@ -295,12 +365,20 @@ python -m compileall -q erii examples tests
 - SQLite Schema 迁移和 MemoryPack 携带；
 - 显式后台处理生命周期。
 
+### v0.4.0a2 — 候选提取与规则裁决
+
+- Pydantic 候选、来源 turn 和独立 Inner Review Schema；
+- 最小可核验证据、最小拒绝回执和候选级原子持久化；
+- 定性信号、版本化关系策略、确定性状态变化与全局限幅；
+- 技术幂等、底层经历去重、佐证与显式历史重处理；
+- Persona Reflection、积累型/转折型成长提案和宿主安全决定；
+- SQLite Schema v2 与跨 Adapter MemoryPack 携带。
+
 ### v0.4.0 后续 alpha
 
-- LLM 候选提议与确定性规则裁决；
-- 人格变更提案与确认；
 - 结构化 RecallResult 与可替换 Prompt Renderer；
-- SQLite 新 Schema 和可回滚迁移。
+- recorded、occurred 与 world time；
+- 到期承诺、未完成事件信号和分层巩固。
 
 Web UI、多 Agent 共享图、托管平台和主动消息发送不属于 `v0.4.0` 范围。
 

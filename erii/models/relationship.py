@@ -236,6 +236,7 @@ class RelationshipEvent:
     belief_updates: Sequence[BeliefUpdate] = field(default_factory=tuple)
     occurred_at: Optional[str] = None
     recorded_at: str = field(default_factory=utc_now)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "event_id", _require_text(self.event_id, "event_id"))
@@ -280,6 +281,8 @@ class RelationshipEvent:
                 update if isinstance(update, BeliefUpdate) else BeliefUpdate.from_dict(update)
             )
         object.__setattr__(self, "belief_updates", tuple(updates))
+        _require_json(self.metadata, "event metadata")
+        object.__setattr__(self, "metadata", _freeze_json(self.metadata))
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -289,6 +292,7 @@ class RelationshipEvent:
             "content": self.content,
             "state_delta": dict(self.state_delta),
             "belief_updates": [update.to_dict() for update in self.belief_updates],
+            "metadata": _thaw_json(self.metadata),
             "occurred_at": self.occurred_at,
             "recorded_at": self.recorded_at,
         }
@@ -312,6 +316,7 @@ class RelationshipEvent:
             belief_updates=[
                 BeliefUpdate.from_dict(item) for item in data.get("belief_updates", [])
             ],
+            metadata=data.get("metadata", {}),
             occurred_at=data.get("occurred_at"),
             recorded_at=str(data["recorded_at"]),
         )
@@ -375,6 +380,36 @@ class StateReason:
 
 
 @dataclass(frozen=True)
+class TemporalContext:
+    """Explicitly observed wall-clock context that never mutates relationship state."""
+
+    observed_at: str
+    last_event_recorded_at: Optional[str]
+    elapsed_seconds: Optional[float]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "observed_at", _require_text(self.observed_at, "observed_at"))
+        if self.last_event_recorded_at is not None:
+            object.__setattr__(
+                self,
+                "last_event_recorded_at",
+                _require_text(self.last_event_recorded_at, "last_event_recorded_at"),
+            )
+        if self.elapsed_seconds is not None:
+            elapsed = float(self.elapsed_seconds)
+            if not math.isfinite(elapsed) or elapsed < 0:
+                raise ValueError("elapsed_seconds must be a non-negative finite number")
+            object.__setattr__(self, "elapsed_seconds", elapsed)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "observed_at": self.observed_at,
+            "last_event_recorded_at": self.last_event_recorded_at,
+            "elapsed_seconds": self.elapsed_seconds,
+        }
+
+
+@dataclass(frozen=True)
 class RelationshipSnapshot:
     """Current projection returned to hosts from an isolated relationship history."""
 
@@ -385,6 +420,7 @@ class RelationshipSnapshot:
     event_count: int
     last_event_id: Optional[str] = None
     projection_version: int = 1
+    temporal_context: Optional[TemporalContext] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "beliefs", MappingProxyType(dict(self.beliefs)))
@@ -401,4 +437,7 @@ class RelationshipSnapshot:
             "event_count": self.event_count,
             "last_event_id": self.last_event_id,
             "projection_version": self.projection_version,
+            "temporal_context": (
+                self.temporal_context.to_dict() if self.temporal_context is not None else None
+            ),
         }

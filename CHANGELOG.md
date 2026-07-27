@@ -2,7 +2,33 @@
 
 本项目的用户可感知变化记录在此文件。版本遵循语义化版本；`0.x` 阶段仍可能出现受控的破坏性变更。
 
-## [0.4.0a1] - Unreleased
+## [0.4.0a2] - Unreleased
+
+### Added
+
+- `adjudicate_relationship_candidates()`：以 Pydantic Schema 接收完整临时来源 turn 与不可信候选，逐候选完成证据验证、依赖裁决、去重、幂等和原子提交。
+- 定性 `RelationshipSignal` 到五维关系状态的确定性规则映射；模型不能提交数值状态变化或人格补丁。
+- 最小可核验 `EvidenceReference`、版本化 `DecisionReceipt`、提取/解释置信度分离，以及拒绝候选的最小留存。
+- 同一底层经历的 `occurrence_key` 佐证语义，避免重复结算关系影响。
+- 固定候选批次指纹与显式 `historical_reprocessing` 运行身份；模型重采样、模型升级或规则升级不会把普通重试变成历史扩张或重写。
+- Persona Reflection 的不可变历史保存，以及积累型/转折型 Persona Growth 提案。
+- `decide_persona_growth_proposal()`：按精确提案版本记录宿主在对话外作出的批准、拒绝或撤销。
+- `TemporalContext`：在宿主指定观察时间时计算间隔，但不通过后台时钟修改关系状态。
+- SQLite Schema v2、FileStorage 裁决日志，以及 MemoryPack 对证据、回执和人格成长提案的跨 Adapter 携带。
+
+### Changed
+
+- `get_relationship_snapshot()` 和 `list_relationship_events()` 同时包含可信宿主直写事件与经裁决接受的事件。
+- `RelationshipEvent` 增加不可变、可携带的结构化 `metadata`。
+- 包版本升级为 `0.4.0a2`。
+
+### Compatibility
+
+- `record_relationship_event()` 保留为可信宿主的兼容接口；不可信 LLM 输出应走候选裁决接口。
+- SQLite v1 数据原地保留并通过迁移新增 v2 表；旧 MemoryPack 缺少裁决字段时仍可读取。
+- 新关系裁决接口要求存储 Adapter 实现裁决记录与人格成长提案方法，旧记忆接口不受影响。
+
+## [0.4.0a1] - 2026-07-27
 
 ### Added
 

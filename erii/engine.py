@@ -4,6 +4,8 @@ Main entry point for AI Agent long-term memory integration.
 Follows Google Python Style Guide.
 """
 
+from dataclasses import replace
+import hashlib
 import os
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 import uuid
@@ -14,10 +16,25 @@ from erii.core.archiver import AsyncArchiverWorker
 from erii.core.budget import MemoryBudgetManager
 from erii.core.decay import MemoryDecayEvaluator
 from erii.core.retriever import MemoryRetriever
+from erii.core.adjudication import (
+    RelationshipAdjudicator,
+    list_complete_relationship_events,
+    relationship_occurrence_fingerprint,
+)
 from erii.core.relationship import RelationshipProjector
 from erii.core.queue.base import BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.models.config import ERIIConfig
+from erii.models.adjudication import (
+    AdjudicationBatchResult,
+    AdjudicationRecord,
+    PersonaGrowthDecision,
+    PersonaGrowthIntentCandidate,
+    PersonaGrowthProposal,
+    RelationshipCandidateBatch,
+    RelationshipEventCandidate,
+    SourceTurn,
+)
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
 from erii.models.pack import MemoryPack
 from erii.models.relationship import (
@@ -107,6 +124,7 @@ class ERIIEngine:
             timeline_budget=self.config.timeline_budget,
             dynamic_budget=self.config.dynamic_budget,
         )
+        self.relationship_adjudicator = RelationshipAdjudicator(self.storage)
 
         # 5. Keep the default persistent queue alongside the selected storage.
         if task_queue is None:
@@ -374,10 +392,122 @@ class ERIIEngine:
         )
         return self.storage.append_relationship_event(event)
 
+    def adjudicate_relationship_candidates(
+        self,
+        agent_id: str,
+        user_id: str,
+        source_turn: Union[SourceTurn, Mapping[str, Any]],
+        candidates: Sequence[
+            Union[RelationshipEventCandidate, Mapping[str, Any]]
+        ],
+    ) -> AdjudicationBatchResult:
+        """Validates and durably adjudicates untrusted relationship candidates.
+
+        The caller supplies the full transient source turn so evidence quotes can
+        be verified. Only minimal verified spans are retained by accepted or
+        corroborated decisions; raw source messages are not persisted.
+        """
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        profile = self.storage.get_relationship(clean_agent, clean_user)
+        if profile is None:
+            raise RelationshipNotFoundError(
+                "initialize_relationship() must be called before adjudicating candidates"
+            )
+        validated_turn = SourceTurn.model_validate(source_turn)
+        validated_batch = RelationshipCandidateBatch.model_validate(
+            {"candidates": list(candidates)}
+        )
+        return self.relationship_adjudicator.adjudicate(
+            profile,
+            validated_turn,
+            validated_batch,
+        )
+
+    def list_relationship_adjudications(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> List[AdjudicationRecord]:
+        """Returns durable candidate decisions for an initialized relationship."""
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        profile = self.storage.get_relationship(clean_agent, clean_user)
+        if profile is None:
+            raise RelationshipNotFoundError(
+                "initialize_relationship() must be called before reading adjudications"
+            )
+        return self.storage.list_relationship_adjudications(profile.relationship_id)
+
+    def propose_persona_growth(
+        self,
+        agent_id: str,
+        user_id: str,
+        intent: Union[PersonaGrowthIntentCandidate, Mapping[str, Any]],
+    ) -> PersonaGrowthProposal:
+        """Creates a pending growth proposal from a separate history-based review."""
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        profile = self.storage.get_relationship(clean_agent, clean_user)
+        if profile is None:
+            raise RelationshipNotFoundError(
+                "initialize_relationship() must be called before proposing persona growth"
+            )
+        validated_intent = PersonaGrowthIntentCandidate.model_validate(intent)
+        return self.relationship_adjudicator.propose_persona_growth(
+            profile,
+            validated_intent,
+        )
+
+    def decide_persona_growth_proposal(
+        self,
+        agent_id: str,
+        user_id: str,
+        proposal_id: str,
+        revision: int,
+        actor_id: str,
+        decision: Union[PersonaGrowthDecision, str],
+        *,
+        reason: Optional[str] = None,
+    ) -> PersonaGrowthProposal:
+        """Records an out-of-band host decision for an exact proposal revision."""
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        profile = self.storage.get_relationship(clean_agent, clean_user)
+        if profile is None:
+            raise RelationshipNotFoundError(
+                "initialize_relationship() must be called before deciding persona growth"
+            )
+        return self.relationship_adjudicator.decide_persona_growth(
+            profile,
+            proposal_id,
+            revision,
+            actor_id,
+            PersonaGrowthDecision(decision),
+            reason,
+        )
+
+    def list_persona_growth_proposals(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> List[PersonaGrowthProposal]:
+        """Returns pending and decided persona-growth proposals."""
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        profile = self.storage.get_relationship(clean_agent, clean_user)
+        if profile is None:
+            raise RelationshipNotFoundError(
+                "initialize_relationship() must be called before reading persona growth"
+            )
+        return self.storage.list_persona_growth_proposals(profile.relationship_id)
+
     def get_relationship_snapshot(
         self,
         agent_id: str,
         user_id: str,
+        *,
+        observed_at: Optional[str] = None,
     ) -> RelationshipSnapshot:
         """Rebuilds current beliefs and relationship state from accepted history."""
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
@@ -387,8 +517,8 @@ class ERIIEngine:
             raise RelationshipNotFoundError(
                 "initialize_relationship() must be called before reading a snapshot"
             )
-        events = self.storage.list_relationship_events(profile.relationship_id)
-        return RelationshipProjector.project(profile, events)
+        events = list_complete_relationship_events(self.storage, profile.relationship_id)
+        return RelationshipProjector.project(profile, events, observed_at=observed_at)
 
     def list_relationship_events(
         self,
@@ -403,7 +533,7 @@ class ERIIEngine:
             raise RelationshipNotFoundError(
                 "initialize_relationship() must be called before reading events"
             )
-        return self.storage.list_relationship_events(profile.relationship_id)
+        return list_complete_relationship_events(self.storage, profile.relationship_id)
 
     def remember_thought(
         self,
@@ -574,13 +704,25 @@ class ERIIEngine:
         try:
             relationship = self.storage.get_relationship(clean_agent, clean_user)
             relationship_events = (
-                self.storage.list_relationship_events(relationship.relationship_id)
+                list_complete_relationship_events(self.storage, relationship.relationship_id)
+                if relationship is not None
+                else []
+            )
+            relationship_adjudications = (
+                self.storage.list_relationship_adjudications(relationship.relationship_id)
+                if relationship is not None
+                else []
+            )
+            persona_growth_proposals = (
+                self.storage.list_persona_growth_proposals(relationship.relationship_id)
                 if relationship is not None
                 else []
             )
         except NotImplementedError:
             relationship = None
             relationship_events = []
+            relationship_adjudications = []
+            persona_growth_proposals = []
 
         raw_timeline = []
         for line in timeline:
@@ -600,6 +742,8 @@ class ERIIEngine:
             timeline=raw_timeline,
             relationship=relationship,
             relationship_events=relationship_events,
+            relationship_adjudications=relationship_adjudications,
+            persona_growth_proposals=persona_growth_proposals,
         )
 
         if export_path:
@@ -679,26 +823,164 @@ class ERIIEngine:
                     pack.relationship.blueprint.compiled,
                 )
 
-            for source_event in pack.relationship_events:
-                if source_event.relationship_id == target_profile.relationship_id:
-                    imported_event = source_event
+            source_relationship_id = pack.relationship.relationship_id
+            target_relationship_id = target_profile.relationship_id
+
+            decision_id_map = {}
+            for record in pack.relationship_adjudications:
+                receipt = record.receipt
+                if source_relationship_id == target_relationship_id:
+                    mapped_decision_id = receipt.decision_id
                 else:
-                    imported_event = RelationshipEvent(
-                        event_id=str(
+                    processing_identity = (
+                        f"{receipt.processing_mode.value}:{receipt.reprocessing_id or ''}"
+                    )
+                    mapped_decision_id = str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            (
+                                f"erii:{target_relationship_id}:decision:"
+                                f"{receipt.source_turn_id}:{receipt.source_revision}:"
+                                f"{processing_identity}:{receipt.candidate_key}"
+                            ),
+                        )
+                    )
+                decision_id_map[receipt.decision_id] = mapped_decision_id
+
+            source_event_ids = {
+                event.event_id for event in pack.relationship_events
+            } | {
+                event.event_id
+                for record in pack.relationship_adjudications
+                for event in record.events
+            }
+            event_id_map = {
+                event_id: (
+                    event_id
+                    if source_relationship_id == target_relationship_id
+                    else str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"erii:{target_relationship_id}:{event_id}",
+                        )
+                    )
+                )
+                for event_id in source_event_ids
+            }
+            if source_relationship_id != target_relationship_id:
+                for record in pack.relationship_adjudications:
+                    mapped_decision_id = decision_id_map[record.receipt.decision_id]
+                    for index, event in enumerate(record.events):
+                        event_suffix = "event" if index == 0 else f"event:{index}"
+                        event_id_map[event.event_id] = str(
                             uuid.uuid5(
                                 uuid.NAMESPACE_URL,
-                                f"erii:{target_profile.relationship_id}:{source_event.event_id}",
+                                f"{mapped_decision_id}:{event_suffix}",
+                            )
+                        )
+
+            def remap_event(source_event: RelationshipEvent) -> RelationshipEvent:
+                if source_relationship_id == target_relationship_id:
+                    return source_event
+                metadata = source_event.to_dict().get("metadata", {})
+                adjudication = metadata.get("adjudication")
+                if isinstance(adjudication, dict):
+                    if adjudication.get("decision_id"):
+                        adjudication["decision_id"] = decision_id_map.get(
+                            adjudication["decision_id"],
+                            adjudication["decision_id"],
+                        )
+                    adjudication["references"] = [
+                        event_id_map.get(item, item)
+                        for item in adjudication.get("references", [])
+                    ]
+                    adjudication["occurrence_fingerprint"] = (
+                        relationship_occurrence_fingerprint(
+                            relationship_id=target_relationship_id,
+                            event_type=source_event.event_type.value,
+                            summary=source_event.content,
+                            occurred_at=source_event.occurred_at,
+                            occurrence_key=adjudication.get("occurrence_key"),
+                        )
+                    )
+                return replace(
+                    source_event,
+                    event_id=event_id_map[source_event.event_id],
+                    relationship_id=target_relationship_id,
+                    metadata=metadata,
+                )
+
+            adjudicated_event_ids = {
+                event.event_id
+                for record in pack.relationship_adjudications
+                for event in record.events
+            }
+            for source_event in pack.relationship_events:
+                if source_event.event_id in adjudicated_event_ids:
+                    continue
+                self.storage.append_relationship_event(remap_event(source_event))
+
+            for source_record in pack.relationship_adjudications:
+                if source_relationship_id == target_relationship_id:
+                    imported_record = source_record
+                else:
+                    imported_events = tuple(remap_event(event) for event in source_record.events)
+                    old_receipt = source_record.receipt
+                    mapped_decision_id = decision_id_map[old_receipt.decision_id]
+                    mapped_occurrence = (
+                        imported_events[0].metadata["adjudication"][
+                            "occurrence_fingerprint"
+                        ]
+                        if imported_events
+                        else hashlib.sha256(
+                            (
+                                f"{target_relationship_id}:"
+                                f"{old_receipt.occurrence_fingerprint}"
+                            ).encode("utf-8")
+                        ).hexdigest()
+                    )
+                    imported_receipt = replace(
+                        old_receipt,
+                        decision_id=mapped_decision_id,
+                        relationship_id=target_relationship_id,
+                        occurrence_fingerprint=mapped_occurrence,
+                        event_ids=tuple(event.event_id for event in imported_events),
+                        related_event_id=(
+                            event_id_map.get(old_receipt.related_event_id)
+                            if old_receipt.related_event_id
+                            else None
+                        ),
+                    )
+                    imported_record = replace(
+                        source_record,
+                        receipt=imported_receipt,
+                        events=imported_events,
+                    )
+                self.storage.commit_relationship_adjudication(imported_record)
+
+            for source_proposal in pack.persona_growth_proposals:
+                if source_relationship_id == target_relationship_id:
+                    imported_proposal = source_proposal
+                else:
+                    imported_proposal = replace(
+                        source_proposal,
+                        proposal_id=str(
+                            uuid.uuid5(
+                                uuid.NAMESPACE_URL,
+                                (
+                                    f"erii:{target_relationship_id}:growth:"
+                                    f"{source_proposal.review_id}:"
+                                    f"{source_proposal.intent_key}"
+                                ),
                             )
                         ),
-                        relationship_id=target_profile.relationship_id,
-                        event_type=source_event.event_type,
-                        content=source_event.content,
-                        state_delta=source_event.state_delta,
-                        belief_updates=source_event.belief_updates,
-                        occurred_at=source_event.occurred_at,
-                        recorded_at=source_event.recorded_at,
+                        relationship_id=target_relationship_id,
+                        supporting_event_ids=tuple(
+                            event_id_map.get(event_id, event_id)
+                            for event_id in source_proposal.supporting_event_ids
+                        ),
                     )
-                self.storage.append_relationship_event(imported_event)
+                self.storage.save_persona_growth_proposal(imported_proposal)
 
         return pack
 

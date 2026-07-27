@@ -15,6 +15,13 @@ import re
 from typing import Any, Dict, List, Optional
 import uuid
 
+from erii.models.adjudication import (
+    AdjudicationRecord,
+    CandidateConflictError,
+    PersonaGrowthConflictError,
+    PersonaGrowthProposal,
+    PersonaGrowthStatus,
+)
 from erii.models.node import MemoryNode
 from erii.models.relationship import (
     EventConflictError,
@@ -83,6 +90,18 @@ class FileStorage(BaseStorage):
     def _get_relationship_events_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
         directory = os.path.join(self.root_dir, "_relationship_events")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.json")
+
+    def _get_relationship_adjudications_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self.root_dir, "_relationship_adjudications")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.json")
+
+    def _get_persona_growth_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self.root_dir, "_persona_growth")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
 
@@ -321,3 +340,132 @@ class FileStorage(BaseStorage):
                 return []
             with open(file_path, "r", encoding="utf-8") as file_obj:
                 return [RelationshipEvent.from_dict(item) for item in json.load(file_obj)]
+
+    def commit_relationship_adjudication(
+        self,
+        record: AdjudicationRecord,
+    ) -> AdjudicationRecord:
+        """Atomically appends one complete adjudication record to its journal."""
+        relationship_id = record.receipt.relationship_id
+        with self.lock_manager.lock("__relationship_adjudication__", relationship_id):
+            registry = self._load_identity_registry()
+            if relationship_id not in registry["relationships"]:
+                raise ValueError("adjudication references an unknown relationship")
+            file_path = self._get_relationship_adjudications_path(relationship_id)
+            raw_records: List[Dict[str, Any]] = []
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as file_obj:
+                    raw_records = json.load(file_obj)
+
+            for raw_record in raw_records:
+                existing = AdjudicationRecord.from_dict(raw_record)
+                same_source_key = (
+                    existing.receipt.source_turn_id == record.receipt.source_turn_id
+                    and existing.receipt.source_revision == record.receipt.source_revision
+                    and existing.receipt.processing_mode == record.receipt.processing_mode
+                    and existing.receipt.reprocessing_id == record.receipt.reprocessing_id
+                    and existing.receipt.candidate_key == record.receipt.candidate_key
+                )
+                if existing.receipt.decision_id != record.receipt.decision_id and not same_source_key:
+                    continue
+                if (
+                    existing.receipt.candidate_fingerprint
+                    != record.receipt.candidate_fingerprint
+                ):
+                    raise CandidateConflictError(
+                        "candidate decision identity already has different persisted content"
+                    )
+                return existing
+
+            raw_records.append(record.to_dict())
+            self._write_json_atomic(file_path, raw_records)
+            return record
+
+    def list_relationship_adjudications(
+        self,
+        relationship_id: str,
+    ) -> List[AdjudicationRecord]:
+        """Loads candidate decision records in commit order."""
+        with self.lock_manager.lock("__relationship_adjudication__", relationship_id):
+            file_path = self._get_relationship_adjudications_path(relationship_id)
+            if not os.path.exists(file_path):
+                return []
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                return [AdjudicationRecord.from_dict(item) for item in json.load(file_obj)]
+
+    def save_persona_growth_proposal(
+        self,
+        proposal: PersonaGrowthProposal,
+        expected_status: Optional[PersonaGrowthStatus] = None,
+    ) -> PersonaGrowthProposal:
+        """Creates or conditionally updates one growth proposal atomically."""
+        relationship_id = proposal.relationship_id
+        with self.lock_manager.lock("__persona_growth__", relationship_id):
+            registry = self._load_identity_registry()
+            if relationship_id not in registry["relationships"]:
+                raise ValueError("persona growth proposal references an unknown relationship")
+            file_path = self._get_persona_growth_path(relationship_id)
+            raw_proposals: List[Dict[str, Any]] = []
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as file_obj:
+                    raw_proposals = json.load(file_obj)
+
+            for index, raw_proposal in enumerate(raw_proposals):
+                existing = PersonaGrowthProposal.from_dict(raw_proposal)
+                if existing.proposal_id != proposal.proposal_id:
+                    continue
+                if self._proposal_content(existing) != self._proposal_content(proposal):
+                    raise PersonaGrowthConflictError("persona growth proposal content is immutable")
+                if expected_status is None:
+                    if self._proposal_lifecycle(existing) != self._proposal_lifecycle(
+                        proposal
+                    ):
+                        raise PersonaGrowthConflictError(
+                            "updating a proposal requires its expected status"
+                        )
+                    return existing
+                if existing.status != expected_status:
+                    raise PersonaGrowthConflictError("persona growth proposal status changed")
+                raw_proposals[index] = proposal.to_dict()
+                self._write_json_atomic(file_path, raw_proposals)
+                return proposal
+
+            if expected_status is not None:
+                raise PersonaGrowthConflictError("persona growth proposal no longer exists")
+            raw_proposals.append(proposal.to_dict())
+            self._write_json_atomic(file_path, raw_proposals)
+            return proposal
+
+    def list_persona_growth_proposals(
+        self,
+        relationship_id: str,
+    ) -> List[PersonaGrowthProposal]:
+        """Loads persona growth proposals in creation order."""
+        with self.lock_manager.lock("__persona_growth__", relationship_id):
+            file_path = self._get_persona_growth_path(relationship_id)
+            if not os.path.exists(file_path):
+                return []
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                return [PersonaGrowthProposal.from_dict(item) for item in json.load(file_obj)]
+
+    @staticmethod
+    def _proposal_content(proposal: PersonaGrowthProposal) -> Dict[str, Any]:
+        data = proposal.to_dict()
+        for key in (
+            "status",
+            "created_at",
+            "decided_by",
+            "decided_at",
+            "decision_reason",
+        ):
+            data.pop(key, None)
+        return data
+
+    @staticmethod
+    def _proposal_lifecycle(proposal: PersonaGrowthProposal):
+        return (
+            proposal.status,
+            proposal.decided_by,
+            proposal.decided_at,
+            proposal.decision_reason,
+        )

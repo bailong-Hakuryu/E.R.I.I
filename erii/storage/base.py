@@ -7,6 +7,11 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 import threading
 from typing import Dict, List, Optional
+from erii.models.adjudication import (
+    AdjudicationRecord,
+    PersonaGrowthProposal,
+    PersonaGrowthStatus,
+)
 from erii.models.node import MemoryNode
 from erii.models.relationship import (
     IdentityKind,
@@ -151,3 +156,32 @@ class BaseStorage(ABC):
     def list_relationship_events(self, relationship_id: str) -> List[RelationshipEvent]:
         """Returns accepted events for a relationship in append order."""
         raise NotImplementedError("storage adapter does not support relationship events")
+
+    def commit_relationship_adjudication(
+        self,
+        record: AdjudicationRecord,
+    ) -> AdjudicationRecord:
+        """Atomically persists one complete candidate decision record."""
+        raise NotImplementedError("storage adapter does not support relationship adjudication")
+
+    def list_relationship_adjudications(
+        self,
+        relationship_id: str,
+    ) -> List[AdjudicationRecord]:
+        """Returns candidate decision records in commit order."""
+        raise NotImplementedError("storage adapter does not support relationship adjudication")
+
+    def save_persona_growth_proposal(
+        self,
+        proposal: PersonaGrowthProposal,
+        expected_status: Optional[PersonaGrowthStatus] = None,
+    ) -> PersonaGrowthProposal:
+        """Creates or conditionally updates an immutable-content growth proposal."""
+        raise NotImplementedError("storage adapter does not support persona growth proposals")
+
+    def list_persona_growth_proposals(
+        self,
+        relationship_id: str,
+    ) -> List[PersonaGrowthProposal]:
+        """Returns persona growth proposals for one relationship."""
+        raise NotImplementedError("storage adapter does not support persona growth proposals")

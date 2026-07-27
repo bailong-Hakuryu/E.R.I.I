@@ -7,6 +7,7 @@ Follows Google Python Style Guide.
 from datetime import datetime
 import json
 from typing import Any, Dict, List, Optional
+from erii.models.adjudication import AdjudicationRecord, PersonaGrowthProposal
 from erii.models.node import MemoryNode
 from erii.models.relationship import RelationshipEvent, RelationshipProfile
 
@@ -27,6 +28,8 @@ class MemoryPack:
         exported_at: Optional[str] = None,
         relationship: Optional[RelationshipProfile] = None,
         relationship_events: Optional[List[RelationshipEvent]] = None,
+        relationship_adjudications: Optional[List[AdjudicationRecord]] = None,
+        persona_growth_proposals: Optional[List[PersonaGrowthProposal]] = None,
     ) -> None:
         """Initializes MemoryPack.
 
@@ -40,6 +43,8 @@ class MemoryPack:
             exported_at: ISO timestamp string of export.
             relationship: Immutable relationship/persona profile, when initialized.
             relationship_events: Append-only relationship history.
+            relationship_adjudications: Candidate receipts and verified evidence.
+            persona_growth_proposals: Pending and decided relationship-persona growth.
         """
         self.agent_id = agent_id
         self.user_id = user_id
@@ -48,6 +53,8 @@ class MemoryPack:
         self.timeline = timeline or []
         self.relationship = relationship
         self.relationship_events = relationship_events or []
+        self.relationship_adjudications = relationship_adjudications or []
+        self.persona_growth_proposals = persona_growth_proposals or []
         self.version = version
         self.exported_at = exported_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -67,6 +74,12 @@ class MemoryPack:
             "relationship_events": [
                 event.to_dict() for event in self.relationship_events
             ],
+            "relationship_adjudications": [
+                record.to_dict() for record in self.relationship_adjudications
+            ],
+            "persona_growth_proposals": [
+                proposal.to_dict() for proposal in self.persona_growth_proposals
+            ],
         }
 
     @classmethod
@@ -83,6 +96,8 @@ class MemoryPack:
         timeline = data.get("timeline", [])
         raw_relationship = data.get("relationship")
         raw_relationship_events = data.get("relationship_events", [])
+        raw_adjudications = data.get("relationship_adjudications", [])
+        raw_growth_proposals = data.get("persona_growth_proposals", [])
 
         nodes = [MemoryNode.from_dict(item) for item in raw_nodes]
 
@@ -99,6 +114,12 @@ class MemoryPack:
             ),
             relationship_events=[
                 RelationshipEvent.from_dict(item) for item in raw_relationship_events
+            ],
+            relationship_adjudications=[
+                AdjudicationRecord.from_dict(item) for item in raw_adjudications
+            ],
+            persona_growth_proposals=[
+                PersonaGrowthProposal.from_dict(item) for item in raw_growth_proposals
             ],
             version=version,
             exported_at=exported_at,

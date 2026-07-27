@@ -13,6 +13,13 @@ from contextlib import closing
 from typing import List, Optional
 import uuid
 
+from erii.models.adjudication import (
+    AdjudicationRecord,
+    CandidateConflictError,
+    PersonaGrowthConflictError,
+    PersonaGrowthProposal,
+    PersonaGrowthStatus,
+)
 from erii.models.node import MemoryNode
 from erii.models.relationship import (
     EventConflictError,
@@ -111,6 +118,13 @@ class SQLiteStorage(BaseStorage):
                     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                     (1, "relationship-kernel-alpha1", utc_now()),
                 )
+                current_version = 1
+            if current_version < 2:
+                self._migrate_relationship_adjudication_v2(cursor)
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                    (2, "relationship-adjudication-alpha2", utc_now()),
+                )
             conn.commit()
 
     @staticmethod
@@ -161,6 +175,56 @@ class SQLiteStorage(BaseStorage):
             """
             CREATE INDEX IF NOT EXISTS idx_relationship_events_order
             ON relationship_events(relationship_id, sequence)
+            """
+        )
+
+    @staticmethod
+    def _migrate_relationship_adjudication_v2(cursor: sqlite3.Cursor) -> None:
+        """Adds atomic candidate receipts and persona-growth proposals."""
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS relationship_adjudications (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                decision_id TEXT NOT NULL UNIQUE,
+                relationship_id TEXT NOT NULL,
+                source_turn_id TEXT NOT NULL,
+                source_revision TEXT NOT NULL,
+                processing_identity TEXT NOT NULL,
+                candidate_key TEXT NOT NULL,
+                data JSON NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (
+                    relationship_id, source_turn_id, source_revision,
+                    processing_identity, candidate_key
+                ),
+                FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_relationship_adjudications_order
+            ON relationship_adjudications(relationship_id, sequence)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS persona_growth_proposals (
+                proposal_id TEXT PRIMARY KEY,
+                relationship_id TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                data JSON NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_persona_growth_relationship
+            ON persona_growth_proposals(relationship_id, created_at)
             """
         )
 
@@ -489,3 +553,215 @@ class SQLiteStorage(BaseStorage):
                     (relationship_id,),
                 ).fetchall()
                 return [RelationshipEvent.from_dict(json.loads(row["data"])) for row in rows]
+
+    def commit_relationship_adjudication(
+        self,
+        record: AdjudicationRecord,
+    ) -> AdjudicationRecord:
+        """Atomically persists one full candidate decision record."""
+        receipt = record.receipt
+        with self.lock_manager.lock(
+            "__relationship_adjudication__",
+            receipt.relationship_id,
+        ):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    """
+                    SELECT data FROM relationship_adjudications
+                    WHERE decision_id = ? OR (
+                        relationship_id = ? AND source_turn_id = ?
+                        AND source_revision = ? AND processing_identity = ?
+                        AND candidate_key = ?
+                    )
+                    """,
+                    (
+                        receipt.decision_id,
+                        receipt.relationship_id,
+                        receipt.source_turn_id,
+                        receipt.source_revision,
+                        (
+                            f"{receipt.processing_mode.value}:"
+                            f"{receipt.reprocessing_id or ''}"
+                        ),
+                        receipt.candidate_key,
+                    ),
+                ).fetchone()
+                if row is not None:
+                    existing = AdjudicationRecord.from_dict(json.loads(row["data"]))
+                    conn.commit()
+                    if (
+                        existing.receipt.candidate_fingerprint
+                        != record.receipt.candidate_fingerprint
+                    ):
+                        raise CandidateConflictError(
+                            "candidate decision identity already has different persisted content"
+                        )
+                    return existing
+
+                relationship = conn.execute(
+                    "SELECT 1 FROM relationships WHERE relationship_id = ?",
+                    (receipt.relationship_id,),
+                ).fetchone()
+                if relationship is None:
+                    conn.rollback()
+                    raise ValueError("adjudication references an unknown relationship")
+                conn.execute(
+                    """
+                    INSERT INTO relationship_adjudications (
+                        decision_id, relationship_id, source_turn_id,
+                        source_revision, processing_identity, candidate_key,
+                        data, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        receipt.decision_id,
+                        receipt.relationship_id,
+                        receipt.source_turn_id,
+                        receipt.source_revision,
+                        (
+                            f"{receipt.processing_mode.value}:"
+                            f"{receipt.reprocessing_id or ''}"
+                        ),
+                        receipt.candidate_key,
+                        json.dumps(record.to_dict(), ensure_ascii=False),
+                        receipt.created_at,
+                    ),
+                )
+                conn.commit()
+                return record
+
+    def list_relationship_adjudications(
+        self,
+        relationship_id: str,
+    ) -> List[AdjudicationRecord]:
+        """Loads candidate decisions for one relationship in commit order."""
+        with self.lock_manager.lock("__relationship_adjudication__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT data FROM relationship_adjudications
+                    WHERE relationship_id = ? ORDER BY sequence ASC
+                    """,
+                    (relationship_id,),
+                ).fetchall()
+                return [AdjudicationRecord.from_dict(json.loads(row["data"])) for row in rows]
+
+    def save_persona_growth_proposal(
+        self,
+        proposal: PersonaGrowthProposal,
+        expected_status: Optional[PersonaGrowthStatus] = None,
+    ) -> PersonaGrowthProposal:
+        """Creates or conditionally updates one growth proposal."""
+        with self.lock_manager.lock("__persona_growth__", proposal.relationship_id):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT data FROM persona_growth_proposals WHERE proposal_id = ?",
+                    (proposal.proposal_id,),
+                ).fetchone()
+                if row is None:
+                    if expected_status is not None:
+                        conn.rollback()
+                        raise PersonaGrowthConflictError(
+                            "persona growth proposal no longer exists"
+                        )
+                    relationship = conn.execute(
+                        "SELECT 1 FROM relationships WHERE relationship_id = ?",
+                        (proposal.relationship_id,),
+                    ).fetchone()
+                    if relationship is None:
+                        conn.rollback()
+                        raise ValueError(
+                            "persona growth proposal references an unknown relationship"
+                        )
+                    conn.execute(
+                        """
+                        INSERT INTO persona_growth_proposals (
+                            proposal_id, relationship_id, revision, status,
+                            data, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            proposal.proposal_id,
+                            proposal.relationship_id,
+                            proposal.revision,
+                            proposal.status.value,
+                            json.dumps(proposal.to_dict(), ensure_ascii=False),
+                            proposal.created_at,
+                            proposal.decided_at or proposal.created_at,
+                        ),
+                    )
+                    conn.commit()
+                    return proposal
+
+                existing = PersonaGrowthProposal.from_dict(json.loads(row["data"]))
+                if self._proposal_content(existing) != self._proposal_content(proposal):
+                    conn.rollback()
+                    raise PersonaGrowthConflictError("persona growth proposal content is immutable")
+                if expected_status is None:
+                    conn.commit()
+                    if self._proposal_lifecycle(existing) != self._proposal_lifecycle(
+                        proposal
+                    ):
+                        raise PersonaGrowthConflictError(
+                            "updating a proposal requires its expected status"
+                        )
+                    return existing
+                cursor = conn.execute(
+                    """
+                    UPDATE persona_growth_proposals
+                    SET status = ?, data = ?, updated_at = ?
+                    WHERE proposal_id = ? AND status = ?
+                    """,
+                    (
+                        proposal.status.value,
+                        json.dumps(proposal.to_dict(), ensure_ascii=False),
+                        proposal.decided_at or utc_now(),
+                        proposal.proposal_id,
+                        expected_status.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    conn.rollback()
+                    raise PersonaGrowthConflictError("persona growth proposal status changed")
+                conn.commit()
+                return proposal
+
+    def list_persona_growth_proposals(
+        self,
+        relationship_id: str,
+    ) -> List[PersonaGrowthProposal]:
+        """Loads persona growth proposals in creation order."""
+        with self.lock_manager.lock("__persona_growth__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT data FROM persona_growth_proposals
+                    WHERE relationship_id = ? ORDER BY created_at ASC, proposal_id ASC
+                    """,
+                    (relationship_id,),
+                ).fetchall()
+                return [PersonaGrowthProposal.from_dict(json.loads(row["data"])) for row in rows]
+
+    @staticmethod
+    def _proposal_content(proposal: PersonaGrowthProposal):
+        data = proposal.to_dict()
+        for key in (
+            "status",
+            "created_at",
+            "decided_by",
+            "decided_at",
+            "decision_reason",
+        ):
+            data.pop(key, None)
+        return data
+
+    @staticmethod
+    def _proposal_lifecycle(proposal: PersonaGrowthProposal):
+        return (
+            proposal.status,
+            proposal.decided_by,
+            proposal.decided_at,
+            proposal.decision_reason,
+        )
