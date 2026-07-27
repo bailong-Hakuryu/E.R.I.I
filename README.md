@@ -17,6 +17,13 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 项目目前处于 `0.x` 实验阶段，由单人维护。API 与存储模型仍会演进，不提供商业级 SLA。我们会优先保护记忆数据的可导出性，并为破坏性数据升级提供迁移路径。
 
+## 从这里开始
+
+- **第一次接入：** [完整中文使用手册](docs/USAGE_zh-CN.md)，从安装、十分钟示例到真实聊天循环；
+- **直接运行：** [`examples/`](examples/) 中包含 FileStorage、SQLite、关系人格、结构化召回和时间承诺示例；
+- **准备贡献：** [CONTRIBUTING.md](CONTRIBUTING.md)；
+- **处理真实数据前：** [SECURITY.md](SECURITY.md)。
+
 ## 当前版本能够做什么
 
 `v0.4.0a4` 已实现：
@@ -63,21 +70,20 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 安装
 
-```bash
-pip install erii
-
-# 按需安装 REST、OpenAI 或向量扩展
-pip install "erii[server]"
-pip install "erii[openai]"
-pip install "erii[vector]"
-```
-
-从源码开发：
+当前 alpha 建议从 GitHub 源码安装：
 
 ```bash
 git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
 cd E.R.I.I
-pip install -e ".[all]"
+python -m pip install .
+
+# 按需安装 REST、宿主 OpenAI SDK 或向量扩展
+python -m pip install ".[server]"
+python -m pip install ".[openai]"
+python -m pip install ".[vector]"
+
+# 贡献代码时使用可编辑开发安装
+python -m pip install -e ".[dev]"
 ```
 
 ## 最小示例
