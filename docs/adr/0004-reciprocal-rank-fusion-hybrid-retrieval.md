@@ -7,13 +7,13 @@
 
 在 E.R.I.I. v0.2.0 中，我们引入可选的语义向量 (Vector Embedding) 召回，以解决同义词与隐晦关联记忆无法被传统关键词倒排索引匹配的问题。因此需要将“关键词重合度排名”、“语义向量相似度排名”与“E.R.I.I. 原生动态衰减权重”进行三维合成排序。
 
-由于词频重合度/BM25 分数无上界，而向量余弦相似度在 [0, 1] 区间，传统的线性加权归一化面临极难调优和不同 Query 下标量域失真问题。
+关键词得分与向量相似度的标量范围不同，直接线性加权需要额外归一化，并容易在不同 Query 下产生失真。当前关键词通道使用词元重合度排名，并未实现完整 BM25。
 
 ## 决策 (Decision)
 
 我们决定：
 1. **倒数排名融合 (Reciprocal Rank Fusion, RRF)**：采用 RRF 算法合成关键词检索与语义向量检索的各自排名，避免得分归一化失真：
-   $$RRF\_Score(node) = \frac{w_{\text{bm25}}}{k + Rank_{\text{bm25}}} + \frac{w_{\text{vec}}}{k + Rank_{\text{vec}}}$$
+   $$RRF\_Score(node) = \frac{w_{\text{keyword}}}{k + Rank_{\text{keyword}}} + \frac{w_{\text{vec}}}{k + Rank_{\text{vec}}}$$
    其中常数 $k=60$。
 2. **结合动态衰减因子**：最终召回评分为 RRF 分数与节点 EffectiveWeight 的乘积：
    $$FinalScore(node) = RRF\_Score(node) \times EffectiveWeight(node)$$

@@ -3,7 +3,7 @@ import shutil
 import tempfile
 import unittest
 
-from erii import ERIIEngine, MemoryNode, MemoryType, SQLiteStorage
+from erii import ERIIEngine, MemoryNode, SQLiteStorage
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.file_storage import FileStorage
 
@@ -21,7 +21,7 @@ class TestRFCFullVerification(unittest.TestCase):
     def test_rfc1_unicode_sanitizer_and_path_hash(self):
         """验证 RFC 1: Unicode (中文/日文) 校验支持与路径隔离"""
         # 1. 验证中文/日文 key 不再报错
-        agent_id = "上杉绘梨衣_Avatar"
+        agent_id = "agent_lumi_avatar"
         user_id = "白龙_User"
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
@@ -53,7 +53,7 @@ class TestRFCFullVerification(unittest.TestCase):
     def test_rfc3_transaction_diff_full_sync(self):
         """验证 RFC 3: SQLiteStorage.save_nodes 事务级 Diff 物理清理被删除节点"""
         storage = SQLiteStorage(db_path=self.db_path)
-        agent_id = "sakura"
+        agent_id = "agent_lumi"
         user_id = "bob"
 
         # 1. 保存 2 个节点
@@ -85,7 +85,7 @@ class TestRFCFullVerification(unittest.TestCase):
         with ERIIEngine(storage_dir=self.test_dir) as engine:
             # 使用 user_msg 参数
             engine.remember(
-                agent_id="sakura",
+                agent_id="agent_lumi",
                 user_id="白龙",
                 user_msg="明天去看海吗？",
                 bot_reply="好呀！",

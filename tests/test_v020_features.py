@@ -12,6 +12,7 @@ Follows Google Python Style Guide.
 import os
 import shutil
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -20,7 +21,6 @@ from erii.core.queue.base import TaskStatus
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.engine import ERIIEngine
 from erii.models.node import MemoryNode, MemoryType
-from erii.models.pack import MemoryPack
 from erii.storage.file_storage import FileStorage
 from erii.storage.sqlite_storage import SQLiteStorage
 from erii.vector.in_memory_vector import DummyEmbeddingProvider, InMemoryVectorStore
@@ -89,34 +89,80 @@ class TestV020Features(unittest.TestCase):
         reset_count = queue.retry_failed()
         self.assertEqual(reset_count, 1)
 
+    def test_persistent_task_queue_recovers_abandoned_processing_task(self):
+        first_queue = PersistentTaskQueue(
+            db_path=self.db_path,
+            processing_timeout_seconds=300.0,
+        )
+        task_id = first_queue.enqueue("a1", "u1", "Hello", "Hi there")
+        claimed = first_queue.dequeue()
+        self.assertEqual(claimed.task_id, task_id)
+
+        recovered_queue = PersistentTaskQueue(
+            db_path=self.db_path,
+            processing_timeout_seconds=0.0,
+        )
+        recovered = recovered_queue.dequeue()
+
+        self.assertIsNotNone(recovered)
+        self.assertEqual(recovered.task_id, task_id)
+        self.assertEqual(recovered.status, TaskStatus.PROCESSING)
+
+    def test_persistent_task_queue_claim_is_atomic_across_instances(self):
+        first_queue = PersistentTaskQueue(db_path=self.db_path)
+        second_queue = PersistentTaskQueue(db_path=self.db_path)
+        task_id = first_queue.enqueue("a1", "u1", "Hello", "Hi there")
+        barrier = threading.Barrier(2)
+        claimed_ids = []
+
+        def claim(queue):
+            barrier.wait()
+            task = queue.dequeue()
+            if task is not None:
+                claimed_ids.append(task.task_id)
+
+        threads = [
+            threading.Thread(target=claim, args=(first_queue,)),
+            threading.Thread(target=claim, args=(second_queue,)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5.0)
+
+        self.assertEqual(claimed_ids, [task_id])
+
     def test_memory_pack_export_import(self):
         engine1 = ERIIEngine(storage_dir=os.path.join(self.test_dir, "eng1"))
-        engine1.set_core_memory("sakura", "p1", "Core rule: be nice.")
+        engine1.set_core_memory("agent_lumi", "p1", "Core rule: be nice.")
 
         # Create node manually
         node = MemoryNode(
             node_id=str(uuid.uuid4()),
-            agent_id="sakura",
+            agent_id="agent_lumi",
             user_id="p1",
             content="p1 likes earl grey tea",
             node_type=MemoryType.PREFERENCE,
         )
-        engine1.storage.save_nodes("sakura", "p1", [node])
+        engine1.storage.save_nodes("agent_lumi", "p1", [node])
 
         export_file = os.path.join(self.test_dir, "pack.json")
-        pack = engine1.export_memory("sakura", "p1", export_path=export_file)
-        self.assertEqual(pack.agent_id, "sakura")
+        pack = engine1.export_memory("agent_lumi", "p1", export_path=export_file)
+        self.assertEqual(pack.agent_id, "agent_lumi")
         self.assertEqual(pack.core_memory, "Core rule: be nice.")
 
         # Import into engine2 using SQLite Storage
         sqlite_driver = SQLiteStorage(db_path=os.path.join(self.test_dir, "import.db"))
         engine2 = ERIIEngine(storage_driver=sqlite_driver)
-        engine2.import_memory(export_file, agent_id="sakura", user_id="p1")
+        engine2.import_memory(export_file, agent_id="agent_lumi", user_id="p1")
 
-        imported_nodes = engine2.storage.load_nodes("sakura", "p1")
+        imported_nodes = engine2.storage.load_nodes("agent_lumi", "p1")
         self.assertEqual(len(imported_nodes), 1)
         self.assertEqual(imported_nodes[0].content, "p1 likes earl grey tea")
-        self.assertEqual(engine2.storage.get_core_memory("sakura", "p1"), "Core rule: be nice.")
+        self.assertEqual(
+            engine2.storage.get_core_memory("agent_lumi", "p1"),
+            "Core rule: be nice.",
+        )
 
         engine1.close()
         engine2.close()

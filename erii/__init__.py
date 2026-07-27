@@ -23,10 +23,10 @@ from erii.vector.in_memory_vector import (
     DummyEmbeddingProvider,
     InMemoryVectorStore,
 )
-
-__version__ = "0.2.0"
+from erii._version import __version__
 
 __all__ = [
+    "__version__",
     "ERIIEngine",
     "ERIIConfig",
     "MemoryNode",

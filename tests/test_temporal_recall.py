@@ -3,7 +3,6 @@
 Follows Google Python Style Guide.
 """
 
-import os
 import shutil
 import tempfile
 import unittest
@@ -24,17 +23,17 @@ class TestTemporalRecall(unittest.TestCase):
     def test_recall_includes_created_at_timestamp(self):
         node = MemoryNode(
             node_id="test_time_node_1",
-            agent_id="sakura",
+            agent_id="agent_lumi",
             user_id="player_1",
-            content="Sakura promised to take me to the park tomorrow",
+            content="Lumi promised to take me to the park tomorrow",
             node_type=MemoryType.EVENT,
             created_at="2026-07-23 15:00:00",
         )
-        self.engine.storage.save_nodes("sakura", "player_1", [node])
+        self.engine.storage.save_nodes("agent_lumi", "player_1", [node])
 
-        context = self.engine.recall("sakura", "player_1", query="park tomorrow")
+        context = self.engine.recall("agent_lumi", "player_1", query="park tomorrow")
         self.assertIn("[2026-07-23 15:00:00]", context)
-        self.assertIn("Sakura promised to take me to the park tomorrow", context)
+        self.assertIn("Lumi promised to take me to the park tomorrow", context)
 
 
 if __name__ == "__main__":

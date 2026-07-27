@@ -7,17 +7,16 @@ Follows Google Python Style Guide.
 import json
 import logging
 import os
-import queue
 import re
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from erii.adapters.base import BaseLLMAdapter
 from erii.core.queue.base import ArchivalTask, BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
-from erii.models.node import MemoryNode, MemoryState, MemoryType
+from erii.models.node import MemoryNode, MemoryType
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 
@@ -35,9 +34,9 @@ CRITICAL PERSPECTIVE, IDENTITY & LANGUAGE REQUIREMENTS:
    - The User in this turn is the Human User '{user_id}'.
    - All extracted memory items ("impressions[].content", "timeline_entry", "thought_entry.content") MUST be written strictly from Assistant's ('{agent_id}') FIRST-PERSON PERSPECTIVE.
    - When referring to Assistant herself, use '我' (I/me) or her character name '{agent_id}'.
-   - When referring to User, use '{user_id}' or '用户' or 'Sakura'. NEVER use '我' to refer to User!
+   - When referring to User, use '{user_id}' or '用户'. NEVER use '我' to refer to User!
    - Example CORRECT impression: "我向 {user_id} 道晚安，希望他做个好梦。" (Assistant said good night to User)
-   - Example INCORRECT impression: "我向 绘梨衣 道晚安" (WRONG! Do not write from User's perspective!)
+   - Example INCORRECT impression: "我向 {agent_id} 道晚安" (WRONG! Do not write from User's perspective!)
 
 2. LANGUAGE DETECTION RULE (based on USER's writing habits):
    - Detect the language from the USER's message (not the Assistant's reply).
@@ -186,9 +185,15 @@ Output strictly valid JSON with no markdown block formatting:
                 return
 
             # Clean reasoning <think> tags and JSON markdown fences
-            clean_json_str = re.sub(r"<think>.*?</think>", "", raw_response, flags=re.DOTALL).strip()
+            clean_json_str = re.sub(
+                r"<think>.*?</think>", "", raw_response, flags=re.DOTALL
+            ).strip()
             if "```" in clean_json_str:
-                match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", clean_json_str, flags=re.DOTALL)
+                match = re.search(
+                    r"```(?:json)?\s*(\{.*?\})\s*```",
+                    clean_json_str,
+                    flags=re.DOTALL,
+                )
                 if match:
                     clean_json_str = match.group(1).strip()
                 else:

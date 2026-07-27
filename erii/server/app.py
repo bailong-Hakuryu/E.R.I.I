@@ -5,18 +5,41 @@ Follows Google Python Style Guide.
 """
 
 import argparse
-import json
 import logging
 import sys
 from typing import Optional
 
+from erii._version import __version__
 from erii.engine import ERIIEngine
-from erii.models.config import ERIIConfig
 
 logger = logging.getLogger("erii.server")
 
-# Initialize global engine instance for server mode
-engine = ERIIEngine(storage_dir="./erii_memory")
+_engine: Optional[ERIIEngine] = None
+
+
+def configure_engine(storage_dir: str = "./erii_memory") -> ERIIEngine:
+    """Creates the server engine explicitly for the selected storage directory."""
+    global _engine
+    if _engine is not None:
+        _engine.close()
+    _engine = ERIIEngine(storage_dir=storage_dir)
+    return _engine
+
+
+def get_engine() -> ERIIEngine:
+    """Returns the lazily initialized server engine."""
+    global _engine
+    if _engine is None:
+        _engine = ERIIEngine(storage_dir="./erii_memory")
+    return _engine
+
+
+def close_engine() -> None:
+    """Closes and clears the server engine when the host shuts down."""
+    global _engine
+    if _engine is not None:
+        _engine.close()
+        _engine = None
 
 try:
     from fastapi import FastAPI, HTTPException
@@ -25,7 +48,7 @@ try:
     app = FastAPI(
         title="E.R.I.I. Memory Engine REST API",
         description="Experiential Recall & Impression Integration Engine",
-        version="0.1.0",
+        version=__version__,
     )
 
     class RememberRequest(BaseModel):
@@ -74,15 +97,20 @@ try:
         """Health check endpoint returning engine and version status."""
         return {
             "status": "healthy",
-            "version": "0.2.0",
-            "archiver_running": getattr(engine.archiver_worker, "running", False),
+            "version": __version__,
+            "engine_initialized": _engine is not None,
+            "archiver_running": (
+                getattr(_engine.archiver_worker, "running", False)
+                if _engine is not None
+                else False
+            ),
         }
 
     @app.post("/api/v1/remember")
     def api_remember(req: RememberRequest):
         """Records a conversation turn into memory."""
         try:
-            engine.remember(
+            get_engine().remember(
                 agent_id=req.agent_id,
                 user_id=req.user_id,
                 user_message=req.user_message,
@@ -98,7 +126,7 @@ try:
     def api_recall(req: RecallRequest):
         """Recalls formatted memory context for prompt injection."""
         try:
-            context = engine.recall(
+            context = get_engine().recall(
                 agent_id=req.agent_id,
                 user_id=req.user_id,
                 query=req.query,
@@ -114,7 +142,7 @@ try:
     def api_set_core_memory(req: CoreMemoryRequest):
         """Sets Core Persona Memory string."""
         try:
-            engine.set_core_memory(
+            get_engine().set_core_memory(
                 agent_id=req.agent_id, user_id=req.user_id, content=req.content
             )
             return {"status": "success", "message": "Core memory saved."}
@@ -125,7 +153,7 @@ try:
     def api_get_core_memory(agent_id: str, user_id: str):
         """Gets Core Persona Memory string."""
         try:
-            content = engine.get_core_memory(agent_id=agent_id, user_id=user_id)
+            content = get_engine().get_core_memory(agent_id=agent_id, user_id=user_id)
             return {"status": "success", "content": content}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -142,7 +170,7 @@ try:
     ):
         """Retrieves inner monologue / diary entries."""
         try:
-            monologues = engine.get_inner_monologue(
+            monologues = get_engine().get_inner_monologue(
                 agent_id=agent_id,
                 user_id=user_id,
                 limit=limit,
@@ -159,7 +187,7 @@ try:
     def api_remember_thought(req: ThoughtRequest):
         """Explicitly records an inner monologue / diary entry."""
         try:
-            node = engine.remember_thought(
+            node = get_engine().remember_thought(
                 agent_id=req.agent_id,
                 user_id=req.user_id,
                 content=req.content,
@@ -177,7 +205,7 @@ try:
     def api_resolve_thought(node_id: str, req: ResolveThoughtRequest):
         """Marks a suspenseful/unresolved thought as resolved."""
         try:
-            success = engine.resolve_thought(
+            success = get_engine().resolve_thought(
                 agent_id=req.agent_id,
                 user_id=req.user_id,
                 node_id=node_id,
@@ -194,7 +222,7 @@ try:
     def api_export_memory(req: ExportRequest):
         """Exports memory into a MemoryPack object."""
         try:
-            pack = engine.export_memory(agent_id=req.agent_id, user_id=req.user_id)
+            pack = get_engine().export_memory(agent_id=req.agent_id, user_id=req.user_id)
             return {"status": "success", "pack": pack.to_dict()}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -203,7 +231,7 @@ try:
     def api_import_memory(req: ImportRequest):
         """Imports a MemoryPack object."""
         try:
-            pack = engine.import_memory(
+            pack = get_engine().import_memory(
                 pack_or_path=req.pack_data,
                 agent_id=req.agent_id,
                 user_id=req.user_id,
@@ -217,7 +245,7 @@ try:
     def api_get_tasks_status():
         """Retrieves background archival task counts by status."""
         try:
-            summary = engine.archiver_worker.task_queue.get_status_summary()
+            summary = get_engine().archiver_worker.task_queue.get_status_summary()
             return {"status": "success", "summary": summary}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -226,10 +254,15 @@ try:
     def api_retry_failed_tasks():
         """Resets FAILED tasks back to PENDING."""
         try:
-            count = engine.archiver_worker.task_queue.retry_failed()
+            count = get_engine().archiver_worker.task_queue.retry_failed()
             return {"status": "success", "reset_count": count}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    @app.on_event("shutdown")
+    def api_shutdown() -> None:
+        """Releases the lazily initialized engine on server shutdown."""
+        close_engine()
 
 except ImportError:
     app = None  # FastAPI not installed
@@ -251,8 +284,12 @@ def cli_main():
             sys.exit(1)
 
         import uvicorn
+        configure_engine(storage_dir=args.storage_dir)
         print(f"Starting E.R.I.I. REST API Server at http://{args.host}:{args.port}")
-        uvicorn.run(app, host=args.host, port=args.port)
+        try:
+            uvicorn.run(app, host=args.host, port=args.port)
+        finally:
+            close_engine()
 
 
 if __name__ == "__main__":

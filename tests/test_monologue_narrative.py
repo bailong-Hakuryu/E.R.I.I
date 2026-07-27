@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 
-from erii import ERIIEngine, MemoryNode, MemoryType, MemoryVisibility
+from erii import ERIIEngine, MemoryNode, MemoryType
 
 
 class TestMonologueNarrative(unittest.TestCase):
@@ -23,10 +23,10 @@ class TestMonologueNarrative(unittest.TestCase):
         ts1 = "2026-07-24 10:00:00"
         ts2 = "2026-07-24 12:00:00"
 
-        node1 = self.engine.remember_thought(
-            agent_id="sakura_agent",
+        self.engine.remember_thought(
+            agent_id="agent_lumi",
             user_id="user_bob",
-            content="sakura要带我去公园我好开心",
+            content="Lumi 要带我去公园，我很开心。",
             visibility="public_log",
             is_unresolved=True,
             emotional_score=0.9,
@@ -34,8 +34,8 @@ class TestMonologueNarrative(unittest.TestCase):
             created_at=ts1,
         )
 
-        node2 = self.engine.remember_thought(
-            agent_id="sakura_agent",
+        self.engine.remember_thought(
+            agent_id="agent_lumi",
             user_id="user_bob",
             content="在公园买到了好吃的风筝型冰淇淋",
             visibility="public_log",
@@ -46,13 +46,13 @@ class TestMonologueNarrative(unittest.TestCase):
 
         # Retrieve public diary timeline
         timeline = self.engine.get_diary_timeline(
-            agent_id="sakura_agent",
+            agent_id="agent_lumi",
             user_id="user_bob",
         )
 
         self.assertTrue(len(timeline) >= 2)
         # Check unresolved thought is placed at top priority
-        self.assertEqual(timeline[0]["content"], "sakura要带我去公园我好开心")
+        self.assertEqual(timeline[0]["content"], "Lumi 要带我去公园，我很开心。")
         self.assertTrue(timeline[0]["is_unresolved"])
         self.assertEqual(timeline[0]["created_at"], ts1)
 
@@ -112,7 +112,7 @@ class TestMonologueNarrative(unittest.TestCase):
     def test_resolve_thought_status(self):
         """Tests resolving an unresolved suspense thought node."""
         node = self.engine.remember_thought(
-            agent_id="sakura_agent",
+            agent_id="agent_lumi",
             user_id="user_bob",
             content="不知道能不能赶上末班车",
             is_unresolved=True,
@@ -120,7 +120,7 @@ class TestMonologueNarrative(unittest.TestCase):
 
         # Verify initial unresolved status
         unresolved_logs = self.engine.get_inner_monologue(
-            agent_id="sakura_agent",
+            agent_id="agent_lumi",
             user_id="user_bob",
             unresolved_only=True,
         )
@@ -128,12 +128,12 @@ class TestMonologueNarrative(unittest.TestCase):
         self.assertEqual(unresolved_logs[0]["node_id"], node.node_id)
 
         # Resolve thought
-        success = self.engine.resolve_thought("sakura_agent", "user_bob", node.node_id)
+        success = self.engine.resolve_thought("agent_lumi", "user_bob", node.node_id)
         self.assertTrue(success)
 
         # Verify unresolved query returns empty
         unresolved_after = self.engine.get_inner_monologue(
-            agent_id="sakura_agent",
+            agent_id="agent_lumi",
             user_id="user_bob",
             unresolved_only=True,
         )

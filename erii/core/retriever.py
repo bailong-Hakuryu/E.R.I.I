@@ -8,7 +8,7 @@ Follows Google Python Style Guide.
 
 from collections import defaultdict
 import re
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from erii.models.node import MemoryNode, MemoryType
 from erii.vector.base import BaseEmbeddingProvider, BaseVectorStore

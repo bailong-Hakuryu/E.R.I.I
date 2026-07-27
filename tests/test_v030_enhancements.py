@@ -3,10 +3,14 @@ import tempfile
 import unittest
 
 from erii import ERIIEngine
+from erii import __version__
 from erii.security.sanitizer import SecuritySanitizer
 
 
 class TestV030Enhancements(unittest.TestCase):
+    def test_public_package_version(self):
+        self.assertEqual(__version__, "0.3.1")
+
 
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
@@ -27,7 +31,7 @@ class TestV030Enhancements(unittest.TestCase):
             engine.remember(
                 agent_id="test_agent",
                 user_id="白龙",
-                user_msg="你好绘梨衣",
+                user_msg="你好，Lumi",
                 bot_reply="你好呀",
             )
         finally:

@@ -4,7 +4,7 @@ Allows 1-line integration with any custom function, framework, or model endpoint
 Follows Google Python Style Guide.
 """
 
-from typing import Callable, Union
+from typing import Callable
 from erii.adapters.base import BaseLLMAdapter
 
 

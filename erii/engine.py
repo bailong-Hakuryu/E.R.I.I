@@ -4,6 +4,7 @@ Main entry point for AI Agent long-term memory integration.
 Follows Google Python Style Guide.
 """
 
+import os
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from erii.adapters.base import BaseLLMAdapter
@@ -13,6 +14,7 @@ from erii.core.budget import MemoryBudgetManager
 from erii.core.decay import MemoryDecayEvaluator
 from erii.core.retriever import MemoryRetriever
 from erii.core.queue.base import BaseTaskQueue
+from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.models.config import ERIIConfig
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
 from erii.models.pack import MemoryPack
@@ -93,7 +95,21 @@ class ERIIEngine:
             dynamic_budget=self.config.dynamic_budget,
         )
 
-        # 5. Instantiate Background Archiver Worker
+        # 5. Keep the default persistent queue alongside the selected storage.
+        if task_queue is None:
+            if hasattr(self.storage, "db_path"):
+                queue_db_path = self.storage.db_path
+            else:
+                configured_root = os.path.abspath(self.config.storage_dir)
+                legacy_root = os.path.abspath("./erii_memory")
+                legacy_queue = os.path.abspath("./erii_memory.db")
+                if configured_root == legacy_root and os.path.exists(legacy_queue):
+                    queue_db_path = legacy_queue
+                else:
+                    queue_db_path = os.path.join(configured_root, "erii_tasks.db")
+            task_queue = PersistentTaskQueue(db_path=queue_db_path)
+
+        # 6. Instantiate Background Archiver Worker
         self.archiver_worker = AsyncArchiverWorker(
             storage=self.storage,
             llm_adapter=self.llm_adapter,

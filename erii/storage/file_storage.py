@@ -12,7 +12,7 @@ import json
 import logging
 import os
 import re
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from erii.models.node import MemoryNode
 from erii.security.sanitizer import SecuritySanitizer

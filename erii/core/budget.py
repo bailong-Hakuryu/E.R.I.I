@@ -3,7 +3,7 @@
 Follows Google Python Style Guide.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 
 class MemoryBudgetManager:

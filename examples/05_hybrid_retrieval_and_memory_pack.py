@@ -16,8 +16,6 @@ import tempfile
 from erii import (
     ERIIEngine,
     InMemoryVectorStore,
-    MemoryPack,
-    MemoryType,
     SQLiteStorage,
 )
 
@@ -37,14 +35,14 @@ def main():
             vector_store=vector_store,
         )
 
-        agent_id = "sakura"
+        agent_id = "agent_lumi"
         user_id = "player_1"
 
         # 2. Set Core Memory
         engine.set_core_memory(
             agent_id=agent_id,
             user_id=user_id,
-            content="Sakura 是玩家贴心温柔的 AI 虚拟陪伴人设。",
+            content="Lumi 是一个原创的、温柔而坦诚的 AI 陪伴角色。",
         )
 
         # 3. Add memories
@@ -67,7 +65,7 @@ def main():
         print(context)
 
         # 5. Export MemoryPack snapshot
-        pack_file = os.path.join(work_dir, "sakura_p1_memorypack.json")
+        pack_file = os.path.join(work_dir, "lumi_p1_memorypack.json")
         print(f"\n--- 3. Exporting MemoryPack to {pack_file} ---")
         pack = engine.export_memory(agent_id=agent_id, user_id=user_id, export_path=pack_file)
         print(f"Exported MemoryPack version: {pack.version}, Nodes count: {len(pack.nodes)}")

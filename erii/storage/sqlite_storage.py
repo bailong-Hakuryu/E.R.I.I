@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sqlite3
+from contextlib import closing
 from typing import List, Optional
 
 from erii.models.node import MemoryNode
@@ -43,7 +44,7 @@ class SQLiteStorage(BaseStorage):
 
     def _init_db(self) -> None:
         """Initializes SQLite database tables."""
-        with self._get_connection() as conn:
+        with closing(self._get_connection()) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -92,7 +93,7 @@ class SQLiteStorage(BaseStorage):
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
 
         with self.lock_manager.lock(clean_agent, clean_user):
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 keep_ids = set()
                 for node in nodes:
@@ -130,7 +131,7 @@ class SQLiteStorage(BaseStorage):
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
 
         with self.lock_manager.lock(clean_agent, clean_user):
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT data FROM memory_nodes WHERE agent_id = ? AND user_id = ?",
@@ -152,7 +153,7 @@ class SQLiteStorage(BaseStorage):
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
 
         with self.lock_manager.lock(clean_agent, clean_user):
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT content FROM core_memories WHERE agent_id = ? AND user_id = ?",
@@ -168,7 +169,7 @@ class SQLiteStorage(BaseStorage):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         with self.lock_manager.lock(clean_agent, clean_user):
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -191,7 +192,7 @@ class SQLiteStorage(BaseStorage):
         ts = timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         with self.lock_manager.lock(clean_agent, clean_user):
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -210,7 +211,7 @@ class SQLiteStorage(BaseStorage):
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
 
         with self.lock_manager.lock(clean_agent, clean_user):
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """

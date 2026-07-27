@@ -3,8 +3,7 @@
 Follows Google Python Style Guide.
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 
 @dataclass

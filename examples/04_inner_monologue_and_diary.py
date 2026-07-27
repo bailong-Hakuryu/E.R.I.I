@@ -8,7 +8,6 @@ Demonstrates:
 """
 
 import argparse
-import json
 import shutil
 import tempfile
 from erii import ERIIEngine
@@ -24,7 +23,7 @@ def main(mode: str = "AB"):
         # Initialize E.R.I.I. Engine
         engine = ERIIEngine(storage_dir=tmp_dir)
 
-        agent_id = "sakura"
+        agent_id = "agent_lumi"
         user_id = "player_1"
 
         print(f"=== 1. Record Character Inner Monologue & Diary Entries (Selected Mode: {mode}) ===")
@@ -33,7 +32,7 @@ def main(mode: str = "AB"):
         engine.remember_thought(
             agent_id=agent_id,
             user_id=user_id,
-            content="sakura要带我去公园我好开心",
+            content="Lumi 要带我去公园，我很开心。",
             visibility="public_log",
             is_unresolved=True,
             emotional_score=0.9,

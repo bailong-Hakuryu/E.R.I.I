@@ -19,8 +19,8 @@ class TestPerspectiveAndDatabaseAutoCreation(unittest.TestCase):
         
         self.assertFalse(os.path.exists(db_dir))
 
-        storage = SQLiteStorage(db_path=db_path)
-        queue = PersistentTaskQueue(db_path=db_path)
+        SQLiteStorage(db_path=db_path)
+        PersistentTaskQueue(db_path=db_path)
         self.assertTrue(os.path.exists(db_dir))
 
     def test_extraction_prompt_perspective_grounding(self):
@@ -33,15 +33,15 @@ class TestPerspectiveAndDatabaseAutoCreation(unittest.TestCase):
         worker.llm_adapter = MagicMock()
 
         mock_llm_json = json.dumps({
-            "timeline_entry": "我与 白龙 确认了他安全到达。",
+            "timeline_entry": "我与 user_chen 确认了他安全到达。",
             "thought_entry": {
-                "content": "祝福 白龙 今晚能做个好梦。",
+                "content": "祝福 user_chen 今晚能做个好梦。",
                 "visibility": "public_log"
             },
             "impressions": [
                 {
                     "type": "event",
-                    "content": "我向 白龙 道晚安。",
+                    "content": "我向 user_chen 道晚安。",
                     "base_importance": 0.8
                 }
             ]
@@ -49,31 +49,31 @@ class TestPerspectiveAndDatabaseAutoCreation(unittest.TestCase):
         worker.llm_adapter.generate.return_value = mock_llm_json
 
         task = {
-            "agent_id": "Uesugi_Erii",
-            "user_id": "白龙",
+            "agent_id": "agent_lumi",
+            "user_id": "user_chen",
             "user_msg": "到家了",
-            "bot_reply": "晚安啦Sakura"
+            "bot_reply": "晚安，祝你做个好梦。"
         }
 
         worker._process_archival(task)
 
         # Assert prompt includes agent_id and user_id perspective rules
         prompt_arg = worker.llm_adapter.generate.call_args[0][0]
-        self.assertIn("Uesugi_Erii", prompt_arg)
-        self.assertIn("白龙", prompt_arg)
+        self.assertIn("agent_lumi", prompt_arg)
+        self.assertIn("user_chen", prompt_arg)
         self.assertIn("STRICT FIRST-PERSON PERSPECTIVE", prompt_arg)
 
         # Assert saved nodes contain character perspective content
         save_nodes_call = worker.storage.save_nodes.call_args
         self.assertIsNotNone(save_nodes_call)
         agent_id_arg, user_id_arg, saved_nodes = save_nodes_call[0]
-        self.assertEqual(agent_id_arg, "Uesugi_Erii")
-        self.assertEqual(user_id_arg, "白龙")
+        self.assertEqual(agent_id_arg, "agent_lumi")
+        self.assertEqual(user_id_arg, "user_chen")
         self.assertTrue(len(saved_nodes) > 0)
-        self.assertIn("白龙", saved_nodes[0].content)
+        self.assertIn("user_chen", saved_nodes[0].content)
 
     def test_extraction_with_think_tags_and_markdown_blocks(self):
-        """Verify archiver correctly parses JSON when LLM output contains <think> tags and markdown blocks."""
+        """Parse JSON wrapped in model reasoning tags and Markdown fences."""
         worker = AsyncArchiverWorker.__new__(AsyncArchiverWorker)
         worker.enable_sanitizer = False
         worker.enable_pii_scrubbing = False
@@ -82,14 +82,14 @@ class TestPerspectiveAndDatabaseAutoCreation(unittest.TestCase):
         worker.llm_adapter = MagicMock()
 
         raw_llm_response = """<think>
-Reasoning chain from DeepSeek-V3.2...
-User said good night.
+Reasoning chain from a local model...
+The user said good night.
 </think>
 ```json
 {
-  "timeline_entry": "我向 白龙 道晚安。",
+  "timeline_entry": "我向 user_chen 道晚安。",
   "thought_entry": {
-    "content": "希望 白龙 做个好梦。",
+    "content": "希望 user_chen 做个好梦。",
     "visibility": "public_log"
   },
   "impressions": []
@@ -98,16 +98,16 @@ User said good night.
         worker.llm_adapter.generate.return_value = raw_llm_response
 
         task = {
-            "agent_id": "Uesugi_Erii",
-            "user_id": "白龙",
+            "agent_id": "agent_lumi",
+            "user_id": "user_chen",
             "user_msg": "晚安",
-            "bot_reply": "晚安"
+            "bot_reply": "晚安",
         }
 
         worker._process_archival(task)
 
         worker.storage.add_timeline_entry.assert_called_once_with(
-            "Uesugi_Erii", "白龙", "我向 白龙 道晚安。"
+            "agent_lumi", "user_chen", "我向 user_chen 道晚安。"
         )
 
 if __name__ == "__main__":

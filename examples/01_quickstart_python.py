@@ -3,7 +3,7 @@
 Demonstrates basic usage of memory recording and selective recall prompt injection.
 """
 
-from erii import ERIIEngine, ERIIConfig, SQLiteStorage
+from erii import ERIIEngine, ERIIConfig
 
 def main():
     print("=== E.R.I.I. Quickstart Example ===")

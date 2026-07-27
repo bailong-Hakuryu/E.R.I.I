@@ -4,13 +4,13 @@ Uses SQLite database to manage persistent archival tasks with exponential backof
 Follows Google Python Style Guide.
 """
 
-import json
 import logging
 import os
 import sqlite3
 import threading
 import time
 import uuid
+from contextlib import closing
 from typing import Dict, Optional
 
 from erii.core.queue.base import ArchivalTask, BaseTaskQueue, TaskStatus
@@ -26,6 +26,7 @@ class PersistentTaskQueue(BaseTaskQueue):
         db_path: str = "./erii_memory.db",
         base_delay_seconds: float = 2.0,
         max_attempts: int = 3,
+        processing_timeout_seconds: float = 300.0,
     ) -> None:
         """Initializes PersistentTaskQueue.
 
@@ -33,10 +34,13 @@ class PersistentTaskQueue(BaseTaskQueue):
             db_path: SQLite DB file path.
             base_delay_seconds: Exponential backoff base delay in seconds.
             max_attempts: Maximum retry attempts before marking task as FAILED.
+            processing_timeout_seconds: Lease duration before a crashed worker's
+                PROCESSING task becomes eligible for recovery.
         """
         self.db_path = db_path
         self.base_delay_seconds = base_delay_seconds
         self.max_attempts = max_attempts
+        self.processing_timeout_seconds = processing_timeout_seconds
         self._lock = threading.Lock()
         self._init_db()
 
@@ -53,7 +57,7 @@ class PersistentTaskQueue(BaseTaskQueue):
     def _init_db(self) -> None:
         """Initializes queue table in SQLite database."""
         with self._lock:
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -68,14 +72,38 @@ class PersistentTaskQueue(BaseTaskQueue):
                         max_attempts INTEGER NOT NULL,
                         created_at REAL NOT NULL,
                         next_attempt_at REAL NOT NULL,
-                        error_msg TEXT
+                        error_msg TEXT,
+                        processing_started_at REAL
                     )
                     """
                 )
+                columns = {
+                    row["name"]
+                    for row in cursor.execute("PRAGMA table_info(archival_tasks)")
+                }
+                if "processing_started_at" not in columns:
+                    cursor.execute(
+                        "ALTER TABLE archival_tasks ADD COLUMN processing_started_at REAL"
+                    )
                 cursor.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_task_status_time ON archival_tasks(status, next_attempt_at)
                     """
+                )
+                cutoff = time.time() - self.processing_timeout_seconds
+                cursor.execute(
+                    """
+                    UPDATE archival_tasks
+                    SET status = ?, next_attempt_at = ?, processing_started_at = NULL
+                    WHERE status = ?
+                      AND (processing_started_at IS NULL OR processing_started_at <= ?)
+                    """,
+                    (
+                        TaskStatus.PENDING.value,
+                        time.time(),
+                        TaskStatus.PROCESSING.value,
+                        cutoff,
+                    ),
                 )
                 conn.commit()
 
@@ -84,7 +112,7 @@ class PersistentTaskQueue(BaseTaskQueue):
         task_id = str(uuid.uuid4())
         now = time.time()
         with self._lock:
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -112,8 +140,9 @@ class PersistentTaskQueue(BaseTaskQueue):
         """Pulls next pending task whose next_attempt_at <= current time."""
         now = time.time()
         with self._lock:
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
+                cursor.execute("BEGIN IMMEDIATE")
                 cursor.execute(
                     """
                     SELECT * FROM archival_tasks
@@ -124,14 +153,26 @@ class PersistentTaskQueue(BaseTaskQueue):
                 )
                 row = cursor.fetchone()
                 if not row:
+                    conn.rollback()
                     return None
 
                 task_id = row["task_id"]
-                # Atomically set status to PROCESSING
                 cursor.execute(
-                    "UPDATE archival_tasks SET status = ? WHERE task_id = ?",
-                    (TaskStatus.PROCESSING.value, task_id),
+                    """
+                    UPDATE archival_tasks
+                    SET status = ?, processing_started_at = ?
+                    WHERE task_id = ? AND status = ?
+                    """,
+                    (
+                        TaskStatus.PROCESSING.value,
+                        now,
+                        task_id,
+                        TaskStatus.PENDING.value,
+                    ),
                 )
+                if cursor.rowcount != 1:
+                    conn.rollback()
+                    return None
                 conn.commit()
 
                 return ArchivalTask(
@@ -151,10 +192,14 @@ class PersistentTaskQueue(BaseTaskQueue):
     def complete(self, task_id: str) -> None:
         """Marks task as COMPLETED."""
         with self._lock:
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "UPDATE archival_tasks SET status = ? WHERE task_id = ?",
+                    """
+                    UPDATE archival_tasks
+                    SET status = ?, processing_started_at = NULL
+                    WHERE task_id = ?
+                    """,
                     (TaskStatus.COMPLETED.value, task_id),
                 )
                 conn.commit()
@@ -163,7 +208,7 @@ class PersistentTaskQueue(BaseTaskQueue):
         """Applies retry backoff or marks task as FAILED."""
         now = time.time()
         with self._lock:
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT attempts, max_attempts FROM archival_tasks WHERE task_id = ?",
@@ -181,7 +226,8 @@ class PersistentTaskQueue(BaseTaskQueue):
                     cursor.execute(
                         """
                         UPDATE archival_tasks
-                        SET status = ?, attempts = ?, error_msg = ?
+                        SET status = ?, attempts = ?, error_msg = ?,
+                            processing_started_at = NULL
                         WHERE task_id = ?
                         """,
                         (TaskStatus.FAILED.value, new_attempts, error_msg, task_id),
@@ -193,7 +239,8 @@ class PersistentTaskQueue(BaseTaskQueue):
                     cursor.execute(
                         """
                         UPDATE archival_tasks
-                        SET status = ?, attempts = ?, next_attempt_at = ?, error_msg = ?
+                        SET status = ?, attempts = ?, next_attempt_at = ?, error_msg = ?,
+                            processing_started_at = NULL
                         WHERE task_id = ?
                         """,
                         (TaskStatus.PENDING.value, new_attempts, next_time, error_msg, task_id),
@@ -209,7 +256,7 @@ class PersistentTaskQueue(BaseTaskQueue):
             TaskStatus.FAILED.value: 0,
         }
         with self._lock:
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT status, COUNT(*) as count FROM archival_tasks GROUP BY status"
@@ -222,12 +269,13 @@ class PersistentTaskQueue(BaseTaskQueue):
         """Resets all FAILED tasks to PENDING with zero attempts."""
         now = time.time()
         with self._lock:
-            with self._get_connection() as conn:
+            with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
                     UPDATE archival_tasks
-                    SET status = ?, attempts = 0, next_attempt_at = ?
+                    SET status = ?, attempts = 0, next_attempt_at = ?,
+                        processing_started_at = NULL
                     WHERE status = ?
                     """,
                     (TaskStatus.PENDING.value, now, TaskStatus.FAILED.value),
