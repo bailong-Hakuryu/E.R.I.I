@@ -1,0 +1,3 @@
+# Shut down archival workers cooperatively
+
+`close(timeout)` immediately stops accepting new Archival Submissions, prevents its Worker from claiming another task, and waits up to the explicit timeout for the current leased Archival Attempt to end. It returns a truthful ShutdownReport: `stopped=true` when the Worker has exited, or `stopped=false` with the in-flight `archival_id` and remaining task counts when the deadline expires. E.R.I.I. does not forcibly kill a Python thread or claim shutdown success; a timed-out Worker may only finish its current valid attempt and exit, the host may wait again, and abrupt process termination is recovered through lease expiry on the next start.

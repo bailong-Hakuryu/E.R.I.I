@@ -1,0 +1,3 @@
+# Separate extraction retries from commit retries
+
+Archival Receipts expose `phase: extraction | commit` and separate `extraction_attempts` from `commit_attempts`. Before Commit Binding, a retry may call the extractor and retains the conversation payload; binding immediately erases that payload, after which retries renew a Commit Permit and publish only the same Prepared Archival Batch. Completion erases prepared data immediately, while terminal commit failure retains it for the configured seven-day default recovery window, bounded from zero through thirty days; expiry installs a Commit Termination Fence, clears the batch, and requires a new host submission under a new Archival Identity.

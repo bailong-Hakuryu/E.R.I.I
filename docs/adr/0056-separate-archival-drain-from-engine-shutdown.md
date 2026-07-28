@@ -1,0 +1,3 @@
+# Separate archival drain from engine shutdown
+
+Archival Drain and Engine shutdown are separate host-controlled operations: `drain(timeout)` freezes the Pending and Processing task identities present when called and returns a truthful Drain Report without absorbing later submissions. With no live Worker the calling thread consumes that snapshot while respecting retry backoff; with a live Worker Drain observes it instead of creating a competing consumer, and may take over if no consumer remains. `close(timeout)` stops the Worker without consuming remaining Pending work; context-manager exit performs close without hidden drain, preserving durable work for a later Engine and preventing shutdown from silently initiating additional paid model calls.

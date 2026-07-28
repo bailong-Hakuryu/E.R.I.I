@@ -1,0 +1,3 @@
+# Gate trusted archival on a versioned storage capability
+
+Trusted archival requires a feature-scoped, versioned Atomic Archival Store Capability whose deep operation commits one validated Archival Batch and returns its Artifact Manifest. `BaseStorage` does not gain a new abstract method: an older adapter remains usable for every independent capability it already supports, but `remember()` rejects it with ArchivalCapabilityError before creating a task or receipt when this capability is absent. Built-in FileStorage and SQLiteStorage implement and declare version 1, third-party adapters receive a shared conformance suite and migration guide, and the primary API never falls back to sequential best-effort writes or reports them as trustworthy completion.

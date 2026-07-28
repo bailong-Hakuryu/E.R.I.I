@@ -1,0 +1,3 @@
+# Migrate timeline entries without inventing history
+
+New TimelineEntry records have a stable `timeline_entry_id`, Archival Scope, content, UTC `recorded_at`, `source_archival_id`, and `provenance_state=complete`. Legacy FileStorage and SQLite entries receive deterministic IDs derived from their original relationship and storage position so repeated migration is stable, but retain their original timestamp text with nullable structured `recorded_at`, `source_archival_id=null`, and `provenance_state=legacy_unavailable` because the old format recorded neither timezone nor archival identity. A new structured retrieval interface becomes canonical while `get_recent_timeline()` remains temporarily as a deprecated string-rendering compatibility projection.

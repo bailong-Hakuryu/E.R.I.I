@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0a4-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-0.4.0a5-orange.svg)]()
 
 E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI 伴侣、虚拟角色和叙事型 Agent。
 
@@ -26,7 +26,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 当前版本能够做什么
 
-`v0.4.0a4` 已实现：
+`v0.4.0a5` 已实现：
 
 - 按 `(agent_id, user_id)` 隔离记忆；
 - 核心人格文本、体验时间线和分类印象节点；
@@ -40,6 +40,9 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - Callable、OpenAI-compatible 和 ChromaDB 扩展；
 - 可选 FastAPI REST 服务。
 - 每个 `Agent × User` 独立且稳定的 relationship、persona 与 identity ID；
+- `begin_turn()`、`complete_turn()`、`abandon_turn()` 与原子便捷入口 `record_turn()` 共享同一份持久 Turn Record 账本；
+- 完整保留双方实际可见的 User/Agent Source Transcript，并区分 `open`、`completed` 与 `abandoned` 生命周期；
+- `get_turn()`、`list_turns()` 与不携带对话原文的 `SourceTurnReceipt`；
 - 不可静默覆盖的原始人设快照和可选结构化编译结果；
 - 追加式关系事件、幂等事件 ID 与可重建的当前认知；
 - 熟悉、信任、亲密、安全感与冲突张力的有限幅度状态投影；
@@ -58,7 +61,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - 默认只读的结构化召回，以及只强化最终入选记忆的显式模式；
 - 类型化 Promise、Promise Condition、Open Loop 与追加式 Resolution；
 - 同一 World Time 时钟内派生的到期/逾期承诺和开放事项召回信号；
-- SQLite Schema 继续保持 v3，MemoryPack `0.4.0a4` 携带并校验时间事件引用；
+- SQLite Schema v4 与 FileStorage Turn Record 持久化；MemoryPack `0.4.0a5` 新增 `turn_records`，并继续校验时间事件引用；
 - 由宿主显式控制的后台归档生命周期。
 
 当前版本尚未实现：
@@ -158,6 +161,86 @@ with ERIIEngine(storage_dir="./erii_memory", llm=extract_memory) as engine:
 
 `set_core_memory()` 是仍供旧版文本召回使用的可覆盖字段，不等同于新的 Character Blueprint。alpha.1 已保存人设底色和关系投影，但它们要到结构化召回阶段才会自动进入宿主 Prompt。
 
+## Turn Recording 来源账本
+
+`0.4.0a5` 为一轮真实交互增加了唯一、关系范围内的 Turn Record。它保存双方实际可见的原文，是后续记忆归档与关系裁决共同引用的来源证据，但不会仅凭“说过这句话”就自动生成 MemoryNode、关系事件或人格变化。
+
+关系必须先通过 `initialize_relationship()` 初始化。生成回复前先保存 User 消息，展示回复后再封存同一轮：
+
+```python
+opened = engine.begin_turn(
+    "agent_lumi",
+    "user_chen",
+    "我们今天去看雪吗？",
+    turn_id="turn-first-snow-001",
+    interaction_context=(
+        {
+            "signal_id": "context-location",
+            "source": "host_observed",
+            "signal_type": "location",
+            "value": "东京街头",
+        },
+    ),
+)
+
+# reply 由宿主自己的聊天模型生成并实际展示给用户。
+reply = "好，我们一起去。"
+
+receipt = engine.complete_turn(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    reply,
+    # 只声明当前确实要承担的派生处理通道。
+    processing_channels=(),
+)
+```
+
+如果宿主已经同时持有双方可见消息，可以一次性原子记录：
+
+```python
+receipt = engine.record_turn(
+    "agent_lumi",
+    "user_chen",
+    "雪已经开始下了。",
+    "那这就是我们一起看的第一场雪。",
+    turn_id="turn-first-snow-002",
+    processing_channels=(),
+)
+
+turn = engine.get_turn("agent_lumi", "user_chen", receipt.source_turn_id)
+completed = engine.list_turns("agent_lumi", "user_chen", status="completed")
+```
+
+`SourceTurnReceipt` 只报告 `source_turn_id`、relationship、revision、接受时间、固定处理计划与各通道状态，不回显 User/Agent 原文；需要查看原文时必须在同一 `Agent × User` 范围内调用 `get_turn()`。相同 `turn_id` 和相同载荷可安全重试；复用 ID 却改变消息或终态会抛出冲突。
+
+`interaction_context` 只接受宿主实际观察到的临时情境，不能冒充由内核或评估器推导的关系状态。可重试的生成或评估失败应让 Turn 保持 `open`，并且只记录脱敏后的失败元数据，不保存未展示草稿：
+
+```python
+engine.record_reply_attempt_failure(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    attempt_number=1,
+    stage="generation",
+    capability_descriptor="my-provider/model-v1",
+    failure_classification="temporary_provider_error",
+)
+```
+
+只有用户取消、宿主明确终止或不可恢复错误才调用：
+
+```python
+engine.abandon_turn(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    reason="user_cancelled",
+)
+```
+
+`abandoned` 会保留真实 User 消息，但不会伪造 Agent 回复，也没有处理计划。隐藏 system 消息、完整 Prompt、模型推理和双方不可见的工具输出不属于 Source Transcript。
+
 ## 关系人格内核
 
 ```python
@@ -249,7 +332,7 @@ with ERIIEngine(storage_dir="./erii_memory") as engine:
     print(engine.get_relationship_snapshot("agent_lumi", "user_chen").state.intimacy)
 ```
 
-宿主临时提供完整 turn 供精确引文校验；内核长期只保留来源身份、角色、精确片段、全文哈希和时间，不默认复制整段聊天。拒绝候选只留下指纹、原因、版本和时间，不保存幻觉文本或敏感引文。
+上例是 `0.4.x` 保留的旧式手工候选入口：宿主临时提供完整 turn 供精确引文校验，裁决记录只保留最小证据。`0.4.0a5` 的规范 Source Transcript 则由 Turn Recording 生命周期独立、完整持久化；两者不能靠相同字符串或相似时间自动推断为同一轮。新集成应先取得稳定 `source_turn_id`，后续归档、关系提取和重处理围绕该身份扩展。
 
 模型置信度被拆成提取置信度与解释置信度，只参与路由和限幅。关系数值始终由版本化规则计算；低解释置信度的有效事实可以进入中性历史，但不会自动改变关系或保存 Persona Reflection。
 
@@ -386,7 +469,7 @@ with ERIIEngine(storage_driver=storage) as engine:
     ...
 ```
 
-SQLite 驱动启用 WAL，并使用参数化 SQL。`v0.4.0` 计划将 SQLite 提升为默认权威存储，将 JSON 定位为交换、备份与调试格式。
+SQLite 驱动启用 WAL，并使用参数化 SQL。`0.4.0a5` 会把已有数据库原地迁移到 Schema v4，以 `source_turns` 表保存关系范围内的 Turn Record；FileStorage 则在 `_turn_records` 目录保存同一模型。两者都保留 `open`、`completed` 与 `abandoned` 状态，但都不是授权或加密边界。
 
 ## 独白与未完成事件
 
@@ -423,7 +506,9 @@ pack = engine.export_memory(
 engine.import_memory("./lumi-memory.json", overwrite=False)
 ```
 
-MemoryPack `0.4.0a4` 会携带人设快照、稳定关系档案和追加式关系事件，包括类型化时间载荷。事件按 `event_id` 幂等导入；跨用户导入会重映射载荷中的事件引用，引用不完整或越过关系边界的时间历史会被拒绝。旧版体验时间线仍可能在重复导入时追加重复项。在依赖它处理重要数据前，请保留原始存储备份并验证导入结果。
+MemoryPack `0.4.0a5` 在既有数据之外新增根字段 `turn_records`，携带完整可见 Source Transcript、Turn 状态、连续性评估摘要和固定处理计划。因为这些原文属于特定关系，含 `turn_records` 的 Pack 只允许恢复到原来的 `Agent × User` 与 `relationship_id`；传入另一组 Agent/User ID 会被拒绝，`overwrite=True` 也不能绕过该边界。
+
+`0.4.0a4` 及更早、没有 `turn_records` 的 Pack 仍可读取，并保留原有关系事件和时间载荷迁移规则。事件按 `event_id` 幂等导入，引用不完整或越过关系边界的时间历史会被拒绝；旧版体验时间线仍可能在重复导入时追加重复项。在依赖它处理重要数据前，请保留原始存储备份并验证导入结果。
 
 ## 混合召回
 
@@ -449,6 +534,12 @@ erii serve --host 127.0.0.1 --port 8000 --storage-dir ./erii_memory
 主要端点：
 
 - `GET /api/v1/health`
+- `POST /api/v1/turns/open`
+- `POST /api/v1/turns`
+- `POST /api/v1/turns/{turn_id}/complete`
+- `POST /api/v1/turns/{turn_id}/abandon`
+- `GET /api/v1/turns/{turn_id}`
+- `GET /api/v1/turns`
 - `POST /api/v1/remember`
 - `POST /api/v1/recall`
 - `POST /api/v1/recall/structured`
@@ -461,6 +552,8 @@ erii serve --host 127.0.0.1 --port 8000 --storage-dir ./erii_memory
 - `POST /api/v1/memory/import`
 - `GET /api/v1/tasks/status`
 - `POST /api/v1/tasks/retry-failed`
+
+Turn 的 open、abandon、get 与 list 响应会按关系范围返回 Turn Record；complete 与一次性 record 返回不含对话原文的 `SourceTurnReceipt`。这些路由要求目标关系已经初始化，且所有查询都必须同时提供匹配的 `agent_id` 与 `user_id`。关系范围不是授权机制，宿主仍需自行鉴权。
 
 该服务是参考适配层，不包含认证、租户权限、限流或完整的数据加密方案，不应未经加固直接暴露到公网。
 
@@ -517,6 +610,15 @@ python -m compileall -q erii examples tests
 - 同一 World Time 时钟内的到期/逾期判断与只读召回信号；
 - 旧 `is_unresolved` 的低权威兼容投影；
 - SQLite Schema 保持 v3，MemoryPack 升级为 `0.4.0a4`。
+
+### v0.4.0a5 — Turn Recording 来源账本
+
+- 两阶段 `begin_turn()` / `complete_turn()` 与显式 `abandon_turn()`；
+- 已有双方消息时使用原子 `record_turn()`；
+- 可查询、可列举的完整可见 Source Transcript，以及不含原文的 `SourceTurnReceipt`；
+- 有来源的 `InteractionContextSignal`、不保存草稿的 Reply Attempt 失败记录，以及基于 `source_turn_id` 的关系候选裁决桥接；
+- FileStorage 与 SQLite Schema v4 持久化；
+- MemoryPack `turn_records` 精确关系恢复，禁止跨 `Agent × User` 重映射完整对话。
 
 后续 alpha/beta 将继续处理事件、情节和关系阶段的分层巩固，以及迁移与长期评测。
 

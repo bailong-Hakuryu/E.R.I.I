@@ -2,7 +2,7 @@
 
 **简体中文** · [English](USAGE.md)
 
-> 适用于 E.R.I.I. `0.4.0a4`。当前版本仍是 alpha：适合本地开发、原型验证和受控集成，不应未经加固直接承担公开生产服务。
+> 适用于 E.R.I.I. `0.4.0a5`。当前版本仍是 alpha：适合本地开发、原型验证和受控集成，不应未经加固直接承担公开生产服务。
 
 E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长期记忆内核。它不负责生成聊天回复，也不绑定某一种模型；它负责保存角色与某个用户共同经历过什么、当前如何理解这些经历，以及哪些承诺和未完成事项仍值得被想起。
 
@@ -16,8 +16,8 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 2. **原始人设是底色，不是会被聊天覆盖的摘要。**
    `initialize_relationship()` 保存的 Character Blueprint 会保留原文并校验哈希。同一关系不能静默换掉原始人设。
 
-3. **记忆归档、关系变化和人格成长是三条不同通道。**
-   `remember()` 归档对话记忆；关系变化要经过可信宿主接口或证据裁决；触及人格成长时先生成提案，再由宿主明确批准或拒绝。
+3. **Source Turn 是证据；记忆归档、关系变化和人格成长仍是不同的派生通道。**
+   Turn Recording 用一个稳定身份保存用户和 Agent 实际可见的原文。原文不会因为被保存，就自动成为事实、Relationship Event、Persona Reflection 或人格变化；这些结果仍要经过对应的提取与裁决。
 
 4. **E.R.I.I. 不会自动启动隐藏线程。**
    默认配置下，`remember()` 只将任务放入持久队列。宿主应调用 `process_pending()` 同步处理，或显式调用 `start()` 开启后台归档，并在退出时调用 `close()`。
@@ -26,6 +26,7 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 
 | 需求 | 推荐入口 |
 | --- | --- |
+| 持久保存一轮实际可见的用户/Agent 交互，并给它稳定来源身份 | `begin_turn()` → `complete_turn()`，或原子的 `record_turn()` |
 | 只想保存对话并召回一段 Prompt 上下文 | `remember()` → `process_pending()` → `recall()` |
 | 需要独立的人设与用户关系 | `initialize_relationship()` → 关系事件 → `recall_structured()`；初期用 `full`，或先批准 Manifest |
 | 需要让模型提出关系事件 | `adjudicate_relationship_candidates()` |
@@ -33,7 +34,7 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 | 需要搬家、备份或让用户带走数据 | `export_memory()` / `import_memory()` |
 | 非 Python 宿主 | REST 参考服务，或自行封装 Python API |
 
-实际产品通常会同时使用前两条路径：旧式 MemoryNode 保存可检索印象，关系内核保存有证据的共同历史和当前关系投影。
+实际产品通常会组合使用这些路径：Turn Record 保存规范来源原文，旧式 MemoryNode 保存可检索印象，关系内核保存经过裁决的共同历史和当前关系投影。
 
 ## 安装
 
@@ -92,7 +93,7 @@ python -m pip install -e ".[dev]"
 python -c "import erii; print(erii.__version__)"
 ```
 
-应输出 `0.4.0a4`。
+应输出 `0.4.0a5`。
 
 alpha 阶段用于长期环境时，应固定一个经过验证的 commit 或 release，不要让部署脚本无条件跟随 `main`。
 
@@ -189,8 +190,8 @@ python demo.py
 E.R.I.I. 只补充长期上下文，不替代聊天模型，也不替代宿主维护的当前会话消息。推荐顺序是：
 
 ```text
-长期记忆召回 → 宿主策略 + 当前会话 + 长期上下文 → 聊天模型回复
-           → remember() 归档这一轮 → 下一轮再召回
+begin_turn(用户消息) → 召回长期上下文 → 宿主策略 + 当前会话 + 长期上下文
+                    → 聊天模型回复 → 实际展示回复 → complete_turn(同一个 turn_id)
 ```
 
 关系只需在创建角色会话时初始化一次；相同参数重复调用是幂等的：
@@ -203,9 +204,11 @@ engine.initialize_relationship(
 )
 ```
 
-下面的 `chat_model` 是宿主自己的模型客户端：
+下面的 `chat_model` 是宿主自己的模型客户端。宿主先创建稳定 ID，使请求重试仍指向同一轮交互：
 
 ```python
+import uuid
+
 from erii import RecallBudget, RecallOptions, RecallRequest
 
 
@@ -216,6 +219,14 @@ HOST_POLICY = """
 
 
 def run_turn(engine, chat_model, conversation_messages, user_text):
+    turn_id = str(uuid.uuid4())
+    opened = engine.begin_turn(
+        "agent_lumi",
+        "user_chen",
+        user_text,
+        turn_id=turn_id,
+    )
+
     result = engine.recall_structured(
         RecallRequest(
             agent_id="agent_lumi",
@@ -247,13 +258,14 @@ def run_turn(engine, chat_model, conversation_messages, user_text):
         ]
     )
 
-    engine.remember(
+    # 只有这段完全相同的 reply 已经实际展示给用户后，才调用 complete_turn。
+    receipt = engine.complete_turn(
         "agent_lumi",
         "user_chen",
-        user_message=user_text,
-        bot_reply=reply,
+        opened.turn_id,
+        reply,
+        processing_channels=(),
     )
-    engine.process_pending()
 
     conversation_messages.extend(
         [
@@ -261,16 +273,166 @@ def run_turn(engine, chat_model, conversation_messages, user_text):
             {"role": "assistant", "content": reply},
         ]
     )
-    return reply
+    return reply, receipt
 ```
 
-这里用 `process_pending()` 处理当前所有已就绪任务，适合单进程示例。正式服务可以显式 `start()` 后接受最终一致性：队列繁忙时，下一轮可能暂时看不到刚结束的上一轮。若必须在 `remember()` 返回前完成提取，可使用后文的 `async_archival=False`。
+这里传入 `processing_channels=()`，因为示例只演示规范来源的接收。如果 Engine 已配置真实的逐 Turn 处理器，可以省略它以使用已配置默认值，或显式声明这一来源必须进入的通道。声明的通道初始状态为 `pending`；收到回执不代表 MemoryNode 或 Relationship Event 已经生成。
 
-要让 `remember()` 产生有效长期印象，构造 Engine 时还必须注入后文所述的记忆提取 LLM/callable；未提供时只会产生占位时间线。
+`0.4.0a5` 仍保留旧 `remember()` 归档路径，以及提交临时 Source Turn 的关系候选裁决接口。两个互相独立的旧调用，无法让内核安全证明它们来自同一轮交互；新宿主应先保存规范 Turn。现有集成如果继续用 `remember()` 提取旧式 MemoryNode，仍需按后文监控归档队列，并且不能把归档任务状态与 Source Turn 回执混为一谈。
 
 `max_cost` 当前按序列化文本字符成本计算，不是聊天模型 token。长篇人设应按实际长度提高预算；长期运行更推荐先批准 Manifest，再改用更紧凑的 `planned`。
 
 关系候选裁决、承诺和人格成长属于可选的高级写入通道，不是完成基本聊天闭环的前置条件。
+
+如果生成或连续性评估发生可重试失败，让 Turn Record 保持 `open`，使用同一个 `turn_id` 重试，不要捏造回复。只有用户取消、宿主明确终止或不可恢复失败时，才调用 `abandon_turn()`。
+
+## Turn Recording：规范来源账本
+
+Turn Recording 要求目标关系已经初始化，通常有两种接入方式。
+
+### 两阶段记录：`begin_turn()` 与 `complete_turn()`
+
+用户消息先到达、Agent 回复稍后才产生时使用：
+
+```python
+opened = engine.begin_turn(
+    "agent_lumi",
+    "user_chen",
+    "今天可以一起去看雪吗？",
+    turn_id="turn-first-snow-001",
+    interaction_context=(
+        {
+            "signal_id": "context-location",
+            "source": "host_observed",
+            "signal_type": "location",
+            "value": "东京街头",
+        },
+    ),
+)
+
+receipt = engine.complete_turn(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    "当然，我们一起去吧。",
+    continuity_assessment={
+        "status": "not_evaluated",
+    },
+    delivery_disposition="shown",
+    processing_channels=(),
+)
+```
+
+`begin_turn()` 原子写入一条 `open` Turn Record，保存用户实际可见的完整原文。`complete_turn()` 只追加宿主实际展示的 Agent 回复，固定处理计划，把状态切换为 `completed`，并返回 `SourceTurnReceipt`。
+
+回执有意不包含 `transcript`，也不包含任一方消息正文；它只报告来源与关系 ID、来源 revision、接受时间、固定处理计划和逐通道结果：
+
+```python
+print(receipt.source_turn_id)
+print(receipt.processing_plan.channels)
+print(receipt.to_dict())  # 不含用户或 Agent 消息原文
+```
+
+要读取原文，必须在同一关系范围内显式查询：
+
+```python
+turn = engine.get_turn(
+    "agent_lumi",
+    "user_chen",
+    receipt.source_turn_id,
+)
+
+print(turn.transcript.user_message.content)
+print(turn.transcript.agent_message.content)
+```
+
+### 一次性记录：`record_turn()`
+
+如果双方实际可见的消息都已经存在，例如从宿主控制的投递管线接入完整交互，可以调用：
+
+```python
+receipt = engine.record_turn(
+    "agent_lumi",
+    "user_chen",
+    "开始下雪了。",
+    "那这就是我们第一次一起看的雪。",
+    turn_id="turn-first-snow-002",
+    processing_channels=(),
+)
+```
+
+它会原子插入同一套账本，不会先暴露一个 `open` 写入再执行第二次完成写入。
+
+### 放弃、读取与列举
+
+明确取消时保留真实用户消息，不虚构 Agent 回复：
+
+```python
+opened = engine.begin_turn(
+    "agent_lumi",
+    "user_chen",
+    "你还在吗？",
+    turn_id="turn-cancelled-001",
+)
+
+abandoned = engine.abandon_turn(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    reason="user_cancelled",
+)
+```
+
+被放弃的 Turn 没有 Agent 消息和处理计划。可以读取单条记录，或按状态列举这一关系中按开启顺序排列的账本：
+
+```python
+same_turn = engine.get_turn(
+    "agent_lumi",
+    "user_chen",
+    "turn-cancelled-001",
+)
+completed_turns = engine.list_turns(
+    "agent_lumi",
+    "user_chen",
+    status="completed",
+)
+all_turns = engine.list_turns("agent_lumi", "user_chen")
+```
+
+所有读取都要求 `agent_id` 与 `user_id` 完全匹配；其他关系中的 Turn 不会被返回。
+
+### 互动情境与回复失败尝试
+
+`begin_turn()` 的公开 `interaction_context` 只接受标记为 `host_observed` 的宿主可观察临时情境。宿主不能把自己提供的标签伪装成 `core_derived` 的关系状态或 `evaluator_inferred` 的心理判断；这两类来源只能由相应内核能力产生。
+
+如果回复尚未展示，生成、连续性评估或交付准备就发生失败，应保留 open Turn，并且只记录安全的运维元数据：
+
+```python
+attempt = engine.record_reply_attempt_failure(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    attempt_number=1,
+    stage="generation",
+    capability_descriptor="my-provider/model-v1",
+    failure_classification="temporary_provider_error",
+)
+attempts = engine.list_reply_attempts(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+)
+```
+
+Reply Attempt 不保存草稿、Prompt、Provider 原始异常、凭据或内部推理，也不会关闭 Turn。对于已经持久化的 completed Source Turn，可以调用 `adjudicate_turn_candidates(..., source_turn_id, candidates, extractor_version=...)`，不必再次提交完整对话原文。
+
+### 重试与权威边界
+
+- 使用相同 `turn_id` 和相同用户消息重复 `begin_turn()`，会返回已有的 open 记录；
+- 使用相同终态载荷重复 `complete_turn()`，会返回相同回执；
+- 复用稳定 ID 却修改开启内容、用不同内容完成，或让完成与放弃竞争，会触发 Turn 冲突；`completed` 与 `abandoned` 都是不可变终态；
+- Source Transcript 只保存双方实际可见的内容，不保存隐藏系统消息、完整 Prompt、模型推理、凭据或双方都看不到的工具输出；
+- 原文证明“当时可见地表达了什么”，并不证明用户陈述必然为真，也不证明 Agent 回复符合人设。它不会直接变成 MemoryNode、Relationship Event、Persona Reflection 或人格成长决定。
 
 ## 核心对象是什么
 
@@ -279,6 +441,8 @@ def run_turn(engine, chat_model, conversation_messages, user_text):
 | Character Blueprint | 用户导入的原始人设和来源信息 | 否 |
 | Persona Manifest | 从原文编译、经批准后生效的结构化人设 | Proposal 可在批准前修订；获批 Manifest 和关系绑定不可变 |
 | Relationship Premise | 这段关系从哪里开始 | 初始化后固定 |
+| Turn Record / Source Transcript | 某一独立关系内，一轮交互实际可见的用户/Agent 来源原文 | `open` 只能进入一次 `completed` 或 `abandoned` 终态；终态不可重新打开 |
+| SourceTurnReceipt | 只含 ID、处理计划和通道结果、不含对话正文的完成回执 | 读取原文必须查询关系范围内的 Turn Record |
 | Relationship Event | 共同经历、观察、冲突、修复、承诺等历史 | 否，只追加 |
 | Relationship Snapshot | 从当前有效历史投影出的关系状态和解释 | 不是存档，可重建 |
 | MemoryNode | 从对话提取出的偏好、事件、反思等可检索印象 | 由记忆流程维护 |
@@ -515,7 +679,7 @@ result = engine.recall_structured(
 
 ## 保存普通对话记忆
 
-`remember()` 保存一轮对话，并创建持久归档任务：
+`remember()` 是从一轮交互提取普通可检索 MemoryNode 的兼容入口，它会创建持久归档任务：
 
 ```python
 engine.remember(
@@ -525,6 +689,8 @@ engine.remember(
     bot_reply="我记住这种安静的雨天味道了。",
 )
 ```
+
+这个调用不会创建规范 `TurnRecord`，也不会返回 `SourceTurnReceipt`。新宿主应先用 `begin_turn()` / `complete_turn()` 或 `record_turn()` 接收实际可见交互，再调用已配置的归档通道。继续单独调用 `remember()` 仍受支持，但除非宿主自己保存关联，内核无法证明它与某条 Turn Record 是同一来源。
 
 它不会自动：
 
@@ -696,7 +862,7 @@ print(snapshot.state_reasons["trust"].evidence_event_id)
 
 ### 不可信模型候选进入证据裁决
 
-让模型先提出候选，再把完整临时 source turn 和候选一起交给内核：
+`0.4.x` 兼容接口允许模型先提出候选，再把完整临时 Source Turn 和候选一起交给内核：
 
 ```python
 result = engine.adjudicate_relationship_candidates(
@@ -740,6 +906,8 @@ result = engine.adjudicate_relationship_candidates(
 for receipt in result.receipts:
     print(receipt.candidate_key, receipt.outcome, receipt.reason_codes)
 ```
+
+新集成应把持久 Turn Record 作为规范来源身份。上面的原始 `source_turn` 参数只为兼容旧流程和校验精确引文而保留，它不会创建或替代 Turn Record。
 
 裁决器会核对引文是否真的存在于指定消息中，并用版本化规则把定性信号映射为有界状态变化。模型置信度不能越过这些规则。
 
@@ -931,6 +1099,8 @@ with ERIIEngine(storage_dir="./data/erii-memory") as engine:
 
 归档任务队列通常保存在该目录下的 `erii_tasks.db`；从旧版默认路径升级时，兼容逻辑可能继续复用已有的 `./erii_memory.db`。
 
+`0.4.0a5` 的 FileStorage 还会把关系范围内的 Turn Record 集合持久化到 `_turn_records`。缺少该字段的旧文件仍可读取；新增 Turn 不会改变旧式 MemoryNode 或 Relationship Event 的语义。
+
 ### SQLiteStorage
 
 ```python
@@ -948,6 +1118,8 @@ with ERIIEngine(storage_driver=storage) as engine:
 - 单进程或受控并发的长期运行；
 - 希望记忆、关系和任务队列集中在一个数据库文件中；
 - 需要 WAL、事务和更稳定幂等行为的场景。
+
+`0.4.0a5` 会把已有 SQLite 数据库原地迁移到 Schema v4。新增的 `source_turns` 表以关系范围内的聚合记录保存每个 Turn，并按持久的开启序号排序。升级 alpha 版本前应先备份重要数据库。
 
 当前版本仍以 FileStorage 为默认；选择 SQLite 必须显式传入 `SQLiteStorage`。两者都不是多租户授权边界，也都默认以明文保存数据。
 
@@ -977,24 +1149,18 @@ engine.import_memory(
 )
 ```
 
-导入到新的宿主 ID：
-
-```python
-engine.import_memory(
-    "./backups/lumi-user-chen.json",
-    agent_id="agent_lumi",
-    user_id="user_chen_migrated",
-    overwrite=False,
-)
-```
-
-MemoryPack `0.4.0a4` 会携带：
+MemoryPack `0.4.0a5` 会携带：
 
 - Core Memory、MemoryNode 和体验时间线；
 - Character Blueprint 与关系档案；
 - 追加式关系事件和证据裁决；
 - 人格编译提案、Manifest 和人格成长提案；
-- Promise、Open Loop、条件确认和解决事件。
+- Promise、Open Loop、条件确认和解决事件；
+- 根级 `turn_records` 集合，包括完整可见 Source Transcript 与终态。
+
+`turn_records` 含有关系私有的逐字对话历史，因此包含它的 Pack 只能恢复到完全相同的原始 `agent_id`、`user_id` 与关系身份。传入新的宿主 ID 会被拒绝，`overwrite=True` 也不能绕过。跨机器或跨存储 Adapter 搬迁同一关系时，应保留原 ID。
+
+`0.4.0a4` 及更早的 MemoryPack 没有 `turn_records`，仍可读取；其旧载荷在满足人设、关系和引用完整性校验时，保留历史重映射行为。这个兼容路径不能被理解成允许重映射含完整 Source Transcript 账本的 `0.4.0a5` Pack。
 
 导入前请注意：
 
@@ -1002,7 +1168,7 @@ MemoryPack `0.4.0a4` 会携带：
 - 旧式体验时间线重复导入时仍可能追加重复项；
 - 已存在关系的人设或 premise 不匹配时会拒绝导入；
 - 时间事件引用缺失、跨关系或顺序无效时会拒绝导入；
-- 跨 ID 导入时，`import_memory()` 的返回值仍代表输入 Pack；要检查重映射后的目标数据，应再次 `export_memory(target_agent, target_user)`；
+- 含 `turn_records` 的 Pack 禁止跨 `Agent × User` 身份导入，即使请求覆盖也不允许；
 - 处理重要数据前，应先复制原存储文件并在测试目录验证结果。
 
 ## 在真实聊天循环中追加关系候选
@@ -1011,11 +1177,12 @@ MemoryPack `0.4.0a4` 会携带：
 
 ```text
 角色回复完成
-  ├── remember()：归档普通可检索记忆
-  └── 可选关系提取器：生成 source_turn 与 candidates
-          → adjudicate_relationship_candidates()
-          → 逐条检查 receipt.outcome
-          → 必要时另行生成待审批的人格成长提案
+  ├── complete_turn()：封存规范可见 Source Transcript
+  ├── 可选 remember()：运行旧式 MemoryNode 归档路径
+  └── 可选关系提取器：从已接受 Turn 派生 candidates
+           → adjudicate_relationship_candidates()
+           → 逐条检查 receipt.outcome
+           → 必要时另行生成待审批的人格成长提案
 ```
 
 宿主应已经为这一对 ID 调用过 `initialize_relationship()`。可选处理代码：
@@ -1089,6 +1256,39 @@ Invoke-RestMethod `
     -Body $body
 ```
 
+通过两阶段 REST 流程保存一轮实际可见交互：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/turns/open \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "agent_lumi",
+    "user_id": "user_chen",
+    "turn_id": "turn-first-snow-001",
+    "user_message": "今天可以一起去看雪吗？"
+  }'
+
+curl -X POST http://127.0.0.1:8000/api/v1/turns/turn-first-snow-001/complete \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "agent_lumi",
+    "user_id": "user_chen",
+    "agent_message": "当然，我们一起去吧。",
+    "delivery_disposition": "shown",
+    "processing_channels": []
+  }'
+```
+
+目标关系必须已经存在。完成响应中的 `receipt` 有意不携带用户和 Agent 消息正文；只有关系范围内的查询才会返回原文：
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/turns/turn-first-snow-001?agent_id=agent_lumi&user_id=user_chen"
+
+curl "http://127.0.0.1:8000/api/v1/turns?agent_id=agent_lumi&user_id=user_chen&status=completed"
+```
+
+如果双方可见消息都已经存在，`POST /api/v1/turns` 对应原子的 `record_turn()`。如果回复没有展示，应通过 `/abandon` 路由提交非空 `reason`，不要为了关闭记录而捏造 Agent 回复。
+
 保存一轮对话：
 
 ```bash
@@ -1141,6 +1341,14 @@ curl -X POST http://127.0.0.1:8000/api/v1/recall/structured \
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET | `/api/v1/health` | 服务状态 |
+| POST | `/api/v1/turns/open` | 以用户实际可见原文开启 Turn Record |
+| POST | `/api/v1/turns/{turn_id}/complete` | 封存实际展示的 Agent 回复，并返回不含正文的回执 |
+| POST | `/api/v1/turns/{turn_id}/reply-attempts` | 记录未展示回复失败的脱敏元数据 |
+| GET | `/api/v1/turns/{turn_id}/reply-attempts` | 列举脱敏后的回复尝试元数据 |
+| POST | `/api/v1/turns/{turn_id}/abandon` | 明确终止没有回复的 open Turn |
+| POST | `/api/v1/turns` | 原子保存一轮已经完成的可见交互 |
+| GET | `/api/v1/turns/{turn_id}` | 读取一条关系范围内的 Turn Record |
+| GET | `/api/v1/turns` | 按顺序列举 Turn Record，可用 `status` 过滤 |
 | POST | `/api/v1/remember` | 对话进入归档队列 |
 | POST | `/api/v1/recall` | 兼容 Markdown 召回 |
 | POST | `/api/v1/recall/structured` | 结构化召回 |
@@ -1153,6 +1361,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/recall/structured \
 | POST | `/api/v1/memory/import` | 导入 MemoryPack |
 | GET | `/api/v1/tasks/status` | 查看归档任务状态 |
 | POST | `/api/v1/tasks/retry-failed` | 重试失败任务 |
+
+Turn 端点在目标关系或 Turn 不存在于完全相同的范围时返回 404；稳定 Turn 身份被用于冲突内容或冲突终态时返回 409；请求值无效通常返回 422。相同身份与相同载荷的重试是幂等的。
 
 `/api/v1/relationship/adjudicate` 的请求体是在前文 Python 裁决示例外层增加 `agent_id` 和 `user_id`，其余仍是 `source_turn` 与 `candidates`。响应使用 `records[].receipt`；`rejected` 或 `ignored` 是正常的逐候选语义结果，仍可能返回 HTTP 200，调用方必须检查每条 `receipt.outcome`。关系不存在返回 404，幂等或时间历史冲突返回 409，请求 Schema 错误通常返回 422。
 
@@ -1174,7 +1384,7 @@ MemoryPack 导入请求必须把导出响应中的 `pack` 字段作为 `pack_dat
 - 使用 FileStorage，不提供 CLI SQLite 开关；
 - CLI 没有注入真实记忆提取 LLM 的配置，因此 `/remember` 默认只使用占位适配器；
 - 不提供 `initialize_relationship`、直接 Promise/Open Loop CRUD 或人格审批端点；
-- `/relationship/adjudicate` 要求目标关系已经由 Python 宿主初始化，或通过 MemoryPack 导入；
+- Turn Recording 与 `/relationship/adjudicate` 都要求目标关系已经由 Python 宿主初始化，或通过 MemoryPack 导入；
 - 不包含认证、授权、租户隔离、限流，也不提供 TLS/HTTPS 终止配置。
 
 因此它更适合作为协议示例和内网适配层。正式产品建议在自己的服务中构造 `ERIIEngine`，注入存储与模型适配器，并在外层实现认证和用户授权。
@@ -1183,11 +1393,15 @@ MemoryPack 导入请求必须把导出响应中的 `pack` 字段作为 `pack_dat
 
 ### `RelationshipNotFoundError`
 
-关系事件、承诺和候选裁决之前必须先调用：
+Turn Recording、关系事件、承诺和候选裁决之前必须先调用：
 
 ```python
 engine.initialize_relationship(agent_id, user_id, persona_source)
 ```
+
+### `TurnConflictError`
+
+稳定 `turn_id` 被用于不同原文、不同完成载荷或不兼容的终态切换。技术重试应原样重发原操作；真正的新交互应使用新 ID。不要重新打开 `completed` 或 `abandoned` Turn。
 
 ### `PersonaConflictError`
 
@@ -1231,7 +1445,12 @@ engine.initialize_relationship(agent_id, user_id, persona_source)
 
 ### 记忆内容与原消息不完全一样
 
-默认安全清理会处理少量已知 Prompt 注入模式，并掩码常见邮箱、电话号码和 API Key 形式。它是基础纵深防御，不是完整的数据防泄漏系统。确需自定义时使用 `ERIIConfig`，并先评估关闭清理带来的风险。
+先区分两个数据层：
+
+- `TurnRecord` 保存用户与 Agent 实际可见的精确原文，只能在原关系范围内通过 `get_turn()` 读取；
+- 旧式 `MemoryNode` 是派生的可检索印象，提取、摘要与默认安全清理都可能让它和原文不同。
+
+默认 MemoryNode 清理会处理少量已知 Prompt 注入模式，并掩码常见邮箱、电话号码和 API Key 形式。它是基础纵深防御，不是完整的数据防泄漏系统。确需自定义时使用 `ERIIConfig`，并先评估关闭清理带来的风险。不要用清理或摘要后的 MemoryNode 替代规范 Source Transcript。
 
 ### Promise 到期了却没有信号
 
@@ -1251,10 +1470,11 @@ engine.initialize_relationship(agent_id, user_id, persona_source)
 - 明确选择 `agent_private` 或 `public`，不要混用召回结果；
 - 不让模型直接提交关系数值、批准人格或绕过证据裁决；
 - 对 REST 和任何管理接口增加认证、授权、速率限制和审计；
-- 默认存储是明文，磁盘、备份和 MemoryPack 都需要宿主侧保护；
+- 默认存储是明文，Turn Record 含有逐字可见对话；磁盘、备份和 MemoryPack 都需要宿主侧保护；
 - 不在日志中打印完整对话、原始模型响应、密钥和私有人设；
 - 调用远程模型前告知用户数据会离开本地环境；
 - 定期导出 MemoryPack，并实际演练恢复；
+- 含 `turn_records` 的 `0.4.0a5` Pack 只能按原始 `Agent × User` 身份恢复；不要让产品流程依赖跨关系重映射；
 - 升级 alpha 版本前阅读 CHANGELOG、兼容性说明并先备份；
 - 对用户提供导出和删除其数据的产品入口。
 

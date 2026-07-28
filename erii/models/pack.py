@@ -11,12 +11,13 @@ from erii.models.adjudication import AdjudicationRecord, PersonaGrowthProposal
 from erii.models.node import MemoryNode
 from erii.models.persona import PersonaCompilationProposal, PersonaManifest
 from erii.models.relationship import RelationshipEvent, RelationshipProfile
+from erii.models.turn import TurnRecord
 
 
 class MemoryPack:
     """Portable container data structure for agent/user memory export & import."""
 
-    CURRENT_VERSION = "0.4.0a4"
+    CURRENT_VERSION = "0.4.0a5"
 
     def __init__(
         self,
@@ -33,6 +34,7 @@ class MemoryPack:
         persona_growth_proposals: Optional[List[PersonaGrowthProposal]] = None,
         persona_compilation_proposals: Optional[List[PersonaCompilationProposal]] = None,
         persona_manifests: Optional[List[PersonaManifest]] = None,
+        turn_records: Optional[List[TurnRecord]] = None,
     ) -> None:
         """Initializes MemoryPack.
 
@@ -50,6 +52,7 @@ class MemoryPack:
             persona_growth_proposals: Pending and decided relationship-persona growth.
             persona_compilation_proposals: Reviewable Persona Compiler revisions.
             persona_manifests: Approved, immutable Persona Interpretation manifests.
+            turn_records: Canonical visible interaction source records.
         """
         self.agent_id = agent_id
         self.user_id = user_id
@@ -62,6 +65,7 @@ class MemoryPack:
         self.persona_growth_proposals = persona_growth_proposals or []
         self.persona_compilation_proposals = persona_compilation_proposals or []
         self.persona_manifests = persona_manifests or []
+        self.turn_records = turn_records or []
         self.version = version
         self.exported_at = exported_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -91,6 +95,7 @@ class MemoryPack:
                 proposal.to_dict() for proposal in self.persona_compilation_proposals
             ],
             "persona_manifests": [manifest.to_dict() for manifest in self.persona_manifests],
+            "turn_records": [record.to_dict() for record in self.turn_records],
         }
 
     @classmethod
@@ -111,6 +116,7 @@ class MemoryPack:
         raw_growth_proposals = data.get("persona_growth_proposals", [])
         raw_compilation_proposals = data.get("persona_compilation_proposals", [])
         raw_persona_manifests = data.get("persona_manifests", [])
+        raw_turn_records = data.get("turn_records", [])
 
         nodes = [MemoryNode.from_dict(item) for item in raw_nodes]
 
@@ -140,6 +146,9 @@ class MemoryPack:
             ],
             persona_manifests=[
                 PersonaManifest.from_dict(item) for item in raw_persona_manifests
+            ],
+            turn_records=[
+                TurnRecord.from_dict(item) for item in raw_turn_records
             ],
             version=version,
             exported_at=exported_at,

@@ -1,0 +1,3 @@
+# Represent retry backoff as an archival status
+
+Archival lifecycle uses five persistent states: `pending`, `processing`, `retry_wait`, `completed`, and `failed`. A retryable failed attempt moves to `retry_wait` with `next_attempt_at` rather than returning to indistinguishable Pending, while Completed and Failed remain terminal; `phase: extraction | commit` tells whether the next execution may call the extractor or may only publish the already bound Prepared Archival Batch. Stable Archival Outcome Codes explain completion or failure separately so lifecycle position is never overloaded with memory value, execution phase, or raw error detail.

@@ -25,6 +25,7 @@ from erii.core.relationship import RelationshipProjector
 from erii.core.persona_compilation import PersonaCompiler
 from erii.core.recall import RecallAssembler
 from erii.core.temporal_history import TemporalHistoryValidator
+from erii.core.turn_ledger import TurnLedger
 from erii.core.queue.base import BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.models.config import ERIIConfig
@@ -36,6 +37,8 @@ from erii.models.adjudication import (
     PersonaGrowthProposal,
     RelationshipCandidateBatch,
     RelationshipEventCandidate,
+    SourceMessage,
+    SourceRole,
     SourceTurn,
 )
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
@@ -74,6 +77,18 @@ from erii.models.temporal import (
     PromiseResponsibleParty,
     PromiseSpec,
     WorldMoment,
+)
+from erii.models.turn import (
+    InteractionContextSignal,
+    DeliveryDisposition,
+    ReplyAttemptRecord,
+    ReplyAttemptStage,
+    ReplyContinuityAssessment,
+    SourceProcessingChannel,
+    SourceTurnReceipt,
+    TurnConflictError,
+    TurnRecord,
+    TurnStatus,
 )
 from erii.renderers.markdown import MarkdownRecallRenderer
 from erii.security.sanitizer import SecuritySanitizer
@@ -153,6 +168,7 @@ class ERIIEngine:
             dynamic_budget=self.config.dynamic_budget,
         )
         self.relationship_adjudicator = RelationshipAdjudicator(self.storage)
+        self.turn_ledger = TurnLedger(self.storage)
         self.recall_assembler = RecallAssembler(
             storage=self.storage,
             retriever=self.retriever,
@@ -415,6 +431,178 @@ class ERIIEngine:
         stored = self.storage.create_relationship(profile)
         self._ensure_persona_matches(stored, source_text, compiled_persona, premise)
         return stored
+
+    def begin_turn(
+        self,
+        agent_id: str,
+        user_id: str,
+        user_message: str,
+        *,
+        turn_id: Optional[str] = None,
+        interaction_context: Sequence[
+            Union[InteractionContextSignal, Mapping[str, object]]
+        ] = (),
+    ) -> TurnRecord:
+        """Persists the exact visible user message and opens a source turn."""
+        profile = self._require_relationship(agent_id, user_id, "beginning a turn")
+        return self.turn_ledger.open(
+            profile,
+            user_message,
+            turn_id=turn_id,
+            interaction_context=interaction_context,
+        )
+
+    def get_turn(
+        self,
+        agent_id: str,
+        user_id: str,
+        turn_id: str,
+    ) -> TurnRecord:
+        """Returns one durable turn scoped to the requested relationship."""
+        profile = self._require_relationship(agent_id, user_id, "reading a turn")
+        return self.turn_ledger.get(profile, turn_id)
+
+    def list_turns(
+        self,
+        agent_id: str,
+        user_id: str,
+        *,
+        status: Optional[Union[TurnStatus, str]] = None,
+    ) -> List[TurnRecord]:
+        """Lists durable turns for exactly one isolated relationship."""
+        profile = self._require_relationship(agent_id, user_id, "listing turns")
+        return self.turn_ledger.list(profile, status=status)
+
+    def record_reply_attempt_failure(
+        self,
+        agent_id: str,
+        user_id: str,
+        turn_id: str,
+        *,
+        attempt_number: int,
+        stage: Union[ReplyAttemptStage, str],
+        capability_descriptor: str,
+        failure_classification: str,
+    ) -> ReplyAttemptRecord:
+        """Records safe failure metadata without persisting an unseen draft."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "recording a reply attempt",
+        )
+        return self.turn_ledger.record_reply_attempt_failure(
+            profile,
+            turn_id,
+            attempt_number=attempt_number,
+            stage=stage,
+            capability_descriptor=capability_descriptor,
+            failure_classification=failure_classification,
+        )
+
+    def list_reply_attempts(
+        self,
+        agent_id: str,
+        user_id: str,
+        turn_id: str,
+    ) -> List[ReplyAttemptRecord]:
+        """Lists sanitized failed attempts for one relationship-scoped turn."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "listing reply attempts",
+        )
+        return self.turn_ledger.list_reply_attempts(profile, turn_id)
+
+    def complete_turn(
+        self,
+        agent_id: str,
+        user_id: str,
+        turn_id: str,
+        agent_message: str,
+        *,
+        continuity_assessment: Optional[
+            Union[ReplyContinuityAssessment, Mapping[str, object]]
+        ] = None,
+        delivery_disposition: Union[
+            DeliveryDisposition,
+            str,
+        ] = DeliveryDisposition.SHOWN,
+        processing_channels: Optional[
+            Sequence[Union[SourceProcessingChannel, str]]
+        ] = None,
+    ) -> SourceTurnReceipt:
+        """Seals an open turn with the reply actually displayed by the host."""
+        profile = self._require_relationship(agent_id, user_id, "completing a turn")
+        return self.turn_ledger.complete(
+            profile,
+            turn_id,
+            agent_message,
+            continuity_assessment=continuity_assessment,
+            delivery_disposition=delivery_disposition,
+            processing_channels=(
+                processing_channels
+                if processing_channels is not None
+                else self._default_source_processing_channels()
+            ),
+        )
+
+    def abandon_turn(
+        self,
+        agent_id: str,
+        user_id: str,
+        turn_id: str,
+        *,
+        reason: str,
+    ) -> TurnRecord:
+        """Explicitly terminates an unanswered turn without inventing a reply."""
+        profile = self._require_relationship(agent_id, user_id, "abandoning a turn")
+        return self.turn_ledger.abandon(profile, turn_id, reason=reason)
+
+    def record_turn(
+        self,
+        agent_id: str,
+        user_id: str,
+        user_message: str,
+        agent_message: str,
+        *,
+        turn_id: Optional[str] = None,
+        continuity_assessment: Optional[
+            Union[ReplyContinuityAssessment, Mapping[str, object]]
+        ] = None,
+        delivery_disposition: Union[
+            DeliveryDisposition,
+            str,
+        ] = DeliveryDisposition.SHOWN,
+        processing_channels: Optional[
+            Sequence[Union[SourceProcessingChannel, str]]
+        ] = None,
+    ) -> SourceTurnReceipt:
+        """Atomically records an exchange whose visible messages already exist."""
+        profile = self._require_relationship(agent_id, user_id, "recording a turn")
+        return self.turn_ledger.record(
+            profile,
+            user_message,
+            agent_message,
+            turn_id=turn_id,
+            continuity_assessment=continuity_assessment,
+            delivery_disposition=delivery_disposition,
+            processing_channels=(
+                processing_channels
+                if processing_channels is not None
+                else self._default_source_processing_channels()
+            ),
+        )
+
+    def _default_source_processing_channels(
+        self,
+    ) -> Sequence[SourceProcessingChannel]:
+        """Returns only processors actually configured on this Engine."""
+        channels = []
+        if getattr(self, "memory_extractor", None) is not None:
+            channels.append(SourceProcessingChannel.MEMORY_ARCHIVAL)
+        if getattr(self, "relationship_event_extractor", None) is not None:
+            channels.append(SourceProcessingChannel.RELATIONSHIP_ADJUDICATION)
+        return tuple(channels)
 
     @staticmethod
     def _ensure_persona_matches(
@@ -867,6 +1055,60 @@ class ERIIEngine:
             validated_batch,
         )
 
+    def adjudicate_turn_candidates(
+        self,
+        agent_id: str,
+        user_id: str,
+        source_turn_id: str,
+        candidates: Sequence[
+            Union[RelationshipEventCandidate, Mapping[str, Any]]
+        ],
+        *,
+        extractor_version: str,
+    ) -> AdjudicationBatchResult:
+        """Adjudicates candidates against one persisted completed source turn."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "adjudicating a source turn",
+        )
+        record = self.turn_ledger.get(profile, source_turn_id)
+        if record.status != TurnStatus.COMPLETED:
+            raise ValueError("relationship adjudication requires a completed source turn")
+        visible_messages = (
+            record.transcript.user_message,
+            record.transcript.agent_message,
+        )
+        source_turn = SourceTurn(
+            turn_id=record.turn_id,
+            revision=record.source_revision,
+            messages=[
+                SourceMessage(
+                    source_id=message.message_id,
+                    revision=record.source_revision,
+                    role=(
+                        SourceRole.USER
+                        if message.role.value == SourceRole.USER.value
+                        else SourceRole.AGENT
+                    ),
+                    content=message.content,
+                    occurred_at=message.recorded_at,
+                )
+                for message in visible_messages
+                if message is not None
+            ],
+            extractor_version=extractor_version,
+            contract_version="0.4.0a5",
+        )
+        validated_batch = RelationshipCandidateBatch.model_validate(
+            {"candidates": list(candidates)}
+        )
+        return self.relationship_adjudicator.adjudicate(
+            profile,
+            source_turn,
+            validated_batch,
+        )
+
     def list_relationship_adjudications(
         self,
         agent_id: str,
@@ -1154,6 +1396,7 @@ class ERIIEngine:
         persona_growth_proposals = []
         persona_compilation_proposals = []
         persona_manifests = []
+        turn_records = []
         if relationship is not None:
             try:
                 relationship_events = list_complete_relationship_events(
@@ -1190,6 +1433,12 @@ class ERIIEngine:
                 )
             except NotImplementedError:
                 pass
+            try:
+                turn_records = self.storage.list_turn_records(
+                    relationship.relationship_id
+                )
+            except NotImplementedError:
+                pass
 
         raw_timeline = []
         for line in timeline:
@@ -1213,6 +1462,7 @@ class ERIIEngine:
             persona_growth_proposals=persona_growth_proposals,
             persona_compilation_proposals=persona_compilation_proposals,
             persona_manifests=persona_manifests,
+            turn_records=turn_records,
         )
 
         if export_path:
@@ -1244,6 +1494,25 @@ class ERIIEngine:
 
         clean_agent = SecuritySanitizer.validate_key(target_agent, "agent_id")
         clean_user = SecuritySanitizer.validate_key(target_user, "user_id")
+        self._validate_turn_pack(pack, clean_agent, clean_user)
+        if pack.turn_records:
+            existing_turn_profile = self.storage.get_relationship(
+                clean_agent,
+                clean_user,
+            )
+            if (
+                existing_turn_profile is not None
+                and existing_turn_profile.relationship_id
+                != pack.relationship.relationship_id
+            ):
+                raise ValueError(
+                    "MemoryPack source transcripts cannot be remapped to a "
+                    "different relationship"
+                )
+            self._validate_turn_import_conflicts(
+                pack,
+                existing_turn_profile,
+            )
 
         if overwrite:
             existing_nodes = []
@@ -1311,6 +1580,13 @@ class ERIIEngine:
 
             source_relationship_id = pack.relationship.relationship_id
             target_relationship_id = target_profile.relationship_id
+            if pack.turn_records:
+                if source_relationship_id != target_relationship_id:
+                    raise ValueError(
+                        "MemoryPack source transcripts require exact relationship restore"
+                    )
+                for turn_record in pack.turn_records:
+                    self.storage.create_turn_record(turn_record)
 
             decision_id_map = {}
             for record in pack.relationship_adjudications:
@@ -1657,6 +1933,70 @@ class ERIIEngine:
                     + payload.origin_memory_node_id
                 )
         TemporalHistoryValidator.validate_complete_history(ordered_events)
+
+    @staticmethod
+    def _validate_turn_pack(
+        pack: MemoryPack,
+        target_agent: str,
+        target_user: str,
+    ) -> None:
+        """Rejects transcript remapping before import performs any writes."""
+        if not pack.turn_records:
+            return
+        if pack.relationship is None:
+            raise ValueError("MemoryPack turn records require a relationship profile")
+        if (
+            pack.agent_id != target_agent
+            or pack.user_id != target_user
+            or pack.relationship.agent_id != target_agent
+            or pack.relationship.user_id != target_user
+        ):
+            raise ValueError(
+                "MemoryPack source transcripts cannot be copied to another Agent x User"
+            )
+        seen_turn_ids = set()
+        for record in pack.turn_records:
+            if record.relationship_id != pack.relationship.relationship_id:
+                raise ValueError(
+                    "MemoryPack turn record belongs to a different relationship"
+                )
+            if record.turn_id in seen_turn_ids:
+                raise ValueError(
+                    f"MemoryPack contains duplicate turn_id {record.turn_id!r}"
+                )
+            seen_turn_ids.add(record.turn_id)
+
+    def _validate_turn_import_conflicts(
+        self,
+        pack: MemoryPack,
+        existing_profile: Optional[RelationshipProfile],
+    ) -> None:
+        """Preflights turn identities before legacy memory fields are written."""
+        if not pack.turn_records or existing_profile is None:
+            return
+        existing_by_id = {
+            record.turn_id: record
+            for record in self.storage.list_turn_records(
+                existing_profile.relationship_id
+            )
+        }
+        for incoming in pack.turn_records:
+            existing = existing_by_id.get(incoming.turn_id)
+            if existing is None:
+                continue
+            if (
+                incoming.status == TurnStatus.OPEN
+                and existing.same_opening_as(incoming)
+            ):
+                continue
+            if (
+                incoming.status != TurnStatus.OPEN
+                and existing.same_terminal_payload_as(incoming)
+            ):
+                continue
+            raise TurnConflictError(
+                f"turn_id {incoming.turn_id!r} already has different content"
+            )
 
     @staticmethod
     def _remap_temporal_payload(payload, event_id_map: Mapping[str, str]):

@@ -8,6 +8,7 @@ Follows Google Python Style Guide.
 
 from dataclasses import replace
 from datetime import datetime
+from contextlib import contextmanager
 import hashlib
 import json
 import logging
@@ -36,6 +37,15 @@ from erii.models.relationship import (
     PersonaConflictError,
     RelationshipEvent,
     RelationshipProfile,
+)
+from erii.models.turn import (
+    ReplyAttemptConflictError,
+    ReplyAttemptRecord,
+    TurnConflictError,
+    TurnNotFoundError,
+    TurnRecord,
+    TurnStatus,
+    TurnTerminalConflictError,
 )
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
@@ -114,6 +124,53 @@ class FileStorage(BaseStorage):
         directory = os.path.join(self.root_dir, "_persona_growth")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
+
+    def _get_turn_records_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self.root_dir, "_turn_records")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.json")
+
+    def _get_reply_attempts_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self.root_dir, "_reply_attempts")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.json")
+
+    def _get_turn_lock_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self.root_dir, "_turn_locks")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.lock")
+
+    @contextmanager
+    def _turn_guard(self, relationship_id: str):
+        """Serializes turn aggregates across FileStorage instances/processes."""
+        with self.lock_manager.lock("__turn_records__", relationship_id):
+            lock_path = self._get_turn_lock_path(relationship_id)
+            with open(lock_path, "a+b") as lock_file:
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.write(b"\0")
+                    lock_file.flush()
+                    os.fsync(lock_file.fileno())
+                lock_file.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    if os.name == "nt":
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def _get_persona_compilation_path(self, blueprint_id: str) -> str:
         digest = hashlib.sha256(blueprint_id.encode("utf-8")).hexdigest()
@@ -387,6 +444,151 @@ class FileStorage(BaseStorage):
                 return None
             with open(profile_path, "r", encoding="utf-8") as file_obj:
                 return RelationshipProfile.from_dict(json.load(file_obj))
+
+    def create_turn_record(self, record: TurnRecord) -> TurnRecord:
+        """Creates one exact turn identity without overwriting prior content."""
+        with self._turn_guard(record.relationship_id):
+            registry = self._load_identity_registry()
+            if record.relationship_id not in registry["relationships"]:
+                raise ValueError("turn references an unknown relationship")
+            file_path = self._get_turn_records_path(record.relationship_id)
+            raw_records: List[Dict[str, Any]] = []
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as file_obj:
+                    raw_records = json.load(file_obj)
+            for raw_record in raw_records:
+                if raw_record.get("turn_id") != record.turn_id:
+                    continue
+                existing = TurnRecord.from_dict(raw_record)
+                if (
+                    record.status == TurnStatus.OPEN
+                    and existing.same_opening_as(record)
+                ):
+                    return existing
+                if (
+                    record.status != TurnStatus.OPEN
+                    and existing.same_terminal_payload_as(record)
+                ):
+                    return existing
+                raise TurnConflictError(
+                    f"turn_id {record.turn_id!r} already has different content"
+                )
+            raw_records.append(record.to_dict())
+            self._write_json_atomic(file_path, raw_records)
+            return record
+
+    def get_turn_record(self, relationship_id: str, turn_id: str) -> TurnRecord:
+        """Loads one turn from its relationship aggregate."""
+        with self._turn_guard(relationship_id):
+            file_path = self._get_turn_records_path(relationship_id)
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as file_obj:
+                    for raw_record in json.load(file_obj):
+                        if raw_record.get("turn_id") == turn_id:
+                            return TurnRecord.from_dict(raw_record)
+        raise TurnNotFoundError(f"turn {turn_id!r} was not found")
+
+    def list_turn_records(self, relationship_id: str) -> List[TurnRecord]:
+        """Returns source turns in durable append order."""
+        with self._turn_guard(relationship_id):
+            file_path = self._get_turn_records_path(relationship_id)
+            if not os.path.exists(file_path):
+                return []
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                return [TurnRecord.from_dict(item) for item in json.load(file_obj)]
+
+    def transition_turn_record(
+        self,
+        record: TurnRecord,
+        expected_status: TurnStatus,
+        expected_record_version: int,
+    ) -> TurnRecord:
+        """Atomically installs one terminal revision in the turn aggregate."""
+        with self._turn_guard(record.relationship_id):
+            file_path = self._get_turn_records_path(record.relationship_id)
+            if not os.path.exists(file_path):
+                raise TurnNotFoundError(f"turn {record.turn_id!r} was not found")
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                raw_records = json.load(file_obj)
+            for index, raw_record in enumerate(raw_records):
+                if raw_record.get("turn_id") != record.turn_id:
+                    continue
+                existing = TurnRecord.from_dict(raw_record)
+                if existing == record:
+                    return existing
+                if (
+                    existing.status != expected_status
+                    or existing.record_version != expected_record_version
+                    or not record.is_terminal_transition_from(existing)
+                ):
+                    raise TurnTerminalConflictError(
+                        f"turn {record.turn_id!r} transition violates its immutable opening"
+                    )
+                raw_records[index] = record.to_dict()
+                self._write_json_atomic(file_path, raw_records)
+                return record
+        raise TurnNotFoundError(f"turn {record.turn_id!r} was not found")
+
+    def append_reply_attempt(self, attempt: ReplyAttemptRecord) -> ReplyAttemptRecord:
+        """Appends safe failure metadata only while its turn remains open."""
+        with self._turn_guard(attempt.relationship_id):
+            turn_path = self._get_turn_records_path(attempt.relationship_id)
+            if not os.path.exists(turn_path):
+                raise TurnNotFoundError(f"turn {attempt.turn_id!r} was not found")
+            with open(turn_path, "r", encoding="utf-8") as file_obj:
+                turns = [TurnRecord.from_dict(item) for item in json.load(file_obj)]
+            turn = next(
+                (item for item in turns if item.turn_id == attempt.turn_id),
+                None,
+            )
+            if turn is None:
+                raise TurnNotFoundError(f"turn {attempt.turn_id!r} was not found")
+            if turn.status != TurnStatus.OPEN:
+                raise TurnTerminalConflictError(
+                    f"turn {attempt.turn_id!r} no longer accepts reply attempts"
+                )
+
+            attempts_path = self._get_reply_attempts_path(attempt.relationship_id)
+            raw_attempts: List[Dict[str, Any]] = []
+            if os.path.exists(attempts_path):
+                with open(attempts_path, "r", encoding="utf-8") as file_obj:
+                    raw_attempts = json.load(file_obj)
+            for raw_attempt in raw_attempts:
+                existing = ReplyAttemptRecord.from_dict(raw_attempt)
+                if (
+                    existing.attempt_id != attempt.attempt_id
+                    and (
+                        existing.turn_id != attempt.turn_id
+                        or existing.attempt_number != attempt.attempt_number
+                    )
+                ):
+                    continue
+                if existing.same_payload_as(attempt):
+                    return existing
+                raise ReplyAttemptConflictError(
+                    "reply attempt identity already has different metadata"
+                )
+            raw_attempts.append(attempt.to_dict())
+            self._write_json_atomic(attempts_path, raw_attempts)
+            return attempt
+
+    def list_reply_attempts(
+        self,
+        relationship_id: str,
+        turn_id: str,
+    ) -> List[ReplyAttemptRecord]:
+        """Returns safe attempt records in attempt-number order."""
+        with self._turn_guard(relationship_id):
+            attempts_path = self._get_reply_attempts_path(relationship_id)
+            if not os.path.exists(attempts_path):
+                return []
+            with open(attempts_path, "r", encoding="utf-8") as file_obj:
+                attempts = [
+                    ReplyAttemptRecord.from_dict(item)
+                    for item in json.load(file_obj)
+                    if item.get("turn_id") == turn_id
+                ]
+            return sorted(attempts, key=lambda item: item.attempt_number)
 
     def append_relationship_event(self, event: RelationshipEvent) -> RelationshipEvent:
         """Appends an event once, rejecting conflicting reuse of an event ID."""

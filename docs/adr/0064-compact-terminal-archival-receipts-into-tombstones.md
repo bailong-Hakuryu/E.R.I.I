@@ -1,0 +1,3 @@
+# Compact terminal archival receipts into tombstones
+
+Active Archival Receipts remain complete, while terminal receipts retain their non-sensitive attempt details, sanitized failure summary, and artifact counts for 30 days by default, configurable from 0 through 365 days. After that operational window, E.R.I.I. compacts each receipt into an Archival Tombstone containing only `archival_id`, Archival Scope, terminal status, outcome code, `accepted_at`, and `terminal_at`; payload, attempt history, failure summary, and artifact counts are removed. The tombstone lasts only as long as its relationship and is deleted with that relationship.

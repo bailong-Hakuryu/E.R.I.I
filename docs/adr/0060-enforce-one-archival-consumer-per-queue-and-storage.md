@@ -1,0 +1,3 @@
+# Enforce one archival consumer per queue and storage
+
+`0.4.0a5` permits concurrent producers but enforces one active archival execution consumer for each task queue and memory storage through a renewable Archival Consumer Lease; a competing `start()` fails explicitly, and Drain observes an existing Worker rather than creating another consumer. Atomic queue claim and per-attempt leases are insufficient to make FileStorage and snapshot-style memory writes multi-process safe, so horizontal consumers remain outside this release until idempotent delivery, storage concurrency, and tenant isolation are designed together.

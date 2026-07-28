@@ -1,0 +1,3 @@
+# Reject incomplete turns before archival acceptance
+
+Memory Archival accepts only a completed Source Turn. The staged Turn Recording lifecycle may durably retain an `open` or `abandoned` Turn Record containing only the User message, but it cannot create an archival identity, task, or receipt and is not converted into an empty-reply interaction. The deprecated `remember()` facade still rejects an empty User message or Agent reply with a typed `ArchivalSubmissionError`, and the REST boundary reports the same invalid archival request as `422`. This replaces the legacy silent no-op without deleting authentic unanswered messages, while one-sided internal material continues through purpose-built APIs such as `remember_thought()`.

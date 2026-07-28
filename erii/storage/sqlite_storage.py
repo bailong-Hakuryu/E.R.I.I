@@ -36,6 +36,15 @@ from erii.models.relationship import (
     RelationshipProfile,
     utc_now,
 )
+from erii.models.turn import (
+    ReplyAttemptConflictError,
+    ReplyAttemptRecord,
+    TurnConflictError,
+    TurnNotFoundError,
+    TurnRecord,
+    TurnStatus,
+    TurnTerminalConflictError,
+)
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
@@ -140,6 +149,13 @@ class SQLiteStorage(BaseStorage):
                 cursor.execute(
                     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                     (3, "persona-structured-recall-alpha3", utc_now()),
+                )
+                current_version = 3
+            if current_version < 4:
+                self._migrate_turn_ledger_v4(cursor)
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                    (4, "durable-turn-ledger-alpha5", utc_now()),
                 )
             conn.commit()
 
@@ -298,6 +314,52 @@ class SQLiteStorage(BaseStorage):
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id)
             )
+            """
+        )
+
+    @staticmethod
+    def _migrate_turn_ledger_v4(cursor: sqlite3.Cursor) -> None:
+        """Adds the canonical relationship-scoped source-turn ledger."""
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_turns (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                turn_id TEXT NOT NULL,
+                relationship_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                data JSON NOT NULL,
+                opened_at TEXT NOT NULL,
+                UNIQUE (relationship_id, turn_id),
+                FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_source_turns_order
+            ON source_turns(relationship_id, sequence)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reply_attempts (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                attempt_id TEXT NOT NULL UNIQUE,
+                relationship_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                attempt_number INTEGER NOT NULL,
+                data JSON NOT NULL,
+                attempted_at TEXT NOT NULL,
+                UNIQUE (relationship_id, turn_id, attempt_number),
+                FOREIGN KEY (relationship_id, turn_id)
+                    REFERENCES source_turns(relationship_id, turn_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_reply_attempts_order
+            ON reply_attempts(relationship_id, turn_id, attempt_number)
             """
         )
 
@@ -623,6 +685,226 @@ class SQLiteStorage(BaseStorage):
                     row,
                     context_row["data"] if context_row is not None else None,
                 )
+
+    def create_turn_record(self, record: TurnRecord) -> TurnRecord:
+        """Creates one exact turn identity without overwriting prior content."""
+        with self.lock_manager.lock("__turn_records__", record.relationship_id):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    """
+                    SELECT data FROM source_turns
+                    WHERE relationship_id = ? AND turn_id = ?
+                    """,
+                    (record.relationship_id, record.turn_id),
+                ).fetchone()
+                if row is not None:
+                    existing = TurnRecord.from_dict(json.loads(row["data"]))
+                    conn.commit()
+                    if (
+                        record.status == TurnStatus.OPEN
+                        and existing.same_opening_as(record)
+                    ):
+                        return existing
+                    if (
+                        record.status != TurnStatus.OPEN
+                        and existing.same_terminal_payload_as(record)
+                    ):
+                        return existing
+                    raise TurnConflictError(
+                        f"turn_id {record.turn_id!r} already has different content"
+                    )
+                conn.execute(
+                    """
+                    INSERT INTO source_turns
+                        (turn_id, relationship_id, status, data, opened_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.turn_id,
+                        record.relationship_id,
+                        record.status.value,
+                        json.dumps(record.to_dict(), ensure_ascii=False),
+                        record.opened_at,
+                    ),
+                )
+                conn.commit()
+                return record
+
+    def get_turn_record(self, relationship_id: str, turn_id: str) -> TurnRecord:
+        """Loads one turn from its relationship scope."""
+        with self.lock_manager.lock("__turn_records__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                row = conn.execute(
+                    """
+                    SELECT data FROM source_turns
+                    WHERE relationship_id = ? AND turn_id = ?
+                    """,
+                    (relationship_id, turn_id),
+                ).fetchone()
+                if row is not None:
+                    return TurnRecord.from_dict(json.loads(row["data"]))
+        raise TurnNotFoundError(f"turn {turn_id!r} was not found")
+
+    def list_turn_records(self, relationship_id: str) -> List[TurnRecord]:
+        """Returns source turns in durable opening order."""
+        with self.lock_manager.lock("__turn_records__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT data FROM source_turns
+                    WHERE relationship_id = ?
+                    ORDER BY sequence
+                    """,
+                    (relationship_id,),
+                ).fetchall()
+                return [
+                    TurnRecord.from_dict(json.loads(row["data"])) for row in rows
+                ]
+
+    def transition_turn_record(
+        self,
+        record: TurnRecord,
+        expected_status: TurnStatus,
+        expected_record_version: int,
+    ) -> TurnRecord:
+        """Atomically installs one terminal revision with status/revision CAS."""
+        with self.lock_manager.lock("__turn_records__", record.relationship_id):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    """
+                    SELECT data FROM source_turns
+                    WHERE relationship_id = ? AND turn_id = ?
+                    """,
+                    (record.relationship_id, record.turn_id),
+                ).fetchone()
+                if row is None:
+                    conn.rollback()
+                    raise TurnNotFoundError(f"turn {record.turn_id!r} was not found")
+                existing = TurnRecord.from_dict(json.loads(row["data"]))
+                if existing == record:
+                    conn.commit()
+                    return existing
+                if (
+                    existing.status != expected_status
+                    or existing.record_version != expected_record_version
+                    or not record.is_terminal_transition_from(existing)
+                ):
+                    conn.rollback()
+                    raise TurnTerminalConflictError(
+                        f"turn {record.turn_id!r} transition violates its immutable opening"
+                    )
+                cursor = conn.execute(
+                    """
+                    UPDATE source_turns
+                    SET status = ?, data = ?
+                    WHERE relationship_id = ? AND turn_id = ?
+                      AND status = ?
+                    """,
+                    (
+                        record.status.value,
+                        json.dumps(record.to_dict(), ensure_ascii=False),
+                        record.relationship_id,
+                        record.turn_id,
+                        expected_status.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    conn.rollback()
+                    raise TurnTerminalConflictError(
+                        f"turn {record.turn_id!r} changed concurrently"
+                    )
+                conn.commit()
+                return record
+
+    def append_reply_attempt(self, attempt: ReplyAttemptRecord) -> ReplyAttemptRecord:
+        """Appends safe failure metadata only while its turn remains open."""
+        with self.lock_manager.lock("__turn_records__", attempt.relationship_id):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                turn_row = conn.execute(
+                    """
+                    SELECT data FROM source_turns
+                    WHERE relationship_id = ? AND turn_id = ?
+                    """,
+                    (attempt.relationship_id, attempt.turn_id),
+                ).fetchone()
+                if turn_row is None:
+                    conn.rollback()
+                    raise TurnNotFoundError(
+                        f"turn {attempt.turn_id!r} was not found"
+                    )
+                turn = TurnRecord.from_dict(json.loads(turn_row["data"]))
+                if turn.status != TurnStatus.OPEN:
+                    conn.rollback()
+                    raise TurnTerminalConflictError(
+                        f"turn {attempt.turn_id!r} no longer accepts reply attempts"
+                    )
+                row = conn.execute(
+                    """
+                    SELECT data FROM reply_attempts
+                    WHERE attempt_id = ?
+                       OR (
+                           relationship_id = ? AND turn_id = ?
+                           AND attempt_number = ?
+                       )
+                    """,
+                    (
+                        attempt.attempt_id,
+                        attempt.relationship_id,
+                        attempt.turn_id,
+                        attempt.attempt_number,
+                    ),
+                ).fetchone()
+                if row is not None:
+                    existing = ReplyAttemptRecord.from_dict(json.loads(row["data"]))
+                    conn.commit()
+                    if existing.same_payload_as(attempt):
+                        return existing
+                    raise ReplyAttemptConflictError(
+                        "reply attempt identity already has different metadata"
+                    )
+                conn.execute(
+                    """
+                    INSERT INTO reply_attempts (
+                        attempt_id, relationship_id, turn_id, attempt_number,
+                        data, attempted_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        attempt.attempt_id,
+                        attempt.relationship_id,
+                        attempt.turn_id,
+                        attempt.attempt_number,
+                        json.dumps(attempt.to_dict(), ensure_ascii=False),
+                        attempt.attempted_at,
+                    ),
+                )
+                conn.commit()
+                return attempt
+
+    def list_reply_attempts(
+        self,
+        relationship_id: str,
+        turn_id: str,
+    ) -> List[ReplyAttemptRecord]:
+        """Returns safe attempt records in attempt-number order."""
+        with self.lock_manager.lock("__turn_records__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT data FROM reply_attempts
+                    WHERE relationship_id = ? AND turn_id = ?
+                    ORDER BY attempt_number
+                    """,
+                    (relationship_id, turn_id),
+                ).fetchall()
+                return [
+                    ReplyAttemptRecord.from_dict(json.loads(row["data"]))
+                    for row in rows
+                ]
 
     def append_relationship_event(self, event: RelationshipEvent) -> RelationshipEvent:
         """Appends an event once and rejects conflicting event ID reuse."""

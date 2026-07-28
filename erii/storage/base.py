@@ -23,6 +23,7 @@ from erii.models.relationship import (
     RelationshipEvent,
     RelationshipProfile,
 )
+from erii.models.turn import ReplyAttemptRecord, TurnRecord, TurnStatus
 
 
 class KeyLockManager:
@@ -246,3 +247,36 @@ class BaseStorage(ABC):
     ) -> RelationshipProfile:
         """Pins the first approved Manifest to a relationship exactly once."""
         raise NotImplementedError("storage adapter does not support persona manifests")
+
+    def create_turn_record(self, record: TurnRecord) -> TurnRecord:
+        """Creates one durable turn record idempotently."""
+        raise NotImplementedError("storage adapter does not support turn recording")
+
+    def get_turn_record(self, relationship_id: str, turn_id: str) -> TurnRecord:
+        """Loads one relationship-scoped turn or raises TurnNotFoundError."""
+        raise NotImplementedError("storage adapter does not support turn recording")
+
+    def list_turn_records(self, relationship_id: str) -> List[TurnRecord]:
+        """Returns durable turns for one relationship in opening order."""
+        raise NotImplementedError("storage adapter does not support turn recording")
+
+    def transition_turn_record(
+        self,
+        record: TurnRecord,
+        expected_status: TurnStatus,
+        expected_record_version: int,
+    ) -> TurnRecord:
+        """Atomically applies one first-writer-wins turn lifecycle transition."""
+        raise NotImplementedError("storage adapter does not support turn recording")
+
+    def append_reply_attempt(self, attempt: ReplyAttemptRecord) -> ReplyAttemptRecord:
+        """Appends sanitized metadata for one failed reply attempt."""
+        raise NotImplementedError("storage adapter does not support reply attempts")
+
+    def list_reply_attempts(
+        self,
+        relationship_id: str,
+        turn_id: str,
+    ) -> List[ReplyAttemptRecord]:
+        """Returns failed reply attempts in attempt-number order."""
+        raise NotImplementedError("storage adapter does not support reply attempts")

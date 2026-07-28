@@ -1,0 +1,3 @@
+# Use one archival receipt across runtime modes
+
+`remember()` returns the same non-sensitive Archival Receipt model in queued and inline modes, identified publicly by one stable `archival_id`: a queued submission initially reports Pending, while inline execution returns a terminal receipt immediately. Queue-specific Task IDs remain internal, and `archival_id` is neither an idempotency key nor an access credential; the receipt exposes status, attempts, outcome, timestamps, and artifact counts without conversation text, raw model output, prompts, or secrets, giving hosts one integration contract while remaining source-compatible with callers that ignore the former `None` return value.

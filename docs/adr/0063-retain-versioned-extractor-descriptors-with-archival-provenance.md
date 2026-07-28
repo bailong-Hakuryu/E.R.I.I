@@ -1,0 +1,3 @@
+# Retain versioned extractor descriptors with archival provenance
+
+Every Archival Batch permanently records a non-sensitive Extractor Descriptor containing `extractor_id`, `extractor_version`, `extraction_schema_version`, `erii_version`, and `processed_at`, and MemoryPack preserves that descriptor with the batch provenance. Existing callable extractors that do not declare metadata are recorded truthfully as `unversioned` with a Notice: E.R.I.I. does not invent a version or automatically reprocess old history. The descriptor never contains the full extraction prompt, provider or service endpoint, credentials, raw model output, or raw conversation.

@@ -2,7 +2,7 @@
 
 **English** · [简体中文](USAGE_zh-CN.md)
 
-> This guide applies to E.R.I.I. `0.4.0a4`. The current release is still an alpha: it is suitable for local development, prototyping, and controlled integrations, but should not be exposed as a public production service without additional hardening.
+> This guide applies to E.R.I.I. `0.4.0a5`. The current release is still an alpha: it is suitable for local development, prototyping, and controlled integrations, but should not be exposed as a public production service without additional hardening.
 
 E.R.I.I. is a long-term memory kernel for relationship-oriented AI characters, companions, and narrative applications. It does not generate chat responses, nor is it tied to a particular model. Its job is to preserve what a character and a specific user have experienced together, how those experiences are currently understood, and which promises or unfinished matters are still worth remembering.
 
@@ -10,7 +10,7 @@ If you only want to get something running, complete the “Installation” and �
 
 ## Contents
 
-[Start here](#four-rules-to-understand-first) · [Installation](#installation) · [Ten-minute example](#run-it-in-ten-minutes) · [Real chat loop](#next-step-integrate-one-real-conversation-turn) · [Core objects](#core-objects)
+[Start here](#four-rules-to-understand-first) · [Installation](#installation) · [Ten-minute example](#run-it-in-ten-minutes) · [Real chat loop](#next-step-integrate-one-real-conversation-turn) · [Turn Recording](#turn-recording-the-canonical-source-ledger) · [Core objects](#core-objects)
 
 [Import a persona](#import-your-own-persona-markdown) · [Relationship premise](#choose-where-the-relationship-begins) · [Persona compilation](#advanced-compile-and-approve-a-structured-persona) · [Conversation memory](#save-ordinary-conversation-memories)
 
@@ -26,8 +26,8 @@ If you only want to get something running, complete the “Installation” and �
 2. **The original persona is the character's foundation, not a summary that conversation can overwrite.**
    The Character Blueprint saved by `initialize_relationship()` preserves the original source and verifies its hash. A relationship cannot silently replace its original persona source.
 
-3. **Memory archival, relationship change, and persona growth are three separate channels.**
-   `remember()` archives conversational memories. Relationship changes must pass through a trusted host-application API or evidence-based adjudication. Potential core-persona changes must first be formed as Persona Growth Proposals during a separate Inner Review; they take effect only after explicit, out-of-band host-application approval.
+3. **A Source Turn is evidence, while memory archival, relationship change, and persona growth remain separate channels.**
+   Turn Recording preserves what the User and Agent visibly said under one stable identity. It does not make either message an authoritative fact, Relationship Event, Persona Reflection, or persona change without the relevant extraction and adjudication.
 
 4. **E.R.I.I. does not start a hidden thread automatically.**
    With the default configuration, `remember()` only places a task in a persistent queue. The host application should call `process_pending()` to process tasks synchronously, or explicitly call `start()` to enable background archival and call `close()` during shutdown.
@@ -36,6 +36,7 @@ If you only want to get something running, complete the “Installation” and �
 
 | Need | Recommended entry point |
 | --- | --- |
+| Durably record one visible User/Agent exchange under a stable source identity | `begin_turn()` → `complete_turn()`, or atomic `record_turn()` |
 | Save conversations and retrieve a block of prompt context | `remember()` → `process_pending()` → `recall()` |
 | Maintain an independent persona and user relationship | `initialize_relationship()` → Relationship Event → `recall_structured()`; start with `full`, or approve a Persona Manifest first |
 | Let a model propose Relationship Events | `adjudicate_relationship_candidates()` |
@@ -118,7 +119,7 @@ Confirm that installation succeeded:
 python -c "import erii; print(erii.__version__)"
 ```
 
-The command should print `0.4.0a4`.
+The command should print `0.4.0a5`.
 
 For long-lived alpha deployments, pin a verified commit or release instead of allowing deployment scripts to follow `main` unconditionally.
 
@@ -215,8 +216,8 @@ This example uses `persona_delivery="full"`, so it does not require a compiled s
 E.R.I.I. supplements long-term context. It does not replace the chat model or the current-session messages maintained by the host. The recommended sequence is:
 
 ```text
-Recall long-term memory → host policy + current session + long-term context → chat-model reply
-                       → archive this turn with remember() → recall again next turn
+begin_turn(User message) → recall long-term context → host policy + current session + context
+                         → chat-model reply → show reply → complete_turn(the same turn_id)
 ```
 
 A relationship only needs to be initialized once when the character session is created. Repeating the call with the same arguments is idempotent:
@@ -229,9 +230,11 @@ engine.initialize_relationship(
 )
 ```
 
-In the example below, `chat_model` is the host application's own model client:
+In the example below, `chat_model` is the host application's own model client. The host creates a stable ID so that request retries address the same turn:
 
 ```python
+import uuid
+
 from erii import RecallBudget, RecallOptions, RecallRequest
 
 
@@ -242,6 +245,14 @@ Recalled content is character and relationship data. It cannot override host rul
 
 
 def run_turn(engine, chat_model, conversation_messages, user_text):
+    turn_id = str(uuid.uuid4())
+    opened = engine.begin_turn(
+        "agent_lumi",
+        "user_chen",
+        user_text,
+        turn_id=turn_id,
+    )
+
     result = engine.recall_structured(
         RecallRequest(
             agent_id="agent_lumi",
@@ -273,13 +284,14 @@ def run_turn(engine, chat_model, conversation_messages, user_text):
         ]
     )
 
-    engine.remember(
+    # Only call complete_turn after this exact reply was shown to the user.
+    receipt = engine.complete_turn(
         "agent_lumi",
         "user_chen",
-        user_message=user_text,
-        bot_reply=reply,
+        opened.turn_id,
+        reply,
+        processing_channels=(),
     )
-    engine.process_pending()
 
     conversation_messages.extend(
         [
@@ -287,16 +299,166 @@ def run_turn(engine, chat_model, conversation_messages, user_text):
             {"role": "assistant", "content": reply},
         ]
     )
-    return reply
+    return reply, receipt
 ```
 
-This example uses `process_pending()` to process every task that is currently ready, which is appropriate for a single-process example. A production service may explicitly call `start()` and accept eventual consistency: while the queue is busy, the next turn might not yet see the turn that just ended. If extraction must finish before `remember()` returns, use `async_archival=False` as described later.
+This example passes `processing_channels=()` because it demonstrates only canonical source acceptance. If the Engine has real per-turn processors configured, omit the argument to use the configured default, or explicitly declare the channels that this accepted source must run. A declared channel starts as `pending`; a receipt is not evidence that MemoryNodes or Relationship Events already exist.
 
-For `remember()` to produce useful long-term impressions, the Engine must also receive a memory-extraction LLM or callable as described below. Without one, it only produces a placeholder timeline.
+In `0.4.0a5`, the older `remember()` archival path and raw-Source-Turn relationship adjudication API remain compatibility interfaces. They do not let the kernel safely infer that two independent legacy calls describe the same interaction. New hosts should preserve the canonical turn first. If an existing integration still calls `remember()` for legacy MemoryNode extraction, continue to monitor that queue as described later and do not confuse its task status with the Source Turn receipt.
 
 `max_cost` currently measures the cost of serialized text in characters, not chat-model tokens. Increase the budget to match the actual length of long persona sources. For long-term operation, approving a Persona Manifest and switching to the more compact `planned` mode is recommended.
 
 Relationship candidate adjudication, commitments, and persona growth are optional advanced write channels. They are not prerequisites for completing a basic chat loop.
+
+If generation or continuity evaluation fails in a retryable way, leave the Turn Record `open` and retry with the same `turn_id`; do not invent a reply. Use `abandon_turn()` only after user cancellation, explicit host termination, or an unrecoverable failure.
+
+## Turn Recording: The Canonical Source Ledger
+
+Turn Recording requires an initialized relationship and has two normal integration forms.
+
+### Two-phase recording: `begin_turn()` and `complete_turn()`
+
+Use this form when the User message arrives before the Agent reply:
+
+```python
+opened = engine.begin_turn(
+    "agent_lumi",
+    "user_chen",
+    "Can we go see the snow today?",
+    turn_id="turn-first-snow-001",
+    interaction_context=(
+        {
+            "signal_id": "context-location",
+            "source": "host_observed",
+            "signal_type": "location",
+            "value": "Tokyo street",
+        },
+    ),
+)
+
+receipt = engine.complete_turn(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    "Of course. Let us go together.",
+    continuity_assessment={
+        "status": "not_evaluated",
+    },
+    delivery_disposition="shown",
+    processing_channels=(),
+)
+```
+
+`begin_turn()` atomically writes an `open` Turn Record containing the exact visible User message. `complete_turn()` appends only the Agent reply that was actually shown, freezes the processing plan, changes the record to `completed`, and returns a `SourceTurnReceipt`.
+
+The receipt deliberately does **not** contain `transcript` or either message body. It contains only the source and relationship IDs, source revision, acceptance time, frozen processing plan, and per-channel outcomes:
+
+```python
+print(receipt.source_turn_id)
+print(receipt.processing_plan.channels)
+print(receipt.to_dict())  # no User or Agent message text
+```
+
+To read the visible transcript, explicitly query it inside the same relationship scope:
+
+```python
+turn = engine.get_turn(
+    "agent_lumi",
+    "user_chen",
+    receipt.source_turn_id,
+)
+
+print(turn.transcript.user_message.content)
+print(turn.transcript.agent_message.content)
+```
+
+### One-shot recording: `record_turn()`
+
+Use `record_turn()` when both visible messages already exist, for example when importing a completed exchange from a host-controlled delivery pipeline:
+
+```python
+receipt = engine.record_turn(
+    "agent_lumi",
+    "user_chen",
+    "The snow has started.",
+    "Then this is our first snow together.",
+    turn_id="turn-first-snow-002",
+    processing_channels=(),
+)
+```
+
+This is one atomic insertion into the same ledger. It is not implemented as an observable open write followed by a second completion write.
+
+### Abandon, get, and list
+
+An explicit cancellation retains the real User message without fabricating an Agent reply:
+
+```python
+opened = engine.begin_turn(
+    "agent_lumi",
+    "user_chen",
+    "Are you still there?",
+    turn_id="turn-cancelled-001",
+)
+
+abandoned = engine.abandon_turn(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    reason="user_cancelled",
+)
+```
+
+An abandoned turn has no Agent message or processing plan. Query one turn or filter a relationship's ordered ledger:
+
+```python
+same_turn = engine.get_turn(
+    "agent_lumi",
+    "user_chen",
+    "turn-cancelled-001",
+)
+completed_turns = engine.list_turns(
+    "agent_lumi",
+    "user_chen",
+    status="completed",
+)
+all_turns = engine.list_turns("agent_lumi", "user_chen")
+```
+
+All reads require the matching `agent_id` and `user_id`; a turn from another relationship is not returned.
+
+### Interaction context and failed reply attempts
+
+`begin_turn()` accepts temporary `interaction_context` only when every public signal is labelled `host_observed`. A host cannot claim that a relationship stage or emotion was `core_derived` or `evaluator_inferred`; those authority classes are reserved for the corresponding kernel capabilities.
+
+When generation, continuity evaluation, or delivery preparation fails before a reply is shown, retain the open Turn and record only safe operational metadata:
+
+```python
+attempt = engine.record_reply_attempt_failure(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    attempt_number=1,
+    stage="generation",
+    capability_descriptor="my-provider/model-v1",
+    failure_classification="temporary_provider_error",
+)
+attempts = engine.list_reply_attempts(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+)
+```
+
+Reply Attempt records contain no draft, prompt, provider exception body, credential, or internal reasoning. They do not close the Turn. A completed persisted source can also be adjudicated without resending its transcript through `adjudicate_turn_candidates(..., source_turn_id, candidates, extractor_version=...)`.
+
+### Retry and authority rules
+
+- Repeating `begin_turn()` with the same `turn_id` and User message returns the existing open record.
+- Repeating `complete_turn()` with the same terminal payload returns the same receipt.
+- Reusing a stable ID with different opening content, completing it differently, or racing completion against abandonment raises a turn conflict. `completed` and `abandoned` are immutable terminal states.
+- Visible transcript text is retained as source evidence. Hidden system messages, complete prompts, model reasoning, credentials, and tool output invisible to both parties are outside this record.
+- A transcript proves what was visibly expressed, not that a User claim is true or an Agent reply is valid characterization. It does not directly become a MemoryNode, Relationship Event, Persona Reflection, or Persona Growth decision.
 
 ## Core Objects
 
@@ -305,6 +467,8 @@ Relationship candidate adjudication, commitments, and persona growth are optiona
 | Character Blueprint | The original persona and source metadata imported by the user | No |
 | Persona Manifest | An approved structured persona compiled from the source | New immutable Proposal revisions may be created before approval; an approved Manifest and its relationship binding are immutable |
 | Relationship Premise | Where this relationship begins | Fixed after initialization |
+| Turn Record / Source Transcript | The exact visible User/Agent source for one relationship-scoped interaction | `open` may become one terminal `completed` or `abandoned` revision; terminal records cannot be reopened |
+| SourceTurnReceipt | A text-free completion receipt containing IDs, plan, and channel outcomes | No transcript text; query the scoped Turn Record to read it |
 | Relationship Event | Shared experiences, observations, conflicts, repairs, promises, and other history | No; append-only |
 | Relationship Snapshot | The relationship state and explanation projected from currently effective history | Not an archive; it can be rebuilt |
 | MemoryNode | A retrievable impression, such as a preference, event, or reflection extracted from conversation | Maintained by the memory workflow |
@@ -541,7 +705,7 @@ For a more complete runnable example, see [`examples/07_structured_persona_recal
 
 ## Save Ordinary Conversation Memories
 
-`remember()` saves one conversation turn and creates a persistent archival task:
+`remember()` is the compatibility entry point for extracting ordinary retrievable MemoryNodes from one exchange. It creates a persistent archival task:
 
 ```python
 engine.remember(
@@ -551,6 +715,8 @@ engine.remember(
     bot_reply="I'll remember the feeling of those quiet, rainy days.",
 )
 ```
+
+This call does not create the canonical `TurnRecord` or return a `SourceTurnReceipt`. New hosts should first accept the visible exchange with `begin_turn()` / `complete_turn()` or `record_turn()`, then invoke the configured archival channel. Calling `remember()` separately remains supported, but the kernel cannot prove that it refers to the same source interaction unless the host preserves that association.
 
 It does not automatically:
 
@@ -722,7 +888,7 @@ Do not let an LLM decide `state_delta` directly.
 
 ### Send Untrusted Model Candidates Through Evidence-Based Adjudication
 
-Have the model propose candidates first, then submit the full transient Source Turn and the candidates together to the kernel:
+The `0.4.x` compatibility interface lets the model propose candidates and then submits a full transient Source Turn with those candidates to the kernel:
 
 ```python
 result = engine.adjudicate_relationship_candidates(
@@ -766,6 +932,8 @@ result = engine.adjudicate_relationship_candidates(
 for receipt in result.receipts:
     print(receipt.candidate_key, receipt.outcome, receipt.reason_codes)
 ```
+
+For new integrations, the durable Turn Record is the canonical source identity. The raw `source_turn` argument above is retained for compatibility and quotation validation; it does not create or replace a Turn Record.
 
 The adjudicator verifies that each quotation actually exists in the specified message, then uses versioned rules to map qualitative signals to bounded state changes. Model confidence cannot bypass those rules.
 
@@ -961,6 +1129,8 @@ This is appropriate for:
 
 The archival task queue is usually stored as `erii_tasks.db` inside that directory. When upgrading from an older default path, compatibility logic may continue to reuse an existing `./erii_memory.db`.
 
+In `0.4.0a5`, FileStorage also persists the relationship-scoped Turn Record collection under `_turn_records`. Existing files without that field remain readable; new turn writes add it without changing the meaning of legacy MemoryNodes or Relationship Events.
+
 ### SQLiteStorage
 
 ```python
@@ -978,6 +1148,8 @@ This is appropriate for:
 - long-term operation in a single process or with controlled concurrency;
 - keeping memories, relationships, and the task queue in one database file;
 - workloads that benefit from WAL, transactions, and more robust idempotency.
+
+`0.4.0a5` migrates an existing SQLite database in place to schema v4. The new `source_turns` table stores each Turn Record as a relationship-scoped aggregate, ordered by its durable opening sequence. Back up important databases before upgrading an alpha release.
 
 FileStorage remains the default in the current release. To select SQLite, explicitly pass a `SQLiteStorage` instance. Neither storage implementation is a multi-tenant authorization boundary, and both store data in plaintext by default.
 
@@ -1007,24 +1179,18 @@ engine.import_memory(
 )
 ```
 
-Import under new host IDs:
-
-```python
-engine.import_memory(
-    "./backups/lumi-user-chen.json",
-    agent_id="agent_lumi",
-    user_id="user_chen_migrated",
-    overwrite=False,
-)
-```
-
-A MemoryPack from `0.4.0a4` carries:
+MemoryPack `0.4.0a5` carries:
 
 - Core Memory, MemoryNodes, and the Experiential Timeline;
 - the Character Blueprint and relationship record;
 - append-only Relationship Events and evidence-based adjudication;
 - persona compilation Proposals, the Persona Manifest, and persona growth Proposals;
-- Promises, Open Loops, condition confirmations, and resolution events.
+- Promises, Open Loops, condition confirmations, and resolution events;
+- the root `turn_records` collection, including complete visible Source Transcripts and terminal state.
+
+Because `turn_records` contain relationship-private, verbatim conversation history, a Pack that contains them can only be restored to its exact original `agent_id`, `user_id`, and relationship identity. Supplying different host IDs is rejected, and `overwrite=True` does not bypass that rule. To move the same relationship between machines or storage adapters, preserve its original IDs.
+
+MemoryPacks from `0.4.0a4` and earlier have no `turn_records`. They remain readable and retain their historical remapping behavior for the older payload, subject to persona, relationship, and reference-integrity checks. That compatibility path must not be interpreted as permission to remap an `0.4.0a5` Pack containing a Source Transcript ledger.
 
 Before importing, note the following:
 
@@ -1032,7 +1198,7 @@ Before importing, note the following:
 - Repeatedly importing a legacy Experiential Timeline may still append duplicate entries.
 - Import is rejected if the existing relationship's persona or premise does not match.
 - Import is rejected when temporal-event references are missing, cross relationships, or have invalid ordering.
-- For an import across IDs, the return value of `import_memory()` still represents the input MemoryPack. To inspect the remapped target data, call `export_memory(target_agent, target_user)` afterward.
+- A Pack containing `turn_records` cannot be imported across `Agent × User` identities, even when overwrite is requested.
 - Before processing important data, copy the original storage file and test the operation in a separate directory.
 
 ## Add Relationship Candidates to a Real Chat Loop
@@ -1041,11 +1207,12 @@ The earlier “Next Step: Integrate One Real Conversation Turn” section alread
 
 ```text
 Character reply completed
-  ├── remember(): archive ordinary retrievable memories
-  └── optional relationship extractor: produce source_turn and candidates
-          → adjudicate_relationship_candidates()
-          → inspect each receipt.outcome
-          → if needed, create a separate persona growth Proposal for approval
+  ├── complete_turn(): seal the canonical visible Source Transcript
+  ├── optional remember(): run the legacy MemoryNode archival path
+  └── optional relationship extractor: derive candidates from the accepted turn
+           → adjudicate_relationship_candidates()
+           → inspect each receipt.outcome
+           → if needed, create a separate persona growth Proposal for approval
 ```
 
 The host application should already have called `initialize_relationship()` for this pair of IDs. Optional processing code:
@@ -1133,6 +1300,39 @@ Invoke-RestMethod `
     -Body $body
 ```
 
+Record a visible turn through the canonical two-phase REST workflow:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/turns/open \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "agent_lumi",
+    "user_id": "user_chen",
+    "turn_id": "turn-first-snow-001",
+    "user_message": "Can we go see the snow today?"
+  }'
+
+curl -X POST http://127.0.0.1:8000/api/v1/turns/turn-first-snow-001/complete \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "agent_lumi",
+    "user_id": "user_chen",
+    "agent_message": "Of course. Let us go together.",
+    "delivery_disposition": "shown",
+    "processing_channels": []
+  }'
+```
+
+The target relationship must already exist. The completion response contains `receipt`, which deliberately omits the User and Agent message bodies. Read the transcript only through a relationship-scoped query:
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/turns/turn-first-snow-001?agent_id=agent_lumi&user_id=user_chen"
+
+curl "http://127.0.0.1:8000/api/v1/turns?agent_id=agent_lumi&user_id=user_chen&status=completed"
+```
+
+If both visible messages already exist, `POST /api/v1/turns` performs the atomic `record_turn()` form. If no reply was displayed, use the explicit `/abandon` route with a non-empty `reason`; never manufacture an Agent message just to close the record.
+
 Save a conversation turn:
 
 ```bash
@@ -1185,6 +1385,14 @@ Main endpoints:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/v1/health` | Service status |
+| POST | `/api/v1/turns/open` | Open a Turn Record with the exact visible User message |
+| POST | `/api/v1/turns/{turn_id}/complete` | Seal the exact Agent reply that was displayed and return a text-free receipt |
+| POST | `/api/v1/turns/{turn_id}/reply-attempts` | Record sanitized metadata for a failed, undisplayed reply attempt |
+| GET | `/api/v1/turns/{turn_id}/reply-attempts` | List sanitized reply-attempt metadata |
+| POST | `/api/v1/turns/{turn_id}/abandon` | Explicitly terminate an unanswered open turn |
+| POST | `/api/v1/turns` | Atomically record an already-complete visible exchange |
+| GET | `/api/v1/turns/{turn_id}` | Read one relationship-scoped Turn Record |
+| GET | `/api/v1/turns` | List ordered Turn Records, optionally filtered by `status` |
 | POST | `/api/v1/remember` | Queue a conversation turn for archival |
 | POST | `/api/v1/recall` | Compatibility Markdown recall |
 | POST | `/api/v1/recall/structured` | Structured recall |
@@ -1197,6 +1405,8 @@ Main endpoints:
 | POST | `/api/v1/memory/import` | Import a MemoryPack |
 | GET | `/api/v1/tasks/status` | Inspect archival task status |
 | POST | `/api/v1/tasks/retry-failed` | Retry failed tasks |
+
+Turn endpoints return 404 when the relationship or requested turn is unavailable in that exact scope, 409 when a stable turn identity is reused with conflicting content or terminal state, and usually 422 for invalid request values. A retry with the same identity and the same payload is idempotent.
 
 The request body for `/api/v1/relationship/adjudicate` wraps the earlier Python adjudication example with `agent_id` and `user_id`; the remaining fields are still `source_turn` and `candidates`. The response uses `records[].receipt`. `rejected` and `ignored` are normal per-candidate semantic outcomes and may still be returned with HTTP 200, so callers must inspect every `receipt.outcome`. A missing relationship returns 404, idempotency or temporal-history conflicts return 409, and request-schema validation errors usually return 422.
 
@@ -1218,7 +1428,7 @@ The current reference service intentionally retains several boundaries:
 - It uses FileStorage and offers no CLI switch for SQLite.
 - The CLI does not provide configuration for a real memory-extraction LLM, so `/remember` uses the placeholder adapter by default.
 - It does not expose `initialize_relationship`, direct Promise/Open Loop CRUD, or persona approval endpoints.
-- `/relationship/adjudicate` requires the target relationship to have been initialized by a Python host application or imported through a MemoryPack.
+- Turn Recording and `/relationship/adjudicate` require the target relationship to have been initialized by a Python host application or imported through a MemoryPack.
 - It includes no authentication, authorization, tenant isolation, rate limiting, or TLS/HTTPS termination configuration.
 
 It is therefore best suited as a protocol example or internal-network adapter. For a production product, construct `ERIIEngine` inside your own service, inject storage and model adapters, and implement authentication and user authorization around it.
@@ -1227,11 +1437,15 @@ It is therefore best suited as a protocol example or internal-network adapter. F
 
 ### `RelationshipNotFoundError`
 
-Before recording Relationship Events, Promises, or candidate adjudication, call:
+Before Turn Recording, Relationship Events, Promises, or candidate adjudication, call:
 
 ```python
 engine.initialize_relationship(agent_id, user_id, persona_source)
 ```
+
+### `TurnConflictError`
+
+A stable `turn_id` was reused with different text, a different completion payload, or an incompatible terminal transition. Retry the original operation unchanged. Use a new ID for a genuinely new interaction; do not reopen a `completed` or `abandoned` turn.
 
 ### `PersonaConflictError`
 
@@ -1275,7 +1489,12 @@ Check the following in order:
 
 ### Memory Content Does Not Exactly Match the Original Message
 
-Default safety cleaning handles a small set of known prompt-injection patterns and masks common email-address, phone-number, and API-key forms. This is basic defense in depth, not a complete data-loss prevention system. If customization is necessary, use `ERIIConfig` and evaluate the risks before disabling cleaning.
+First distinguish the two data layers:
+
+- A `TurnRecord` keeps the exact User and Agent text that was actually visible. Read it with `get_turn()` inside the original relationship scope.
+- A legacy `MemoryNode` is a derived, retrievable impression. Extraction, summarization, and default safety cleaning can make it differ from the source wording.
+
+Default MemoryNode cleaning handles a small set of known prompt-injection patterns and masks common email-address, phone-number, and API-key forms. This is basic defense in depth, not a complete data-loss prevention system. If customization is necessary, use `ERIIConfig` and evaluate the risks before disabling cleaning. Never use a cleaned or summarized MemoryNode as a substitute for the canonical Source Transcript.
 
 ### A Promise Is Due, but No Signal Appears
 
@@ -1295,10 +1514,11 @@ This is expected. The memory boundary is `(agent_id, user_id)`, not just `agent_
 - Explicitly choose `agent_private` or `public`; do not mix recall results between audiences.
 - Do not let a model directly submit relationship numbers, approve a Persona, or bypass evidence-based adjudication.
 - Add authentication, authorization, rate limiting, and auditing around REST and all management interfaces.
-- Storage is plaintext by default. Protect disks, backups, and MemoryPacks at the host-application level.
+- Storage is plaintext by default. Turn Records contain verbatim visible conversations; protect disks, backups, and MemoryPacks at the host-application level.
 - Do not log complete conversations, raw model responses, keys, or private persona sources.
 - Tell users before their data leaves the local environment for a remote model.
 - Export MemoryPacks regularly and rehearse restoration.
+- Restore `0.4.0a5` Packs containing `turn_records` only under their exact original `Agent × User` identity; do not build a product flow that relies on cross-relationship remapping.
 - Before upgrading an alpha release, read the CHANGELOG and compatibility notes, then back up first.
 - Give users product-level controls to export and delete their data.
 

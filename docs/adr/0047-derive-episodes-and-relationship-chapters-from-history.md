@@ -1,0 +1,3 @@
+# Derive episodes and relationship chapters from history
+
+Relationship Event remains the authoritative relationship history; Episode and Relationship Chapter are source-linked, versioned, rebuildable narrative projections derived from that history. An Episode groups events around one concrete experience, while a Relationship Chapter describes a longer evidence-backed period across episodes; neither may become a hard-coded stranger/friend/lover progression, overwrite source events, or directly change Relationship State, preserving persona-specific narration without turning relationships into universal levels.

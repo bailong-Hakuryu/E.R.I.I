@@ -1,0 +1,3 @@
+# Classify archival failures before retry
+
+Every Archival Failure is classified before queue retry: transient network, rate-limit, temporary storage contention, potentially variable empty or invalid model output, and an expired Processing lease may retry with bounded exponential backoff, while corrupt task data, unsupported adapters, deterministic configuration errors, violated invariants, and corrupt storage fail immediately. Lease expiry increments the attempt count and enters `retry_wait` with `processing_lease_expired` instead of silently resetting to Pending; Archival Receipts expose a stable error code, retryability, and sanitized summary, and a Permanent failure may still be retried explicitly after an operator repairs its cause.

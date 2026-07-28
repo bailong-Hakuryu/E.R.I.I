@@ -1,3 +1,3 @@
 # Adjudicate candidates independently with explicit dependencies
 
-一次来源提取出的候选分别验证并留下 Decision Receipt，允许有效候选成功而无效候选被降级或拒绝，避免一个幻觉污染整批结果或使整条来源全部丢失。每个候选的证据关联、正式事件、有限状态变化和回执作为一个原子提交；候选之间使用显式依赖维持因果完整性，例如 Persona Reflection 只有在其 Relationship Event 已接受后才能生效，而反思失败不撤销有效事件。来源级汇总仅报告各候选结果，不承担全有或全无的提交语义。
+一次来源提取出的候选分别验证并留下 Decision Receipt，允许有效候选成功而无效候选被降级或拒绝，避免一个幻觉污染整批结果或使整条来源全部丢失。每个候选的证据关联、正式事件、有限状态变化和回执作为一个原子提交；派生阶段使用显式依赖维持因果完整性，例如独立 Persona Reflection Record 只有在其 Relationship Event 已接受后才能追加，而反思失败不撤销有效事件。来源级汇总仅报告各候选和派生阶段结果，不承担全有或全无的提交语义。

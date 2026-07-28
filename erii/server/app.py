@@ -20,6 +20,14 @@ from erii.models.adjudication import (
 )
 from erii.models.recall import RecallRequest as DomainRecallRequest
 from erii.models.relationship import RelationshipNotFoundError
+from erii.models.turn import (
+    DeliveryDisposition,
+    ReplyAttemptStage,
+    SourceProcessingChannel,
+    TurnConflictError,
+    TurnNotFoundError,
+    TurnStatus,
+)
 from erii.core.temporal_history import TemporalHistoryConflictError
 
 logger = logging.getLogger("erii.server")
@@ -117,6 +125,54 @@ try:
         user_id: Optional[str] = None
         overwrite: bool = False
 
+    class TurnOpeningBody(BaseModel):
+        """Opens a durable turn before reply generation."""
+
+        agent_id: str = "default_agent"
+        user_id: str
+        user_message: str
+        turn_id: Optional[str] = None
+        interaction_context: list[dict] = Field(default_factory=list)
+
+    class TurnCompletionBody(BaseModel):
+        """Seals a visible reply into an existing open turn."""
+
+        agent_id: str = "default_agent"
+        user_id: str
+        agent_message: str
+        continuity_assessment: Optional[dict] = None
+        delivery_disposition: DeliveryDisposition = DeliveryDisposition.SHOWN
+        processing_channels: Optional[list[SourceProcessingChannel]] = None
+
+    class TurnAbandonmentBody(BaseModel):
+        """Explicitly terminates an unanswered turn."""
+
+        agent_id: str = "default_agent"
+        user_id: str
+        reason: str
+
+    class TurnRecordBody(BaseModel):
+        """Atomically records an already-visible complete exchange."""
+
+        agent_id: str = "default_agent"
+        user_id: str
+        user_message: str
+        agent_message: str
+        turn_id: Optional[str] = None
+        continuity_assessment: Optional[dict] = None
+        delivery_disposition: DeliveryDisposition = DeliveryDisposition.SHOWN
+        processing_channels: Optional[list[SourceProcessingChannel]] = None
+
+    class ReplyAttemptFailureBody(BaseModel):
+        """Sanitized metadata for a failed, undisplayed reply attempt."""
+
+        agent_id: str = "default_agent"
+        user_id: str
+        attempt_number: int = Field(ge=1)
+        stage: ReplyAttemptStage
+        capability_descriptor: str
+        failure_classification: str
+
     @app.get("/api/v1/health")
     def api_health():
         """Health check endpoint returning engine and version status."""
@@ -162,6 +218,152 @@ try:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/api/v1/turns/open", status_code=201)
+    def api_begin_turn(req: TurnOpeningBody):
+        """Persists one visible user message before reply generation."""
+        try:
+            turn = get_engine().begin_turn(
+                req.agent_id,
+                req.user_id,
+                req.user_message,
+                turn_id=req.turn_id,
+                interaction_context=req.interaction_context,
+            )
+            return {"status": "success", "turn": turn.to_dict()}
+        except RelationshipNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="turn not found") from exc
+        except TurnConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/turns")
+    def api_record_turn(req: TurnRecordBody):
+        """Atomically accepts an already-visible complete exchange."""
+        try:
+            receipt = get_engine().record_turn(
+                req.agent_id,
+                req.user_id,
+                req.user_message,
+                req.agent_message,
+                turn_id=req.turn_id,
+                continuity_assessment=req.continuity_assessment,
+                delivery_disposition=req.delivery_disposition,
+                processing_channels=req.processing_channels,
+            )
+            return {"status": "success", "receipt": receipt.to_dict()}
+        except RelationshipNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="turn not found") from exc
+        except TurnConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/turns")
+    def api_list_turns(
+        agent_id: str,
+        user_id: str,
+        status: Optional[TurnStatus] = None,
+    ):
+        """Lists relationship-scoped turns in durable opening order."""
+        try:
+            turns = get_engine().list_turns(
+                agent_id,
+                user_id,
+                status=status,
+            )
+            return {
+                "status": "success",
+                "turns": [turn.to_dict() for turn in turns],
+            }
+        except RelationshipNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="turn not found") from exc
+
+    @app.post("/api/v1/turns/{turn_id}/complete")
+    def api_complete_turn(turn_id: str, req: TurnCompletionBody):
+        """Seals the reply actually displayed by the host."""
+        try:
+            receipt = get_engine().complete_turn(
+                req.agent_id,
+                req.user_id,
+                turn_id,
+                req.agent_message,
+                continuity_assessment=req.continuity_assessment,
+                delivery_disposition=req.delivery_disposition,
+                processing_channels=req.processing_channels,
+            )
+            return {"status": "success", "receipt": receipt.to_dict()}
+        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail="turn not found") from exc
+        except TurnConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/turns/{turn_id}/reply-attempts", status_code=201)
+    def api_record_reply_attempt(turn_id: str, req: ReplyAttemptFailureBody):
+        """Records a retryable failure without storing an undisplayed draft."""
+        try:
+            attempt = get_engine().record_reply_attempt_failure(
+                req.agent_id,
+                req.user_id,
+                turn_id,
+                attempt_number=req.attempt_number,
+                stage=req.stage,
+                capability_descriptor=req.capability_descriptor,
+                failure_classification=req.failure_classification,
+            )
+            return {"status": "success", "attempt": attempt.to_dict()}
+        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail="turn not found") from exc
+        except TurnConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/turns/{turn_id}/reply-attempts")
+    def api_list_reply_attempts(turn_id: str, agent_id: str, user_id: str):
+        """Lists sanitized failed attempts for one open or terminal turn."""
+        try:
+            attempts = get_engine().list_reply_attempts(
+                agent_id,
+                user_id,
+                turn_id,
+            )
+            return {
+                "status": "success",
+                "attempts": [attempt.to_dict() for attempt in attempts],
+            }
+        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail="turn not found") from exc
+
+    @app.post("/api/v1/turns/{turn_id}/abandon")
+    def api_abandon_turn(turn_id: str, req: TurnAbandonmentBody):
+        """Explicitly terminates an unanswered turn."""
+        try:
+            turn = get_engine().abandon_turn(
+                req.agent_id,
+                req.user_id,
+                turn_id,
+                reason=req.reason,
+            )
+            return {"status": "success", "turn": turn.to_dict()}
+        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail="turn not found") from exc
+        except TurnConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/turns/{turn_id}")
+    def api_get_turn(turn_id: str, agent_id: str, user_id: str):
+        """Returns one relationship-scoped durable turn."""
+        try:
+            turn = get_engine().get_turn(agent_id, user_id, turn_id)
+            return {"status": "success", "turn": turn.to_dict()}
+        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail="turn not found") from exc
 
     @app.post("/api/v1/recall/structured")
     def api_recall_structured(req: StructuredRecallBody):

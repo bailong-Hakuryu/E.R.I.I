@@ -1,0 +1,3 @@
+# Separate permanent commit bindings from expiring permits
+
+The irreversible decision is a Commit Binding from one Archival Identity to one prepared batch digest, not an everlasting bearer permit. A Commit Permit is short-lived, renewable only for that binding, and validated by Storage at the atomic publication point, so a paused Worker cannot publish after its authority expires while recovery can continue without re-extraction. Final abandonment or relationship deletion first installs a Storage-side Commit Termination Fence, then clears prepared data; that fence is removed with the relationship only after every previously issued permit can no longer take effect.

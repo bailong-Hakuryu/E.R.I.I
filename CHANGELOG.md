@@ -2,6 +2,31 @@
 
 本项目的用户可感知变化记录在此文件。版本遵循语义化版本；`0.x` 阶段仍可能出现受控的破坏性变更。
 
+## [0.4.0a5] - 2026-07-28
+
+### Added
+
+- 关系范围内的规范 Turn Recording 账本，以及 `begin_turn()`、`complete_turn()`、`abandon_turn()`、原子 `record_turn()`、`get_turn()` 与 `list_turns()`。
+- `open → completed | abandoned` 单向状态机、稳定 `turn_id` 幂等重试、冲突检测，以及实际可见 User/Agent Source Transcript 的完整持久化。
+- 不携带对话正文的 `SourceTurnReceipt`，包含来源 revision、接受时间、固定处理计划与逐通道处理状态。
+- FileStorage `_turn_records` 持久化与 SQLite `source_turns` 表；SQLite Schema 升级到 v4。
+- MemoryPack `0.4.0a5` 根级 `turn_records` 携带能力。
+- `InteractionContextSignal`、不含未展示草稿的 Reply Attempt 失败账本，以及基于持久 `source_turn_id` 的关系候选裁决桥接。
+- Turn Recording REST 路由：open、complete、reply attempts、abandon、原子 record、get 与 list。
+
+### Changed
+
+- 规范 Source Turn 只作为可追溯证据；MemoryNode 归档、关系裁决和人格成长继续作为独立派生通道，不因保存原文而自动生效。
+- `completed` 与 `abandoned` Turn 是不可变终态；可重试失败应保留 `open`，只有明确终止时才放弃。
+- 包版本升级为 `0.4.0a5`。
+
+### Compatibility
+
+- `remember()` 与提交临时 raw Source Turn 的关系裁决接口继续作为 `0.4.x` 兼容路径，但不会自动与规范 Turn Record 建立同源关系。
+- 旧 FileStorage 与 SQLite 数据继续可读；SQLite 会原地迁移到 Schema v4。
+- `0.4.0a4` 及更早、没有 `turn_records` 的 MemoryPack 继续可读，并保留旧载荷的历史导入行为。
+- 包含 `turn_records` 的 Pack 只能恢复到完全相同的 Agent、User 与 relationship 身份；禁止跨 `Agent × User` 重映射，`overwrite=True` 不能绕过。
+
 ## [0.4.0a4] - 2026-07-28
 
 ### Added

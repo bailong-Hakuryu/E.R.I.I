@@ -1,0 +1,3 @@
+# Complete archival with an explicit no-memory outcome
+
+An archival task is Completed only after extraction produced a valid discriminated Archival Extraction Decision and every expected persistence operation succeeded; task completion describes execution integrity rather than whether the turn was memorable. A valid zero-artifact result must be the explicit `kind=no_memory` variant with no artifacts, while `kind=artifacts` contains at least one candidate. An empty model response, empty object, malformed or contradictory output, extraction error, or storage failure enters retry and may become Failed, preventing placeholder memories from being manufactured merely to demonstrate success.
