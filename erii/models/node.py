@@ -12,6 +12,8 @@ from enum import Enum
 import math
 from typing import Any, Dict, List, Optional
 
+from erii.models.provenance import ArtifactProvenanceState, ExtractorDescriptor
+
 
 class MemoryType(str, Enum):
     """Supported memory classification types."""
@@ -61,12 +63,40 @@ class MemoryNode:
     visibility: str = MemoryVisibility.PUBLIC_LOG.value
     is_unresolved: bool = False
     foreshadowing_tags: List[str] = field(default_factory=list)
+    relationship_id: Optional[str] = None
+    source_turn_id: Optional[str] = None
+    source_archival_id: Optional[str] = None
+    provenance_state: ArtifactProvenanceState = (
+        ArtifactProvenanceState.LEGACY_UNAVAILABLE
+    )
+    extractor_descriptor: Optional[ExtractorDescriptor] = None
     created_at: str = field(
         default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
     last_accessed_at: str = field(
         default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
+
+    def __post_init__(self) -> None:
+        """Validates complete modern provenance without inventing legacy data."""
+        if not isinstance(self.provenance_state, ArtifactProvenanceState):
+            self.provenance_state = ArtifactProvenanceState(self.provenance_state)
+        if self.extractor_descriptor is not None and not isinstance(
+            self.extractor_descriptor,
+            ExtractorDescriptor,
+        ):
+            self.extractor_descriptor = ExtractorDescriptor.from_dict(
+                self.extractor_descriptor
+            )
+        if self.provenance_state == ArtifactProvenanceState.COMPLETE and (
+            not self.relationship_id
+            or not self.source_turn_id
+            or not self.source_archival_id
+            or self.extractor_descriptor is None
+        ):
+            raise ValueError(
+                "complete memory provenance requires relationship, source, and descriptor"
+            )
 
     def calculate_effective_weight(
         self, decay_rate: float = 0.05, max_weight_cap: float = 0.95
@@ -151,6 +181,16 @@ class MemoryNode:
         data["state"] = (
             self.state.value if isinstance(self.state, MemoryState) else self.state
         )
+        data["provenance_state"] = (
+            self.provenance_state.value
+            if isinstance(self.provenance_state, ArtifactProvenanceState)
+            else self.provenance_state
+        )
+        data["extractor_descriptor"] = (
+            self.extractor_descriptor.to_dict()
+            if isinstance(self.extractor_descriptor, ExtractorDescriptor)
+            else self.extractor_descriptor
+        )
         return data
 
     @classmethod
@@ -175,6 +215,27 @@ class MemoryNode:
                 data_copy["state"] = MemoryState(data_copy["state"])
             except ValueError:
                 data_copy["state"] = MemoryState.ACTIVE
+
+        if "provenance_state" in data_copy and isinstance(
+            data_copy["provenance_state"],
+            str,
+        ):
+            try:
+                data_copy["provenance_state"] = ArtifactProvenanceState(
+                    data_copy["provenance_state"]
+                )
+            except ValueError:
+                data_copy["provenance_state"] = (
+                    ArtifactProvenanceState.LEGACY_UNAVAILABLE
+                )
+        descriptor = data_copy.get("extractor_descriptor")
+        if descriptor is not None and not isinstance(
+            descriptor,
+            ExtractorDescriptor,
+        ):
+            data_copy["extractor_descriptor"] = ExtractorDescriptor.from_dict(
+                descriptor
+            )
 
         return cls(**data_copy)
 

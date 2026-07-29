@@ -28,6 +28,8 @@ class TestServerLifecycle(unittest.TestCase):
                 engine.archiver_worker.task_queue.db_path,
                 os.path.join(os.path.abspath(storage_dir), "erii_tasks.db"),
             )
+            self.assertFalse(engine.archiver_worker.running)
+            engine.start()
             self.assertTrue(engine.archiver_worker.running)
             server_app.close_engine()
 

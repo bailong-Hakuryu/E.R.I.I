@@ -2,7 +2,7 @@
 
 **English** · [简体中文](USAGE_zh-CN.md)
 
-> This guide applies to E.R.I.I. `0.4.0a5`. The current release is still an alpha: it is suitable for local development, prototyping, and controlled integrations, but should not be exposed as a public production service without additional hardening.
+> This guide applies to E.R.I.I. `0.4.0a6`. The current release is still an alpha: it is suitable for local development, prototyping, and controlled integrations, but should not be exposed as a public production service without additional hardening.
 
 E.R.I.I. is a long-term memory kernel for relationship-oriented AI characters, companions, and narrative applications. It does not generate chat responses, nor is it tied to a particular model. Its job is to preserve what a character and a specific user have experienced together, how those experiences are currently understood, and which promises or unfinished matters are still worth remembering.
 
@@ -10,7 +10,7 @@ If you only want to get something running, complete the “Installation” and �
 
 ## Contents
 
-[Start here](#four-rules-to-understand-first) · [Installation](#installation) · [Ten-minute example](#run-it-in-ten-minutes) · [Real chat loop](#next-step-integrate-one-real-conversation-turn) · [Turn Recording](#turn-recording-the-canonical-source-ledger) · [Core objects](#core-objects)
+[Start here](#four-rules-to-understand-first) · [Installation](#installation) · [Ten-minute example](#run-it-in-ten-minutes) · [Real chat loop](#next-step-integrate-one-real-conversation-turn) · [Turn Recording](#turn-recording-the-canonical-source-ledger) · [Reliable archival](#reliable-archival-derive-long-term-memory-from-a-source-turn) · [Core objects](#core-objects)
 
 [Import a persona](#import-your-own-persona-markdown) · [Relationship premise](#choose-where-the-relationship-begins) · [Persona compilation](#advanced-compile-and-approve-a-structured-persona) · [Conversation memory](#save-ordinary-conversation-memories)
 
@@ -29,14 +29,15 @@ If you only want to get something running, complete the “Installation” and �
 3. **A Source Turn is evidence, while memory archival, relationship change, and persona growth remain separate channels.**
    Turn Recording preserves what the User and Agent visibly said under one stable identity. It does not make either message an authoritative fact, Relationship Event, Persona Reflection, or persona change without the relevant extraction and adjudication.
 
-4. **E.R.I.I. does not start a hidden thread automatically.**
-   With the default configuration, `remember()` only places a task in a persistent queue. The host application should call `process_pending()` to process tasks synchronously, or explicitly call `start()` to enable background archival and call `close()` during shutdown.
+4. **E.R.I.I. does not start hidden processing automatically.**
+   Reliable `archive_turn()` submissions are processed only by an explicit `process_pending()` or `drain()` call. The legacy `remember()` queue may still be consumed by an explicit `start()`, but constructing an Engine, calling REST `configure_engine()`, or running `erii serve` does not start it for you. Call `close()` during shutdown.
 
 ## Choose the Right Starting Path
 
 | Need | Recommended entry point |
 | --- | --- |
 | Durably record one visible User/Agent exchange under a stable source identity | `begin_turn()` → `complete_turn()`, or atomic `record_turn()` |
+| Reliably derive MemoryNodes and a structured Timeline from that exchange | configure `MemoryExtractorV1` → `archive_turn()` → `process_pending()` / `drain()` |
 | Save conversations and retrieve a block of prompt context | `remember()` → `process_pending()` → `recall()` |
 | Maintain an independent persona and user relationship | `initialize_relationship()` → Relationship Event → `recall_structured()`; start with `full`, or approve a Persona Manifest first |
 | Let a model propose Relationship Events | `adjudicate_relationship_candidates()` |
@@ -119,7 +120,7 @@ Confirm that installation succeeded:
 python -c "import erii; print(erii.__version__)"
 ```
 
-The command should print `0.4.0a5`.
+The command should print `0.4.0a6`.
 
 For long-lived alpha deployments, pin a verified commit or release instead of allowing deployment scripts to follow `main` unconditionally.
 
@@ -459,6 +460,232 @@ Reply Attempt records contain no draft, prompt, provider exception body, credent
 - Reusing a stable ID with different opening content, completing it differently, or racing completion against abandonment raises a turn conflict. `completed` and `abandoned` are immutable terminal states.
 - Visible transcript text is retained as source evidence. Hidden system messages, complete prompts, model reasoning, credentials, and tool output invisible to both parties are outside this record.
 - A transcript proves what was visibly expressed, not that a User claim is true or an Agent reply is valid characterization. It does not directly become a MemoryNode, Relationship Event, Persona Reflection, or Persona Growth decision.
+
+## Reliable Archival: Derive Long-Term Memory from a Source Turn
+
+`0.4.0a6` adds a reliable, provenance-preserving path from a completed Source Turn to retrievable memory artifacts:
+
+```text
+record_turn() → archive_turn() → persistent receipt
+                              → explicit processing
+                              → atomic MemoryNode + structured Timeline commit
+```
+
+This path is separate from relationship adjudication and persona growth. Archiving a turn does not change relationship state or approve a character change.
+
+### 1. Provide a versioned `MemoryExtractorV1`
+
+`MemoryExtractorV1` is a structural Python protocol. The host supplies an object with a public `descriptor` and an `extract(request)` method. The descriptor must contain stable, non-sensitive version identifiers; do not put model prompts, API keys, user text, or credentials in it.
+
+```python
+from erii import (
+    ArchivalArtifactsDecision,
+    ArchivalNoMemoryDecision,
+    ExtractorDescriptor,
+    MemoryCandidate,
+    MemoryType,
+    TimelineCandidate,
+)
+
+
+class MyMemoryExtractor:
+    descriptor = ExtractorDescriptor(
+        extractor_id="my-app.memory-extractor",
+        extractor_version="1.0",
+        extraction_schema_version="1",
+    )
+
+    def extract(self, request):
+        # request identifies the relationship and Source Turn and contains its
+        # canonical visible transcript. A real implementation can call the
+        # host's chosen model here, then validate and convert its output.
+        user_text = request.transcript.user_message.content
+        if user_text == "Thanks.":
+            return ArchivalNoMemoryDecision(
+                reason_code="ordinary_acknowledgement",
+            )
+
+        return ArchivalArtifactsDecision(
+            timeline=(
+                TimelineCandidate(
+                    content="We spent an ordinary afternoon together at the arcade.",
+                ),
+            ),
+            memories=(
+                MemoryCandidate(
+                    node_type=MemoryType.PREFERENCE,
+                    content="The user enjoys playing fighting games with me.",
+                    tags=("arcade", "shared-experience"),
+                    base_importance=0.72,
+                    emotional_score=0.35,
+                ),
+            ),
+        )
+```
+
+The extractor returns exactly one discriminated decision:
+
+- `ArchivalArtifactsDecision`: at least one Timeline or Memory candidate; one Source Turn can propose at most one Timeline entry.
+- `ArchivalNoMemoryDecision`: an explicit successful result with no artifacts. Allowed reason codes are `duplicate_information`, `ephemeral_coordination`, `no_new_information`, `none`, `nothing_durable`, and `ordinary_acknowledgement`.
+
+An empty object, permissive free-form JSON, an empty `artifacts` decision, or an unknown `kind` is invalid output. Extractors propose bounded semantic content only: they cannot write storage, choose authoritative IDs or timestamps, create Core/Instruction memory, or modify relationship/persona state. E.R.I.I. supplies identity and provenance at commit time.
+
+### 2. Record the Source Turn, then submit archival
+
+For an inline integration, set `async_archival=False`. `archive_turn()` then attempts extraction and atomic commit before returning:
+
+```python
+from erii import (
+    ArchivalOutcomeCode,
+    ArchivalStatus,
+    ERIIConfig,
+    ERIIEngine,
+    SQLiteStorage,
+)
+
+
+config = ERIIConfig(
+    async_archival=False,
+    archival_max_attempts=3,
+    archival_base_delay_seconds=0.0,
+)
+storage = SQLiteStorage("./data/erii.db")
+
+with ERIIEngine(
+    storage_driver=storage,
+    memory_extractor=MyMemoryExtractor(),
+    config=config,
+) as engine:
+    engine.initialize_relationship(
+        "agent_lumi",
+        "user_chen",
+        persona_source="Lumi is a gentle and candid original character.",
+    )
+
+    source = engine.record_turn(
+        "agent_lumi",
+        "user_chen",
+        "Let us go to the arcade.",
+        "Okay. I want to play one more round.",
+        turn_id="turn-arcade-001",
+    )
+
+    receipt = engine.archive_turn(
+        "agent_lumi",
+        "user_chen",
+        source.source_turn_id,
+        idempotency_key="archive-turn-arcade-001",
+    )
+
+    assert receipt.status == ArchivalStatus.COMPLETED
+    assert receipt.outcome_code in {
+        ArchivalOutcomeCode.ARTIFACTS_COMMITTED,
+        ArchivalOutcomeCode.NO_MEMORY,
+    }
+    print(receipt.timeline_count, receipt.memory_node_count)
+```
+
+The relationship must already exist, the Source Turn must be `completed`, and the lookup is restricted to the exact `Agent × User` scope. An `open` or `abandoned` Turn is rejected before a receipt is created.
+
+Configuring `memory_extractor=` also makes `memory_archival` part of the default processing plan recorded by `record_turn()` / `complete_turn()`. That declaration is not proof that archival happened: `archive_turn()` is the explicit submission, and `get_source_processing_outcomes()` projects its current result without mutating the sealed Turn Record.
+
+### 3. Choose inline or deferred processing explicitly
+
+With `async_archival=True` (the default), `archive_turn()` only durably accepts the command and returns `pending`. It does not call the extractor and does not launch a hidden worker:
+
+```python
+config = ERIIConfig(async_archival=True)
+engine = ERIIEngine(
+    storage_driver=storage,
+    memory_extractor=MyMemoryExtractor(),
+    config=config,
+)
+
+source = engine.record_turn(
+    "agent_lumi",
+    "user_chen",
+    "Let us go to the arcade.",
+    "Okay. One more round.",
+    turn_id="turn-arcade-002",
+)
+pending = engine.archive_turn(
+    "agent_lumi",
+    "user_chen",
+    source.source_turn_id,
+    idempotency_key="archive-turn-arcade-002",
+)
+print(pending.status.value)  # pending
+
+# A scheduler, request handler, CLI command, or host-owned worker invokes this.
+engine.process_pending(max_tasks=10)
+current = engine.get_archival_receipt(
+    "agent_lumi",
+    "user_chen",
+    pending.archival_id,
+)
+print(current.status.value)
+```
+
+At a checkpoint or graceful shutdown boundary, `drain()` processes the non-terminal submission snapshot visible when the call begins and returns a truthful bounded report:
+
+```python
+report = engine.drain(timeout=5.0)
+print(report.completed, report.failed, report.unfinished_archival_ids)
+
+shutdown = engine.close(timeout=1.0)
+print(shutdown.worker_stopped, shutdown.unfinished_archival_ids)
+```
+
+`close()` stops acceptance and explicit workers; it deliberately does not drain queued reliable archival. Call `drain()` first when the host wants that behavior. Deferred submissions survive Engine restarts in both FileStorage and SQLiteStorage.
+
+`start()` controls only the legacy `remember()` worker in this release. It is not a substitute for `process_pending()` or `drain()` on reliable Source Turn archival.
+
+### 4. Treat identity, receipts, and failures as durable protocol
+
+The `idempotency_key` belongs to one relationship. Repeating the same key for the same archival request returns the same durable identity and does not extract twice. Rebinding that key to another Source Turn or request raises `ArchivalConflictError`.
+
+`ArchivalReceipt` contains operational identity, lifecycle state, phase, Source revision, extractor descriptor, safe result code, attempt counts, and a content-free artifact manifest. It deliberately excludes the Source Transcript, prompts, model reasoning, provider exception bodies, credentials, and the raw idempotency key. Query it only through the exact relationship scope:
+
+```python
+receipt = engine.get_archival_receipt(
+    "agent_lumi",
+    "user_chen",
+    archival_id,
+)
+receipts = engine.list_archival_receipts("agent_lumi", "user_chen")
+```
+
+Lifecycle states are `pending`, `processing`, `retry_wait`, `completed`, and `failed`. Successful outcome codes are `artifacts_committed` and `no_memory`. Temporary extraction or commit failures remain inspectable and retryable according to configuration; a commit retry replays the already frozen batch instead of calling the extractor again. An active extraction renews its fenced Processing and Consumer leases; a crashed attempt discovered after lease expiry is classified as `processing_lease_expired` and consumes the existing bounded attempt budget without another model call. With inline processing, an accepted attempt that cannot complete raises `ArchivalProcessingError`; its `.receipt` is the safe durable state to inspect. A missing extractor raises `ArchivalCapabilityError`.
+
+FileStorage uses locked atomic file replacement. SQLiteStorage publishes nodes, structured Timeline entries, and the terminal receipt in one transaction; a6 upgrades SQLite to Schema v5. Both bundled stores implement the same public contract and use leases to prevent two consumers from publishing the same submission twice.
+
+### 5. Portability and retention
+
+Full terminal receipts are retained for 30 days by default. Configure the window with `ERIIConfig(archival_receipt_retention_days=...)`; zero makes a terminal receipt immediately eligible. Compaction is checked during archival submit/get/list operations, and the host can run it explicitly as a maintenance action:
+
+```python
+compacted_count = engine.compact_archival_receipts()
+```
+
+Only expired terminal receipts are compacted. Their MemoryNodes and structured Timeline entries remain intact, and retrying the original request still resolves to the same archival identity without re-extraction. `get_archival_receipt()` may therefore return either a full `ArchivalReceipt` (`retention_state="full"`) or a minimal `ArchivalTombstone` (`retention_state="compacted"`). The tombstone preserves terminal status, outcome, source and request/idempotency fingerprints while dropping the extractor descriptor, attempt details, summary, and artifact manifest.
+
+MemoryPack `0.4.0a6` carries:
+
+- derived MemoryNodes with Source Turn, archival, and extractor provenance;
+- structured `timeline_entries` with stable IDs and the same provenance;
+- terminal `archival_ledger` tombstones containing only the minimum identity needed to preserve idempotency and audit continuity.
+
+It does not export pending/processing work, the raw idempotency key, detailed attempt history, `safe_summary`, or full artifact manifests. MemoryPack exports terminal identities as tombstones even when the local full receipt is still inside its retention window; imported tombstones are intentionally compacted receipts. Because this provenance is relationship-bound, a Pack carrying it cannot be remapped to another `Agent × User` scope.
+
+### Legacy `remember()` remains available
+
+`remember()` still supports existing `llm=` / `BaseLLMAdapter` integrations and the old persistent task queue. It does not create a canonical Turn Record, reliable receipt, structured provenance, or atomic a6 archival batch. New integrations should use:
+
+```text
+record_turn() (or begin_turn() → complete_turn()) → archive_turn()
+```
+
+Keep `remember()` only where compatibility with the earlier Prompt/JSON pipeline is required.
 
 ## Core Objects
 
@@ -1131,6 +1358,8 @@ The archival task queue is usually stored as `erii_tasks.db` inside that directo
 
 In `0.4.0a5`, FileStorage also persists the relationship-scoped Turn Record collection under `_turn_records`. Existing files without that field remain readable; new turn writes add it without changing the meaning of legacy MemoryNodes or Relationship Events.
 
+In `0.4.0a6`, reliable commands, leases, frozen batches, structured Timeline entries, and archival tombstones are maintained under the locked `_archival_state.json` aggregate. Publishing a prepared batch uses one atomic replacement, so readers see its nodes, Timeline, and terminal receipt together or see none of them.
+
 ### SQLiteStorage
 
 ```python
@@ -1150,6 +1379,8 @@ This is appropriate for:
 - workloads that benefit from WAL, transactions, and more robust idempotency.
 
 `0.4.0a5` migrates an existing SQLite database in place to schema v4. The new `source_turns` table stores each Turn Record as a relationship-scoped aggregate, ordered by its durable opening sequence. Back up important databases before upgrading an alpha release.
+
+`0.4.0a6` migrates schema v4 to v5, adding reliable archival records, consumer leases, tombstones, and structured Timeline provenance. Batch publication happens inside one SQLite transaction. Existing v4 Source Turns and earlier memory data are retained in place.
 
 FileStorage remains the default in the current release. To select SQLite, explicitly pass a `SQLiteStorage` instance. Neither storage implementation is a multi-tenant authorization boundary, and both store data in plaintext by default.
 
@@ -1179,18 +1410,22 @@ engine.import_memory(
 )
 ```
 
-MemoryPack `0.4.0a5` carries:
+MemoryPack `0.4.0a6` carries:
 
-- Core Memory, MemoryNodes, and the Experiential Timeline;
+- Core Memory, MemoryNodes, and the legacy Experiential Timeline;
+- provenance-complete structured `timeline_entries`;
 - the Character Blueprint and relationship record;
 - append-only Relationship Events and evidence-based adjudication;
 - persona compilation Proposals, the Persona Manifest, and persona growth Proposals;
 - Promises, Open Loops, condition confirmations, and resolution events;
 - the root `turn_records` collection, including complete visible Source Transcripts and terminal state.
+- terminal reliable archival identities as compact `archival_ledger` tombstones.
 
-Because `turn_records` contain relationship-private, verbatim conversation history, a Pack that contains them can only be restored to its exact original `agent_id`, `user_id`, and relationship identity. Supplying different host IDs is rejected, and `overwrite=True` does not bypass that rule. To move the same relationship between machines or storage adapters, preserve its original IDs.
+Because `turn_records` contain relationship-private, verbatim conversation history, and a6 artifact provenance is bound to its original sources, a Pack containing either can only be restored to its exact original `agent_id`, `user_id`, and relationship identity. Supplying different host IDs is rejected, and `overwrite=True` does not bypass that rule. To move the same relationship between machines or storage adapters, preserve its original IDs.
 
-MemoryPacks from `0.4.0a4` and earlier have no `turn_records`. They remain readable and retain their historical remapping behavior for the older payload, subject to persona, relationship, and reference-integrity checks. That compatibility path must not be interpreted as permission to remap an `0.4.0a5` Pack containing a Source Transcript ledger.
+MemoryPacks from `0.4.0a5` and earlier have no structured a6 archival ledger. They remain readable, and missing provenance is not fabricated. Packs from `0.4.0a4` and earlier also have no `turn_records` and retain their historical remapping behavior for the older payload, subject to persona, relationship, and reference-integrity checks. That compatibility path must not be interpreted as permission to remap a Pack containing a Source Transcript ledger or a6 archival provenance.
+
+The portable `archival_ledger` is deliberately not the live operational queue. It includes only terminal compact tombstones: no pending/processing job, raw idempotency key, attempt details, `safe_summary`, or artifact manifest is exported. Derived MemoryNodes and structured Timeline entries remain usable after a FileStorage-to-SQLiteStorage or SQLiteStorage-to-FileStorage move, and their Source Turn/extractor provenance stays intact.
 
 Before importing, note the following:
 
@@ -1198,7 +1433,7 @@ Before importing, note the following:
 - Repeatedly importing a legacy Experiential Timeline may still append duplicate entries.
 - Import is rejected if the existing relationship's persona or premise does not match.
 - Import is rejected when temporal-event references are missing, cross relationships, or have invalid ordering.
-- A Pack containing `turn_records` cannot be imported across `Agent × User` identities, even when overwrite is requested.
+- A Pack containing `turn_records` or archival provenance cannot be imported across `Agent × User` identities, even when overwrite is requested.
 - Before processing important data, copy the original storage file and test the operation in a separate directory.
 
 ## Add Relationship Candidates to a Real Chat Loop
@@ -1270,7 +1505,7 @@ Windows PowerShell:
 .\.venv\Scripts\erii.exe serve --host 127.0.0.1 --port 8000 --storage-dir ./data/rest-memory
 ```
 
-`erii serve` explicitly creates the Engine, starts the archival worker, and stops it when the service shuts down. Merely importing `erii.server.app` does not initialize storage or threads. When loaded directly as an ASGI application, the first business endpoint lazily initializes the default `./erii_memory`; accessing `/api/v1/health` alone does not trigger initialization.
+`erii serve` explicitly creates the Engine and closes it when the service shuts down. Neither it nor `configure_engine()` calls `start()`, and neither one starts reliable archival processing. Merely importing `erii.server.app` does not initialize storage or threads. When loaded directly as an ASGI application, the first business endpoint lazily initializes the default `./erii_memory`; accessing `/api/v1/health` alone does not trigger initialization.
 
 Open in a browser:
 
@@ -1333,6 +1568,27 @@ curl "http://127.0.0.1:8000/api/v1/turns?agent_id=agent_lumi&user_id=user_chen&s
 
 If both visible messages already exist, `POST /api/v1/turns` performs the atomic `record_turn()` form. If no reply was displayed, use the explicit `/abandon` route with a non-empty `reason`; never manufacture an Agent message just to close the record.
 
+Submit a completed Source Turn to reliable archival:
+
+```bash
+curl -i -X POST http://127.0.0.1:8000/api/v1/archivals \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "agent_lumi",
+    "user_id": "user_chen",
+    "source_turn_id": "turn-first-snow-001",
+    "idempotency_key": "archive-turn-first-snow-001"
+  }'
+```
+
+The route returns HTTP 202 while the receipt is `pending`, `processing`, or `retry_wait`, and HTTP 200 for a terminal result. It includes a `Location` header for relationship-scoped status polling:
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/archivals/ARCHIVAL_ID?agent_id=agent_lumi&user_id=user_chen"
+```
+
+These routes require the hosting application to construct `ERIIEngine(memory_extractor=...)`. The stock `configure_engine()` and CLI intentionally do not invent or auto-configure a `MemoryExtractorV1`; with the default reference Engine, `POST /api/v1/archivals` returns a safe 503 capability-unavailable response. A product embedding the reference routes should provide its configured Engine in its own ASGI bootstrap and explicitly schedule `process_pending()` or `drain()`. Receipt responses never include the Source Transcript.
+
 Save a conversation turn:
 
 ```bash
@@ -1393,6 +1649,8 @@ Main endpoints:
 | POST | `/api/v1/turns` | Atomically record an already-complete visible exchange |
 | GET | `/api/v1/turns/{turn_id}` | Read one relationship-scoped Turn Record |
 | GET | `/api/v1/turns` | List ordered Turn Records, optionally filtered by `status` |
+| POST | `/api/v1/archivals` | Submit one completed Source Turn for reliable archival |
+| GET | `/api/v1/archivals/{archival_id}` | Read a text-free reliable archival receipt in the exact relationship scope |
 | POST | `/api/v1/remember` | Queue a conversation turn for archival |
 | POST | `/api/v1/recall` | Compatibility Markdown recall |
 | POST | `/api/v1/recall/structured` | Structured recall |
@@ -1427,6 +1685,7 @@ The current reference service intentionally retains several boundaries:
 
 - It uses FileStorage and offers no CLI switch for SQLite.
 - The CLI does not provide configuration for a real memory-extraction LLM, so `/remember` uses the placeholder adapter by default.
+- The CLI and `configure_engine()` do not inject `MemoryExtractorV1` or consume reliable archival; `/archivals` therefore requires a custom host bootstrap.
 - It does not expose `initialize_relationship`, direct Promise/Open Loop CRUD, or persona approval endpoints.
 - Turn Recording and `/relationship/adjudicate` require the target relationship to have been initialized by a Python host application or imported through a MemoryPack.
 - It includes no authentication, authorization, tenant isolation, rate limiting, or TLS/HTTPS termination configuration.

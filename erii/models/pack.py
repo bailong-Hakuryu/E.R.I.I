@@ -8,6 +8,7 @@ from datetime import datetime
 import json
 from typing import Any, Dict, List, Optional
 from erii.models.adjudication import AdjudicationRecord, PersonaGrowthProposal
+from erii.models.archival import ArchivalTombstone, TimelineEntry
 from erii.models.node import MemoryNode
 from erii.models.persona import PersonaCompilationProposal, PersonaManifest
 from erii.models.relationship import RelationshipEvent, RelationshipProfile
@@ -17,7 +18,7 @@ from erii.models.turn import TurnRecord
 class MemoryPack:
     """Portable container data structure for agent/user memory export & import."""
 
-    CURRENT_VERSION = "0.4.0a5"
+    CURRENT_VERSION = "0.4.0a6"
 
     def __init__(
         self,
@@ -26,6 +27,8 @@ class MemoryPack:
         core_memory: str = "",
         nodes: Optional[List[MemoryNode]] = None,
         timeline: Optional[List[Dict[str, str]]] = None,
+        timeline_entries: Optional[List[TimelineEntry]] = None,
+        archival_ledger: Optional[List[ArchivalTombstone]] = None,
         version: str = CURRENT_VERSION,
         exported_at: Optional[str] = None,
         relationship: Optional[RelationshipProfile] = None,
@@ -44,6 +47,8 @@ class MemoryPack:
             core_memory: Core memory string.
             nodes: List of MemoryNode objects.
             timeline: List of timeline dicts {"timestamp": ..., "content": ...}.
+            timeline_entries: Stable structured Timeline records with provenance.
+            archival_ledger: Portable terminal Archival Tombstones only.
             version: MemoryPack format version string.
             exported_at: ISO timestamp string of export.
             relationship: Immutable relationship/persona profile, when initialized.
@@ -59,6 +64,8 @@ class MemoryPack:
         self.core_memory = core_memory
         self.nodes = nodes or []
         self.timeline = timeline or []
+        self.timeline_entries = timeline_entries or []
+        self.archival_ledger = archival_ledger or []
         self.relationship = relationship
         self.relationship_events = relationship_events or []
         self.relationship_adjudications = relationship_adjudications or []
@@ -81,6 +88,12 @@ class MemoryPack:
             "core_memory": self.core_memory,
             "nodes": [node.to_dict() for node in self.nodes],
             "timeline": self.timeline,
+            "timeline_entries": [
+                entry.to_dict() for entry in self.timeline_entries
+            ],
+            "archival_ledger": [
+                tombstone.to_dict() for tombstone in self.archival_ledger
+            ],
             "relationship": self.relationship.to_dict() if self.relationship else None,
             "relationship_events": [
                 event.to_dict() for event in self.relationship_events
@@ -110,6 +123,8 @@ class MemoryPack:
         core_mem = data.get("core_memory", "")
         raw_nodes = data.get("nodes", [])
         timeline = data.get("timeline", [])
+        raw_timeline_entries = data.get("timeline_entries", [])
+        raw_archival_ledger = data.get("archival_ledger", [])
         raw_relationship = data.get("relationship")
         raw_relationship_events = data.get("relationship_events", [])
         raw_adjudications = data.get("relationship_adjudications", [])
@@ -126,6 +141,13 @@ class MemoryPack:
             core_memory=core_mem,
             nodes=nodes,
             timeline=timeline,
+            timeline_entries=[
+                TimelineEntry.from_dict(item) for item in raw_timeline_entries
+            ],
+            archival_ledger=[
+                ArchivalTombstone.from_dict(item)
+                for item in raw_archival_ledger
+            ],
             relationship=(
                 RelationshipProfile.from_dict(raw_relationship)
                 if raw_relationship

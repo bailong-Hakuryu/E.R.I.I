@@ -2,7 +2,7 @@
 
 **简体中文** · [English](USAGE.md)
 
-> 适用于 E.R.I.I. `0.4.0a5`。当前版本仍是 alpha：适合本地开发、原型验证和受控集成，不应未经加固直接承担公开生产服务。
+> 适用于 E.R.I.I. `0.4.0a6`。当前版本仍是 alpha：适合本地开发、原型验证和受控集成，不应未经加固直接承担公开生产服务。
 
 E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长期记忆内核。它不负责生成聊天回复，也不绑定某一种模型；它负责保存角色与某个用户共同经历过什么、当前如何理解这些经历，以及哪些承诺和未完成事项仍值得被想起。
 
@@ -19,14 +19,15 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 3. **Source Turn 是证据；记忆归档、关系变化和人格成长仍是不同的派生通道。**
    Turn Recording 用一个稳定身份保存用户和 Agent 实际可见的原文。原文不会因为被保存，就自动成为事实、Relationship Event、Persona Reflection 或人格变化；这些结果仍要经过对应的提取与裁决。
 
-4. **E.R.I.I. 不会自动启动隐藏线程。**
-   默认配置下，`remember()` 只将任务放入持久队列。宿主应调用 `process_pending()` 同步处理，或显式调用 `start()` 开启后台归档，并在退出时调用 `close()`。
+4. **E.R.I.I. 不会自动启动隐藏处理。**
+   可靠 `archive_turn()` 只有在宿主显式调用 `process_pending()` 或 `drain()` 时才会处理。旧 `remember()` 队列仍可由显式 `start()` 消费，但构造 Engine、调用 REST `configure_engine()` 或运行 `erii serve` 都不会替你启动它。退出时应调用 `close()`。
 
 ## 你应该从哪条路径开始
 
 | 需求 | 推荐入口 |
 | --- | --- |
 | 持久保存一轮实际可见的用户/Agent 交互，并给它稳定来源身份 | `begin_turn()` → `complete_turn()`，或原子的 `record_turn()` |
+| 从这轮交互可靠派生 MemoryNode 与结构化 Timeline | 配置 `MemoryExtractorV1` → `archive_turn()` → `process_pending()` / `drain()` |
 | 只想保存对话并召回一段 Prompt 上下文 | `remember()` → `process_pending()` → `recall()` |
 | 需要独立的人设与用户关系 | `initialize_relationship()` → 关系事件 → `recall_structured()`；初期用 `full`，或先批准 Manifest |
 | 需要让模型提出关系事件 | `adjudicate_relationship_candidates()` |
@@ -93,7 +94,7 @@ python -m pip install -e ".[dev]"
 python -c "import erii; print(erii.__version__)"
 ```
 
-应输出 `0.4.0a5`。
+应输出 `0.4.0a6`。
 
 alpha 阶段用于长期环境时，应固定一个经过验证的 commit 或 release，不要让部署脚本无条件跟随 `main`。
 
@@ -433,6 +434,231 @@ Reply Attempt 不保存草稿、Prompt、Provider 原始异常、凭据或内部
 - 复用稳定 ID 却修改开启内容、用不同内容完成，或让完成与放弃竞争，会触发 Turn 冲突；`completed` 与 `abandoned` 都是不可变终态；
 - Source Transcript 只保存双方实际可见的内容，不保存隐藏系统消息、完整 Prompt、模型推理、凭据或双方都看不到的工具输出；
 - 原文证明“当时可见地表达了什么”，并不证明用户陈述必然为真，也不证明 Agent 回复符合人设。它不会直接变成 MemoryNode、Relationship Event、Persona Reflection 或人格成长决定。
+
+## 可靠归档：从 Source Turn 生成长期记忆
+
+`0.4.0a6` 新增了一条从 completed Source Turn 到可召回记忆产物的可靠、保留来源的路径：
+
+```text
+record_turn() → archive_turn() → 持久回执
+                              → 宿主显式处理
+                              → 原子提交 MemoryNode + 结构化 Timeline
+```
+
+这条路径与关系裁决、人格成长相互独立。归档一轮对话不会修改关系状态，也不会批准角色变化。
+
+### 1. 提供版本化 `MemoryExtractorV1`
+
+`MemoryExtractorV1` 是结构化 Python Protocol。宿主提供一个具有公开 `descriptor` 和 `extract(request)` 方法的对象即可。descriptor 只能放稳定、非敏感的版本标识，不能放模型 Prompt、API Key、用户原文或凭据。
+
+```python
+from erii import (
+    ArchivalArtifactsDecision,
+    ArchivalNoMemoryDecision,
+    ExtractorDescriptor,
+    MemoryCandidate,
+    MemoryType,
+    TimelineCandidate,
+)
+
+
+class MyMemoryExtractor:
+    descriptor = ExtractorDescriptor(
+        extractor_id="my-app.memory-extractor",
+        extractor_version="1.0",
+        extraction_schema_version="1",
+    )
+
+    def extract(self, request):
+        # request 标识关系与 Source Turn，并携带规范可见原文。
+        # 真实实现可以在这里调用宿主选择的模型，再校验并转换输出。
+        user_text = request.transcript.user_message.content
+        if user_text == "谢谢。":
+            return ArchivalNoMemoryDecision(
+                reason_code="ordinary_acknowledgement",
+            )
+
+        return ArchivalArtifactsDecision(
+            timeline=(
+                TimelineCandidate(
+                    content="我们一起在街机厅度过了一个普通的下午。",
+                ),
+            ),
+            memories=(
+                MemoryCandidate(
+                    node_type=MemoryType.PREFERENCE,
+                    content="用户喜欢和我一起玩格斗游戏。",
+                    tags=("arcade", "shared-experience"),
+                    base_importance=0.72,
+                    emotional_score=0.35,
+                ),
+            ),
+        )
+```
+
+提取器必须返回两种严格判别结果之一：
+
+- `ArchivalArtifactsDecision`：至少包含一个 Timeline 或 Memory 候选；每条 Source Turn 最多提出一条 Timeline；
+- `ArchivalNoMemoryDecision`：明确表示成功但没有产物。允许的 reason code 是 `duplicate_information`、`ephemeral_coordination`、`no_new_information`、`none`、`nothing_durable` 和 `ordinary_acknowledgement`。
+
+空对象、自由格式 JSON、空的 `artifacts` 或未知 `kind` 都是无效输出。提取器只能提出有界的语义内容：不能直接写存储、选择权威 ID 或时间戳、创建 Core/Instruction Memory，也不能修改关系或人格状态。E.R.I.I. 会在提交时补上身份与来源。
+
+### 2. 先记录 Source Turn，再提交归档
+
+需要内联处理时设置 `async_archival=False`。此时 `archive_turn()` 会在返回前尝试提取和原子提交：
+
+```python
+from erii import (
+    ArchivalOutcomeCode,
+    ArchivalStatus,
+    ERIIConfig,
+    ERIIEngine,
+    SQLiteStorage,
+)
+
+
+config = ERIIConfig(
+    async_archival=False,
+    archival_max_attempts=3,
+    archival_base_delay_seconds=0.0,
+)
+storage = SQLiteStorage("./data/erii.db")
+
+with ERIIEngine(
+    storage_driver=storage,
+    memory_extractor=MyMemoryExtractor(),
+    config=config,
+) as engine:
+    engine.initialize_relationship(
+        "agent_lumi",
+        "user_chen",
+        persona_source="Lumi 是一个温柔、坦诚的原创角色。",
+    )
+
+    source = engine.record_turn(
+        "agent_lumi",
+        "user_chen",
+        "我们去游戏厅吧。",
+        "好，我还想再玩一局。",
+        turn_id="turn-arcade-001",
+    )
+
+    receipt = engine.archive_turn(
+        "agent_lumi",
+        "user_chen",
+        source.source_turn_id,
+        idempotency_key="archive-turn-arcade-001",
+    )
+
+    assert receipt.status == ArchivalStatus.COMPLETED
+    assert receipt.outcome_code in {
+        ArchivalOutcomeCode.ARTIFACTS_COMMITTED,
+        ArchivalOutcomeCode.NO_MEMORY,
+    }
+    print(receipt.timeline_count, receipt.memory_node_count)
+```
+
+目标关系必须已经存在，Source Turn 必须是 `completed`，并且查询范围严格限制在完全相同的 `Agent × User`。`open` 或 `abandoned` Turn 会在创建回执前被拒绝。
+
+配置 `memory_extractor=` 后，`record_turn()` / `complete_turn()` 的默认处理计划也会包含 `memory_archival`。这个声明并不证明已经归档：`archive_turn()` 才是显式提交；`get_source_processing_outcomes()` 可以投影当前真实结果，而不会修改已经封存的 Turn Record。
+
+### 3. 显式选择同步或延迟处理
+
+当 `async_archival=True`（默认值）时，`archive_turn()` 只可靠接收命令并返回 `pending`，不会调用提取器，也不会启动隐藏 worker：
+
+```python
+config = ERIIConfig(async_archival=True)
+engine = ERIIEngine(
+    storage_driver=storage,
+    memory_extractor=MyMemoryExtractor(),
+    config=config,
+)
+
+source = engine.record_turn(
+    "agent_lumi",
+    "user_chen",
+    "我们去游戏厅吧。",
+    "好，再玩一局。",
+    turn_id="turn-arcade-002",
+)
+pending = engine.archive_turn(
+    "agent_lumi",
+    "user_chen",
+    source.source_turn_id,
+    idempotency_key="archive-turn-arcade-002",
+)
+print(pending.status.value)  # pending
+
+# 由宿主自己的调度器、请求处理器、CLI 命令或 worker 显式调用。
+engine.process_pending(max_tasks=10)
+current = engine.get_archival_receipt(
+    "agent_lumi",
+    "user_chen",
+    pending.archival_id,
+)
+print(current.status.value)
+```
+
+在检查点或优雅停机边界，可以调用 `drain()`。它会处理调用开始时可见的非终态任务快照，并返回真实、有界的报告：
+
+```python
+report = engine.drain(timeout=5.0)
+print(report.completed, report.failed, report.unfinished_archival_ids)
+
+shutdown = engine.close(timeout=1.0)
+print(shutdown.worker_stopped, shutdown.unfinished_archival_ids)
+```
+
+`close()` 只停止接收与显式 worker，不会隐式排空可靠归档；宿主需要这一行为时必须先调用 `drain()`。FileStorage 和 SQLiteStorage 中的延迟提交都能跨 Engine 重启保留。
+
+本版本的 `start()` 只控制旧 `remember()` worker，不能替代可靠 Source Turn 归档所需的 `process_pending()` 或 `drain()`。
+
+### 4. 把身份、回执和失败当作持久协议
+
+`idempotency_key` 的作用域是单个关系。相同归档请求重复使用相同键，会返回同一个持久身份，不会再次提取；把同一个键重新绑定到另一条 Source Turn 或请求，会抛出 `ArchivalConflictError`。
+
+`ArchivalReceipt` 包含运维身份、生命周期状态、阶段、Source revision、提取器描述、安全结果码、尝试次数和不含内容的产物清单。它有意不包含 Source Transcript、Prompt、模型推理、Provider 原始异常、凭据或原始幂等键。只能在完全相同的关系范围内查询：
+
+```python
+receipt = engine.get_archival_receipt(
+    "agent_lumi",
+    "user_chen",
+    archival_id,
+)
+receipts = engine.list_archival_receipts("agent_lumi", "user_chen")
+```
+
+生命周期状态包括 `pending`、`processing`、`retry_wait`、`completed` 和 `failed`；成功结果码是 `artifacts_committed` 与 `no_memory`。临时提取/提交失败会依据配置保持可观察、可重试；提交阶段重试会重放已经冻结的批次，不会再次调用提取器。活动提取会续租带栅栏的 Processing/Consumer Lease；进程崩溃后发现的过期 attempt 会标记为 `processing_lease_expired`，沿用已有的有界尝试预算，不会因此额外调用一次模型。同步模式下，已接收但未能完成的处理会抛出 `ArchivalProcessingError`，应读取其 `.receipt` 获得安全的持久状态；没有配置提取器时会抛出 `ArchivalCapabilityError`。
+
+FileStorage 使用锁和原子文件替换；SQLiteStorage 在一个事务中发布 MemoryNode、结构化 Timeline 与终态回执，a6 将 SQLite Schema 升级到 v5。两个内置存储实现相同公开契约，并使用租约避免两个消费者重复发布同一提交。
+
+### 5. 携带与留存
+
+完整终态回执默认保留 30 天。可以用 `ERIIConfig(archival_receipt_retention_days=...)` 调整；设为零表示终态回执立即符合压缩条件。提交、读取和列举归档时会检查到期回执，宿主也可以把下面的调用放进显式维护任务：
+
+```python
+compacted_count = engine.compact_archival_receipts()
+```
+
+只有到期终态回执会被压缩。已经提交的 MemoryNode 与结构化 Timeline 不会被删除；重试原请求仍会解析到同一个 archival identity，也不会重新提取。因此 `get_archival_receipt()` 可能返回完整 `ArchivalReceipt`（`retention_state="full"`），也可能返回最小 `ArchivalTombstone`（`retention_state="compacted"`）。tombstone 保留终态、结果、来源与请求/幂等指纹，但移除提取器描述、尝试详情、摘要和产物清单。
+
+MemoryPack `0.4.0a6` 会携带：
+
+- 带 Source Turn、archival 与提取器来源的派生 MemoryNode；
+- 具有稳定 ID 和相同来源的结构化 `timeline_entries`；
+- 只保留幂等连续性和审计所需最小身份的终态 `archival_ledger` tombstone。
+
+它不会导出 pending/processing 工作、原始幂等键、详细尝试历史、`safe_summary` 或完整产物清单。即使本地完整回执仍处于留存期，MemoryPack 也只导出对应终态 tombstone；导入后的 tombstone 是刻意压缩的回执。由于这些来源绑定原关系，携带它们的 Pack 禁止重映射到另一个 `Agent × User`。
+
+### 旧 `remember()` 继续兼容
+
+`remember()` 仍支持既有 `llm=` / `BaseLLMAdapter` 集成和旧持久任务队列，但它不会创建规范 Turn Record、可靠回执、结构化来源或 a6 原子归档批次。新集成应采用：
+
+```text
+record_turn()（或 begin_turn() → complete_turn()）→ archive_turn()
+```
+
+只有需要兼容早期 Prompt/JSON 管线时，才继续使用 `remember()`。
 
 ## 核心对象是什么
 
@@ -1101,6 +1327,8 @@ with ERIIEngine(storage_dir="./data/erii-memory") as engine:
 
 `0.4.0a5` 的 FileStorage 还会把关系范围内的 Turn Record 集合持久化到 `_turn_records`。缺少该字段的旧文件仍可读取；新增 Turn 不会改变旧式 MemoryNode 或 Relationship Event 的语义。
 
+`0.4.0a6` 会把可靠命令、租约、冻结批次、结构化 Timeline 与归档 tombstone 放在加锁的 `_archival_state.json` 聚合中。准备好的批次通过一次原子替换发布，因此读取方只会同时看到节点、Timeline 与终态回执，或者全部看不到。
+
 ### SQLiteStorage
 
 ```python
@@ -1120,6 +1348,8 @@ with ERIIEngine(storage_driver=storage) as engine:
 - 需要 WAL、事务和更稳定幂等行为的场景。
 
 `0.4.0a5` 会把已有 SQLite 数据库原地迁移到 Schema v4。新增的 `source_turns` 表以关系范围内的聚合记录保存每个 Turn，并按持久的开启序号排序。升级 alpha 版本前应先备份重要数据库。
+
+`0.4.0a6` 会把 Schema v4 迁移到 v5，增加可靠归档记录、消费者租约、tombstone 与结构化 Timeline 来源。批次发布在一个 SQLite 事务中完成；现有 v4 Source Turn 与更早记忆数据会原地保留。
 
 当前版本仍以 FileStorage 为默认；选择 SQLite 必须显式传入 `SQLiteStorage`。两者都不是多租户授权边界，也都默认以明文保存数据。
 
@@ -1149,18 +1379,22 @@ engine.import_memory(
 )
 ```
 
-MemoryPack `0.4.0a5` 会携带：
+MemoryPack `0.4.0a6` 会携带：
 
-- Core Memory、MemoryNode 和体验时间线；
+- Core Memory、MemoryNode 和旧式体验时间线；
+- 来源完整的结构化 `timeline_entries`；
 - Character Blueprint 与关系档案；
 - 追加式关系事件和证据裁决；
 - 人格编译提案、Manifest 和人格成长提案；
 - Promise、Open Loop、条件确认和解决事件；
-- 根级 `turn_records` 集合，包括完整可见 Source Transcript 与终态。
+- 根级 `turn_records` 集合，包括完整可见 Source Transcript 与终态；
+- 以压缩 `archival_ledger` tombstone 表示的可靠归档终态身份。
 
-`turn_records` 含有关系私有的逐字对话历史，因此包含它的 Pack 只能恢复到完全相同的原始 `agent_id`、`user_id` 与关系身份。传入新的宿主 ID 会被拒绝，`overwrite=True` 也不能绕过。跨机器或跨存储 Adapter 搬迁同一关系时，应保留原 ID。
+`turn_records` 含有关系私有的逐字对话历史，a6 产物来源也绑定原始来源；包含任意一种的 Pack 只能恢复到完全相同的原始 `agent_id`、`user_id` 与关系身份。传入新的宿主 ID 会被拒绝，`overwrite=True` 也不能绕过。跨机器或跨存储 Adapter 搬迁同一关系时，应保留原 ID。
 
-`0.4.0a4` 及更早的 MemoryPack 没有 `turn_records`，仍可读取；其旧载荷在满足人设、关系和引用完整性校验时，保留历史重映射行为。这个兼容路径不能被理解成允许重映射含完整 Source Transcript 账本的 `0.4.0a5` Pack。
+`0.4.0a5` 及更早的 MemoryPack 没有 a6 结构化归档账本，仍可读取，也不会伪造缺失来源。`0.4.0a4` 及更早的 Pack 还没有 `turn_records`；其旧载荷在满足人设、关系和引用完整性校验时，保留历史重映射行为。这个兼容路径不能被理解成允许重映射含完整 Source Transcript 账本或 a6 归档来源的 Pack。
+
+可携带的 `archival_ledger` 不是实时运维队列。它只包含终态压缩 tombstone，不导出 pending/processing 任务、原始幂等键、尝试细节、`safe_summary` 或产物清单。派生 MemoryNode 和结构化 Timeline 在 FileStorage 与 SQLiteStorage 之间搬迁后仍可使用，并保留 Source Turn/提取器来源。
 
 导入前请注意：
 
@@ -1168,7 +1402,7 @@ MemoryPack `0.4.0a5` 会携带：
 - 旧式体验时间线重复导入时仍可能追加重复项；
 - 已存在关系的人设或 premise 不匹配时会拒绝导入；
 - 时间事件引用缺失、跨关系或顺序无效时会拒绝导入；
-- 含 `turn_records` 的 Pack 禁止跨 `Agent × User` 身份导入，即使请求覆盖也不允许；
+- 含 `turn_records` 或归档来源的 Pack 禁止跨 `Agent × User` 身份导入，即使请求覆盖也不允许；
 - 处理重要数据前，应先复制原存储文件并在测试目录验证结果。
 
 ## 在真实聊天循环中追加关系候选
@@ -1226,7 +1460,7 @@ python -m pip install ".[server]"
 erii serve --host 127.0.0.1 --port 8000 --storage-dir ./data/rest-memory
 ```
 
-`erii serve` 会显式创建 Engine、启动归档 worker，并在服务关闭时停止它。单纯导入 `erii.server.app` 不会初始化存储或线程；直接以 ASGI 方式加载时，首个业务端点才会用默认 `./erii_memory` 延迟初始化，单独访问 `/health` 不会触发初始化。
+`erii serve` 会显式创建 Engine，并在服务关闭时关闭它。它与 `configure_engine()` 都不会调用 `start()`，也不会启动可靠归档处理。单纯导入 `erii.server.app` 不会初始化存储或线程；直接以 ASGI 方式加载时，首个业务端点才会用默认 `./erii_memory` 延迟初始化，单独访问 `/health` 不会触发初始化。
 
 浏览器打开：
 
@@ -1289,6 +1523,27 @@ curl "http://127.0.0.1:8000/api/v1/turns?agent_id=agent_lumi&user_id=user_chen&s
 
 如果双方可见消息都已经存在，`POST /api/v1/turns` 对应原子的 `record_turn()`。如果回复没有展示，应通过 `/abandon` 路由提交非空 `reason`，不要为了关闭记录而捏造 Agent 回复。
 
+提交一条 completed Source Turn 进入可靠归档：
+
+```bash
+curl -i -X POST http://127.0.0.1:8000/api/v1/archivals \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "agent_lumi",
+    "user_id": "user_chen",
+    "source_turn_id": "turn-first-snow-001",
+    "idempotency_key": "archive-turn-first-snow-001"
+  }'
+```
+
+回执处于 `pending`、`processing` 或 `retry_wait` 时返回 HTTP 202；终态返回 HTTP 200。响应包含用于关系范围状态轮询的 `Location`：
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/archivals/ARCHIVAL_ID?agent_id=agent_lumi&user_id=user_chen"
+```
+
+这些路由要求宿主构造 `ERIIEngine(memory_extractor=...)`。默认 `configure_engine()` 与 CLI 不会凭空创建或自动配置 `MemoryExtractorV1`；使用默认参考 Engine 时，`POST /api/v1/archivals` 会返回安全的 503 capability-unavailable 响应。产品若复用这些参考路由，应在自己的 ASGI 启动代码中提供已配置 Engine，并显式调度 `process_pending()` 或 `drain()`。回执响应不会包含 Source Transcript。
+
 保存一轮对话：
 
 ```bash
@@ -1349,6 +1604,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/recall/structured \
 | POST | `/api/v1/turns` | 原子保存一轮已经完成的可见交互 |
 | GET | `/api/v1/turns/{turn_id}` | 读取一条关系范围内的 Turn Record |
 | GET | `/api/v1/turns` | 按顺序列举 Turn Record，可用 `status` 过滤 |
+| POST | `/api/v1/archivals` | 提交一条 completed Source Turn 进入可靠归档 |
+| GET | `/api/v1/archivals/{archival_id}` | 在精确关系范围内读取不含正文的可靠归档回执 |
 | POST | `/api/v1/remember` | 对话进入归档队列 |
 | POST | `/api/v1/recall` | 兼容 Markdown 召回 |
 | POST | `/api/v1/recall/structured` | 结构化召回 |
@@ -1383,6 +1640,7 @@ MemoryPack 导入请求必须把导出响应中的 `pack` 字段作为 `pack_dat
 
 - 使用 FileStorage，不提供 CLI SQLite 开关；
 - CLI 没有注入真实记忆提取 LLM 的配置，因此 `/remember` 默认只使用占位适配器；
+- CLI 与 `configure_engine()` 不注入 `MemoryExtractorV1`，也不消费可靠归档；`/archivals` 因而需要宿主自定义启动代码；
 - 不提供 `initialize_relationship`、直接 Promise/Open Loop CRUD 或人格审批端点；
 - Turn Recording 与 `/relationship/adjudicate` 都要求目标关系已经由 Python 宿主初始化，或通过 MemoryPack 导入；
 - 不包含认证、授权、租户隔离、限流，也不提供 TLS/HTTPS 终止配置。

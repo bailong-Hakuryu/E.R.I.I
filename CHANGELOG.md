@@ -2,6 +2,36 @@
 
 本项目的用户可感知变化记录在此文件。版本遵循语义化版本；`0.x` 阶段仍可能出现受控的破坏性变更。
 
+## [0.4.0a6] - 2026-07-29
+
+### Added
+
+- 面向规范 Source Turn 的可靠归档入口：宿主提供显式、版本化的 `MemoryExtractorV1` 与非敏感 `ExtractorDescriptor`，再调用 `archive_turn()`。
+- 严格的 `artifacts | no_memory` 提取结果；成功的 `no_memory` 不会写入占位 Timeline 或 MemoryNode。
+- 关系范围内的持久 `ArchivalReceipt`、稳定 `archival_id`、幂等键绑定、请求冲突检测、提取/提交阶段、重试状态和安全结果码。
+- 提取期间自动续租 Processing/Consumer Lease；崩溃遗留的过期 attempt 会以 `processing_lease_expired` 进入有界重试，而不是再次无限调用模型。
+- 默认 30 天完整终态回执保留期，以及 `compact_archival_receipts()` 到期压缩；最小 tombstone 保留幂等与审计连续性，不删除已经提交的记忆产物。
+- `process_pending()` 与 `drain()` 的显式处理接口，以及不隐式排空持久任务的 `close()` / `ShutdownReport`。
+- MemoryNode 与结构化 Timeline 的完整来源信息，包括 Source Turn、Source revision、archival、提取器版本和 E.R.I.I. 处理版本。
+- FileStorage 与 SQLiteStorage 的可靠归档能力；MemoryNode、结构化 Timeline 与归档终态在一个原子批次中发布，SQLite Schema 升级到 v5。
+- MemoryPack `0.4.0a6` 的 `timeline_entries` 与 `archival_ledger`；只携带终态归档的最小 tombstone，不携带运行中任务、原始幂等键或详细运维回执。
+- `POST /api/v1/archivals` 与关系范围内的 `GET /api/v1/archivals/{archival_id}`。
+
+### Changed
+
+- `async_archival=True` 下，可靠归档提交只持久化为 `pending`；Engine 构造、`configure_engine()`、`erii serve` 和 `start()` 都不会隐藏消费这条新管线，宿主必须显式调用 `process_pending()` 或 `drain()`。
+- `async_archival=False` 下，`archive_turn()` 在当前调用中同步尝试提取和原子提交，并通过回执或类型化异常报告真实结果。
+- `close(timeout)` 会等待当前可靠归档 attempt 至超时，并在关闭开始后阻止同一 Engine 领取下一项；同一 Engine 的重叠 `process_pending()` 调用也不会并行复用消费者身份。
+- SQLite 的旧式节点快照保存不会删除已经由可靠归档原子提交的节点；MemoryPack 墓碑会在其他内容写入前预检活动回执冲突。
+- 包版本与 MemoryPack 当前版本升级为 `0.4.0a6`。
+
+### Compatibility
+
+- `remember()`、旧 LLM Adapter、旧持久任务队列与显式 `start()` 继续作为兼容路径；它们不会自动获得规范 Source Turn 来源或 a6 可靠归档回执。
+- 旧 FileStorage 数据继续可读；SQLite v4 数据原地迁移到 Schema v5。
+- `0.4.0a5` 及更早的 MemoryPack 继续可读；缺少结构化 Timeline 或归档 tombstone 时按旧数据处理，不伪造来源。
+- 携带归档来源的 MemoryPack 与含 Source Transcript 的 Pack 一样，禁止跨 `Agent × User` 重映射。
+
 ## [0.4.0a5] - 2026-07-28
 
 ### Added

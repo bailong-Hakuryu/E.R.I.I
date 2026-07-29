@@ -24,6 +24,8 @@ from erii.models.relationship import (
     RelationshipProfile,
 )
 from erii.models.turn import ReplyAttemptRecord, TurnRecord, TurnStatus
+from erii.models.archival import ArchivalTombstone, TimelineEntry
+from erii.storage.archival import AtomicArchivalStoreV1
 
 
 class KeyLockManager:
@@ -280,3 +282,47 @@ class BaseStorage(ABC):
     ) -> List[ReplyAttemptRecord]:
         """Returns failed reply attempts in attempt-number order."""
         raise NotImplementedError("storage adapter does not support reply attempts")
+
+    def list_timeline_entries(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> List[TimelineEntry]:
+        """Returns structured Timeline records when supported."""
+        raise NotImplementedError("storage adapter does not support structured timeline")
+
+    def import_timeline_entries(
+        self,
+        agent_id: str,
+        user_id: str,
+        entries: List[TimelineEntry],
+    ) -> None:
+        """Idempotently imports structured Timeline records."""
+        raise NotImplementedError("storage adapter does not support structured timeline")
+
+    def list_archival_tombstones(
+        self,
+        relationship_id: str,
+    ) -> List[ArchivalTombstone]:
+        """Returns portable terminal archival identities."""
+        raise NotImplementedError("storage adapter does not support archival ledger")
+
+    def import_archival_tombstones(
+        self,
+        relationship_id: str,
+        tombstones: List[ArchivalTombstone],
+    ) -> None:
+        """Idempotently imports portable terminal archival identities."""
+        raise NotImplementedError("storage adapter does not support archival ledger")
+
+    def validate_archival_tombstones(
+        self,
+        relationship_id: str,
+        tombstones: List[ArchivalTombstone],
+    ) -> None:
+        """Preflights portable archival identities without writing them."""
+        raise NotImplementedError("storage adapter does not support archival ledger")
+
+    def atomic_archival_store_v1(self) -> Optional[AtomicArchivalStoreV1]:
+        """Returns the optional versioned reliable-archival capability."""
+        return None

@@ -10,6 +10,14 @@ import sys
 from typing import Optional
 
 from erii._version import __version__
+from erii.models.archival import (
+    ArchivalCapabilityError,
+    ArchivalConflictError,
+    ArchivalNotFoundError,
+    ArchivalProcessingError,
+    ArchivalStatus,
+    ArchivalSubmissionError,
+)
 from erii.core.persona_context import PersonaManifestRequiredError
 from erii.core.recall import RecallBudgetUnsatisfiedError
 from erii.engine import ERIIEngine
@@ -41,7 +49,6 @@ def configure_engine(storage_dir: str = "./erii_memory") -> ERIIEngine:
     if _engine is not None:
         _engine.close()
     _engine = ERIIEngine(storage_dir=storage_dir)
-    _engine.start()
     return _engine
 
 
@@ -172,6 +179,14 @@ try:
         stage: ReplyAttemptStage
         capability_descriptor: str
         failure_classification: str
+
+    class ArchivalSubmissionBody(BaseModel):
+        """Submits one existing completed Source Turn for reliable archival."""
+
+        agent_id: str = "default_agent"
+        user_id: str
+        source_turn_id: str
+        idempotency_key: str = Field(min_length=1, max_length=256)
 
     @app.get("/api/v1/health")
     def api_health():
@@ -364,6 +379,116 @@ try:
             return {"status": "success", "turn": turn.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError) as exc:
             raise HTTPException(status_code=404, detail="turn not found") from exc
+
+    @app.post("/api/v1/archivals")
+    def api_submit_archival(req: ArchivalSubmissionBody):
+        """Accepts reliable archival and reports its actual lifecycle state."""
+        try:
+            receipt = get_engine().archive_turn(
+                req.agent_id,
+                req.user_id,
+                req.source_turn_id,
+                idempotency_key=req.idempotency_key,
+            )
+        except ArchivalCapabilityError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "archival_capability_unavailable",
+                    "retryable": False,
+                    "safe_summary": "reliable archival is not configured",
+                },
+            ) from exc
+        except ArchivalConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "archival_conflict",
+                    "retryable": False,
+                    "safe_summary": (
+                        "the archival intent conflicts with an existing binding"
+                    ),
+                },
+            ) from exc
+        except (ArchivalSubmissionError, RelationshipNotFoundError) as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_source_turn",
+                    "retryable": False,
+                    "safe_summary": (
+                        "archival requires an existing completed Source Turn"
+                    ),
+                },
+            ) from exc
+        except ArchivalProcessingError as exc:
+            receipt = exc.receipt
+            retryable = bool(receipt.retryable)
+            raise HTTPException(
+                status_code=503 if retryable else 500,
+                detail={
+                    "code": (
+                        receipt.outcome_code.value
+                        if receipt.outcome_code is not None
+                        else "archival_processing_failed"
+                    ),
+                    "retryable": retryable,
+                    "safe_summary": receipt.safe_summary,
+                    "receipt": receipt.to_dict(),
+                },
+            ) from exc
+        status_code = (
+            202
+            if receipt.status
+            in {
+                ArchivalStatus.PENDING,
+                ArchivalStatus.PROCESSING,
+                ArchivalStatus.RETRY_WAIT,
+            }
+            else 200
+        )
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=status_code,
+            content={"receipt": receipt.to_dict()},
+            headers={
+                "Location": f"/api/v1/archivals/{receipt.archival_id}",
+            },
+        )
+
+    @app.get("/api/v1/archivals/{archival_id}")
+    def api_get_archival(
+        archival_id: str,
+        agent_id: str,
+        user_id: str,
+    ):
+        """Queries one scoped receipt without exposing its Source Transcript."""
+        try:
+            receipt = get_engine().get_archival_receipt(
+                agent_id,
+                user_id,
+                archival_id,
+            )
+            return {"receipt": receipt.to_dict()}
+        except ArchivalCapabilityError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "archival_capability_unavailable",
+                    "retryable": False,
+                    "safe_summary": "reliable archival is not configured",
+                },
+            ) from exc
+        except (ArchivalNotFoundError, RelationshipNotFoundError) as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "archival_not_found",
+                    "retryable": False,
+                    "safe_summary": "archival was not found in this scope",
+                },
+            ) from exc
 
     @app.post("/api/v1/recall/structured")
     def api_recall_structured(req: StructuredRecallBody):

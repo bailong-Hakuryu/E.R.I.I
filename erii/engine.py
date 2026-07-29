@@ -13,6 +13,7 @@ import uuid
 from erii.adapters.base import BaseLLMAdapter
 from erii.adapters.custom_adapter import CallableLLMAdapter
 from erii.core.archiver import AsyncArchiverWorker
+from erii.core.archival import ArchivalCoordinator
 from erii.core.budget import MemoryBudgetManager
 from erii.core.decay import MemoryDecayEvaluator
 from erii.core.retriever import MemoryRetriever
@@ -29,6 +30,16 @@ from erii.core.turn_ledger import TurnLedger
 from erii.core.queue.base import BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.models.config import ERIIConfig
+from erii.models.archival import (
+    ArchivalDrainReport,
+    ArchivalOutcomeCode,
+    ArchivalReceipt,
+    ArchivalStatus,
+    ArchivalSubmissionError,
+    ArchivalTombstone,
+    MemoryExtractorV1,
+    ShutdownReport,
+)
 from erii.models.adjudication import (
     AdjudicationBatchResult,
     AdjudicationRecord,
@@ -85,8 +96,11 @@ from erii.models.turn import (
     ReplyAttemptStage,
     ReplyContinuityAssessment,
     SourceProcessingChannel,
+    SourceProcessingOutcome,
+    SourceProcessingState,
     SourceTurnReceipt,
     TurnConflictError,
+    TurnNotFoundError,
     TurnRecord,
     TurnStatus,
 )
@@ -117,6 +131,7 @@ class ERIIEngine:
         task_queue: Optional[BaseTaskQueue] = None,
         vector_store: Optional[BaseVectorStore] = None,
         embedding_provider: Optional[Union[BaseEmbeddingProvider, Callable[[str], List[float]]]] = None,
+        memory_extractor: Optional[MemoryExtractorV1] = None,
     ) -> None:
         """Initializes ERIIEngine.
 
@@ -128,6 +143,7 @@ class ERIIEngine:
             task_queue: Custom BaseTaskQueue implementation (optional).
             vector_store: BaseVectorStore instance for hybrid vector search (optional).
             embedding_provider: BaseEmbeddingProvider or callable function (optional).
+            memory_extractor: Versioned host capability for reliable Source Turn archival.
         """
         self.config = config or ERIIConfig(storage_dir=storage_dir)
 
@@ -169,6 +185,20 @@ class ERIIEngine:
         )
         self.relationship_adjudicator = RelationshipAdjudicator(self.storage)
         self.turn_ledger = TurnLedger(self.storage)
+        self.memory_extractor = memory_extractor
+        self.archival_coordinator = ArchivalCoordinator(
+            storage=self.storage,
+            memory_extractor=memory_extractor,
+            enable_sanitizer=self.config.enable_security_sanitizer,
+            enable_pii_scrubbing=self.config.enable_pii_scrubbing,
+            max_attempts=self.config.archival_max_attempts,
+            base_delay_seconds=self.config.archival_base_delay_seconds,
+            lease_seconds=self.config.archival_lease_seconds,
+            commit_permit_seconds=self.config.archival_commit_permit_seconds,
+            consumer_lease_seconds=self.config.archival_consumer_lease_seconds,
+            max_memory_candidates=self.config.archival_max_memory_candidates,
+            receipt_retention_days=self.config.archival_receipt_retention_days,
+        )
         self.recall_assembler = RecallAssembler(
             storage=self.storage,
             retriever=self.retriever,
@@ -592,6 +622,135 @@ class ERIIEngine:
                 else self._default_source_processing_channels()
             ),
         )
+
+    def archive_turn(
+        self,
+        agent_id: str,
+        user_id: str,
+        source_turn_id: str,
+        *,
+        idempotency_key: str,
+    ) -> Union[ArchivalReceipt, ArchivalTombstone]:
+        """Submits one completed Source Turn to reliable memory archival.
+
+        The configured ``async_archival`` flag selects deferred acceptance or
+        inline processing. Both modes share the same durable archival identity
+        and receipt model.
+        """
+        self.archival_coordinator.ensure_available()
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "archiving a Source Turn",
+        )
+        try:
+            source_turn = self.turn_ledger.get(profile, source_turn_id)
+        except TurnNotFoundError as exc:
+            raise ArchivalSubmissionError(
+                "invalid_source_turn: Source Turn was not found"
+            ) from exc
+        return self.archival_coordinator.submit(
+            profile,
+            source_turn,
+            idempotency_key=idempotency_key,
+            process_inline=not self.config.async_archival,
+        )
+
+    def get_archival_receipt(
+        self,
+        agent_id: str,
+        user_id: str,
+        archival_id: str,
+    ) -> Union[ArchivalReceipt, ArchivalTombstone]:
+        """Returns one receipt only inside the exact Agent x User scope."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "reading an archival receipt",
+        )
+        return self.archival_coordinator.get(
+            profile.relationship_id,
+            archival_id,
+        )
+
+    def list_archival_receipts(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> List[Union[ArchivalReceipt, ArchivalTombstone]]:
+        """Lists operational archival receipts for one isolated relationship."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "listing archival receipts",
+        )
+        return self.archival_coordinator.list(profile.relationship_id)
+
+    def compact_archival_receipts(self) -> int:
+        """Compacts expired terminal receipts without deleting their artifacts."""
+        return self.archival_coordinator.compact_expired()
+
+    def get_source_processing_outcomes(
+        self,
+        agent_id: str,
+        user_id: str,
+        source_turn_id: str,
+    ) -> Sequence[SourceProcessingOutcome]:
+        """Projects live channel truth without mutating the sealed TurnRecord."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "reading Source Turn processing outcomes",
+        )
+        turn = self.turn_ledger.get(profile, source_turn_id)
+        outcomes = {
+            item.channel: item for item in turn.processing_outcomes
+        }
+        if (
+            SourceProcessingChannel.MEMORY_ARCHIVAL in outcomes
+            and self.archival_coordinator.query_available
+        ):
+            matching = [
+                receipt
+                for receipt in self.archival_coordinator.list(
+                    profile.relationship_id
+                )
+                if receipt.source_turn_id == source_turn_id
+                and receipt.source_revision == turn.source_revision
+            ]
+            if matching:
+                receipt = matching[-1]
+                state = SourceProcessingState.PENDING
+                if receipt.status == ArchivalStatus.COMPLETED:
+                    state = (
+                        SourceProcessingState.NO_OUTPUT
+                        if receipt.outcome_code == ArchivalOutcomeCode.NO_MEMORY
+                        else SourceProcessingState.ARTIFACTS_COMMITTED
+                    )
+                elif receipt.status == ArchivalStatus.FAILED:
+                    state = SourceProcessingState.FAILED
+                outcomes[SourceProcessingChannel.MEMORY_ARCHIVAL] = (
+                    SourceProcessingOutcome(
+                        channel=SourceProcessingChannel.MEMORY_ARCHIVAL,
+                        state=state,
+                        updated_at=(
+                            receipt.updated_at
+                            if isinstance(receipt, ArchivalReceipt)
+                            else receipt.terminal_at
+                        ),
+                    )
+                )
+        return tuple(
+            outcomes[channel] for channel in turn.processing_plan.channels
+        )
+
+    def drain(self, timeout: float = 30.0) -> ArchivalDrainReport:
+        """Explicitly drains the archival submission snapshot within a deadline."""
+        return self.archival_coordinator.drain(timeout)
+
+    def drain_archival(self, timeout: float = 30.0) -> ArchivalDrainReport:
+        """Compatibility alias for :meth:`drain`."""
+        return self.drain(timeout)
 
     def _default_source_processing_channels(
         self,
@@ -1387,6 +1546,13 @@ class ERIIEngine:
         core_mem = self.storage.get_core_memory(clean_agent, clean_user)
         timeline = self.storage.get_recent_timeline(clean_agent, clean_user, limit=1000)
         try:
+            timeline_entries = self.storage.list_timeline_entries(
+                clean_agent,
+                clean_user,
+            )
+        except NotImplementedError:
+            timeline_entries = []
+        try:
             relationship = self.storage.get_relationship(clean_agent, clean_user)
         except NotImplementedError:
             relationship = None
@@ -1397,6 +1563,7 @@ class ERIIEngine:
         persona_compilation_proposals = []
         persona_manifests = []
         turn_records = []
+        archival_ledger = []
         if relationship is not None:
             try:
                 relationship_events = list_complete_relationship_events(
@@ -1439,6 +1606,12 @@ class ERIIEngine:
                 )
             except NotImplementedError:
                 pass
+            try:
+                archival_ledger = self.storage.list_archival_tombstones(
+                    relationship.relationship_id
+                )
+            except NotImplementedError:
+                pass
 
         raw_timeline = []
         for line in timeline:
@@ -1456,6 +1629,8 @@ class ERIIEngine:
             core_memory=core_mem,
             nodes=nodes,
             timeline=raw_timeline,
+            timeline_entries=timeline_entries,
+            archival_ledger=archival_ledger,
             relationship=relationship,
             relationship_events=relationship_events,
             relationship_adjudications=relationship_adjudications,
@@ -1494,12 +1669,46 @@ class ERIIEngine:
 
         clean_agent = SecuritySanitizer.validate_key(target_agent, "agent_id")
         clean_user = SecuritySanitizer.validate_key(target_user, "user_id")
-        self._validate_turn_pack(pack, clean_agent, clean_user)
-        if pack.turn_records:
-            existing_turn_profile = self.storage.get_relationship(
-                clean_agent,
-                clean_user,
+        has_bound_archival_history = bool(
+            pack.timeline_entries
+            or pack.archival_ledger
+            or any(
+                node.source_turn_id is not None
+                or node.source_archival_id is not None
+                for node in pack.nodes
             )
+        )
+        if has_bound_archival_history and (
+            clean_agent != pack.agent_id or clean_user != pack.user_id
+        ):
+            raise ValueError(
+                "MemoryPack archival provenance cannot be remapped to another "
+                "Agent x User scope"
+            )
+        self._validate_turn_pack(pack, clean_agent, clean_user)
+        existing_target_profile = self.storage.get_relationship(
+            clean_agent,
+            clean_user,
+        )
+        if pack.archival_ledger:
+            if pack.relationship is None:
+                raise ValueError(
+                    "MemoryPack archival ledger requires a relationship profile"
+                )
+            if (
+                existing_target_profile is not None
+                and existing_target_profile.relationship_id
+                != pack.relationship.relationship_id
+            ):
+                raise ValueError(
+                    "MemoryPack archival provenance requires exact relationship restore"
+                )
+            self.storage.validate_archival_tombstones(
+                pack.relationship.relationship_id,
+                pack.archival_ledger,
+            )
+        if pack.turn_records:
+            existing_turn_profile = existing_target_profile
             if (
                 existing_turn_profile is not None
                 and existing_turn_profile.relationship_id
@@ -1528,10 +1737,14 @@ class ERIIEngine:
         if pack.core_memory and (overwrite or not self.storage.get_core_memory(clean_agent, clean_user)):
             self.storage.save_core_memory(clean_agent, clean_user, pack.core_memory)
 
-        for entry in pack.timeline:
-            self.storage.add_timeline_entry(
-                clean_agent, clean_user, entry.get("content", ""), entry.get("timestamp")
-            )
+        if not pack.timeline_entries:
+            for entry in pack.timeline:
+                self.storage.add_timeline_entry(
+                    clean_agent,
+                    clean_user,
+                    entry.get("content", ""),
+                    entry.get("timestamp"),
+                )
 
         if pack.relationship is not None:
             existing_profile = self.storage.get_relationship(clean_agent, clean_user)
@@ -1587,6 +1800,18 @@ class ERIIEngine:
                     )
                 for turn_record in pack.turn_records:
                     self.storage.create_turn_record(turn_record)
+
+            if pack.timeline_entries:
+                self.storage.import_timeline_entries(
+                    clean_agent,
+                    clean_user,
+                    pack.timeline_entries,
+                )
+            if pack.archival_ledger:
+                self.storage.import_archival_tombstones(
+                    target_relationship_id,
+                    pack.archival_ledger,
+                )
 
             decision_id_map = {}
             for record in pack.relationship_adjudications:
@@ -1777,6 +2002,13 @@ class ERIIEngine:
                         ),
                     )
                 self.storage.save_persona_growth_proposal(imported_proposal)
+
+        elif pack.timeline_entries:
+            self.storage.import_timeline_entries(
+                clean_agent,
+                clean_user,
+                pack.timeline_entries,
+            )
 
         return pack
 
@@ -2438,29 +2670,42 @@ class ERIIEngine:
         return target_profile
 
     def start(self) -> "ERIIEngine":
-        """Explicitly starts background archival and returns this engine."""
+        """Starts only the legacy ``remember()`` worker and returns this engine."""
         self.archiver_worker.start()
         return self
 
     def process_pending(self, max_tasks: Optional[int] = None) -> int:
-        """Synchronously processes ready archival tasks under host control."""
+        """Synchronously processes reliable and legacy archival work."""
         if max_tasks is not None and max_tasks < 0:
             raise ValueError("max_tasks cannot be negative")
         processed = 0
+        if self.archival_coordinator.available:
+            processed += self.archival_coordinator.process_pending(
+                max_tasks=max_tasks,
+            )
         while max_tasks is None or processed < max_tasks:
             if not self.archiver_worker.process_next():
                 break
             processed += 1
         return processed
 
-    def close(self) -> None:
-        """Gracefully shuts down background archiver thread."""
+    def close(self, timeout: float = 1.0) -> ShutdownReport:
+        """Stops acceptance and cooperatively shuts down explicit workers."""
+        report = self.archival_coordinator.close(timeout=timeout)
         if hasattr(self, "archiver_worker"):
             self.archiver_worker.shutdown()
+        legacy_stopped = (
+            self.archiver_worker.worker_thread is None
+            or not self.archiver_worker.worker_thread.is_alive()
+        )
+        return ShutdownReport(
+            worker_stopped=report.worker_stopped and legacy_stopped,
+            unfinished_archival_ids=report.unfinished_archival_ids,
+        )
 
-    def shutdown(self) -> None:
+    def shutdown(self, timeout: float = 1.0) -> ShutdownReport:
         """Alias for close()."""
-        self.close()
+        return self.close(timeout=timeout)
 
     def __enter__(self) -> "ERIIEngine":
         """Context manager entry."""

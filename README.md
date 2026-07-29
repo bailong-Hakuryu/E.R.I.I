@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0a5-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-0.4.0a6-orange.svg)]()
 
 E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI 伴侣、虚拟角色和叙事型 Agent。
 
@@ -26,7 +26,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 当前版本能够做什么
 
-`v0.4.0a5` 已实现：
+`v0.4.0a6` 已实现：
 
 - 按 `(agent_id, user_id)` 隔离记忆；
 - 核心人格文本、体验时间线和分类印象节点；
@@ -43,6 +43,9 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - `begin_turn()`、`complete_turn()`、`abandon_turn()` 与原子便捷入口 `record_turn()` 共享同一份持久 Turn Record 账本；
 - 完整保留双方实际可见的 User/Agent Source Transcript，并区分 `open`、`completed` 与 `abandoned` 生命周期；
 - `get_turn()`、`list_turns()` 与不携带对话原文的 `SourceTurnReceipt`；
+- 显式、版本化的 `MemoryExtractorV1`，把已完成 Source Turn 严格裁决为 `artifacts` 或 `no_memory`；
+- `archive_turn()`、关系范围内的持久归档回执、幂等键绑定、租约恢复与宿主显式 `process_pending()` / `drain()`；
+- FileStorage 与 SQLiteStorage 的 MemoryNode、结构化 Timeline 和终态回执原子批次提交；
 - 不可静默覆盖的原始人设快照和可选结构化编译结果；
 - 追加式关系事件、幂等事件 ID 与可重建的当前认知；
 - 熟悉、信任、亲密、安全感与冲突张力的有限幅度状态投影；
@@ -61,7 +64,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - 默认只读的结构化召回，以及只强化最终入选记忆的显式模式；
 - 类型化 Promise、Promise Condition、Open Loop 与追加式 Resolution；
 - 同一 World Time 时钟内派生的到期/逾期承诺和开放事项召回信号；
-- SQLite Schema v4 与 FileStorage Turn Record 持久化；MemoryPack `0.4.0a5` 新增 `turn_records`，并继续校验时间事件引用；
+- SQLite Schema v5 与 FileStorage 可靠归档账本；MemoryPack `0.4.0a6` 携带结构化 Timeline、归档来源和最小终态 tombstone；
 - 由宿主显式控制的后台归档生命周期。
 
 当前版本尚未实现：
@@ -240,6 +243,79 @@ engine.abandon_turn(
 ```
 
 `abandoned` 会保留真实 User 消息，但不会伪造 Agent 回复，也没有处理计划。隐藏 system 消息、完整 Prompt、模型推理和双方不可见的工具输出不属于 Source Transcript。
+
+## 可靠归档
+
+`0.4.0a6` 可以把一条已完成的 Source Turn 可靠地派生为可召回 MemoryNode 与结构化 Timeline。归档器必须由宿主显式提供，并以不含密钥、Prompt 或用户正文的 `ExtractorDescriptor` 声明版本：
+
+```python
+from erii import (
+    ArchivalArtifactsDecision,
+    ERIIConfig,
+    ERIIEngine,
+    ExtractorDescriptor,
+    MemoryCandidate,
+    MemoryType,
+    TimelineCandidate,
+)
+
+
+class MyMemoryExtractor:
+    descriptor = ExtractorDescriptor(
+        extractor_id="my-app.memory-extractor",
+        extractor_version="1.0",
+        extraction_schema_version="1",
+    )
+
+    def extract(self, request):
+        # 真实实现可以在这里调用宿主选择的模型，然后校验并转换结果。
+        return ArchivalArtifactsDecision(
+            timeline=(
+                TimelineCandidate(content="我们一起在街机厅度过了一个下午。"),
+            ),
+            memories=(
+                MemoryCandidate(
+                    node_type=MemoryType.PREFERENCE,
+                    content="用户喜欢和我一起玩格斗游戏。",
+                    tags=("arcade", "shared-experience"),
+                ),
+            ),
+        )
+
+
+config = ERIIConfig(
+    storage_dir="./erii_memory",
+    async_archival=False,  # 在 archive_turn() 当前调用中同步完成。
+)
+with ERIIEngine(config=config, memory_extractor=MyMemoryExtractor()) as engine:
+    engine.initialize_relationship(
+        "agent_lumi",
+        "user_chen",
+        persona_source="Lumi 是一个温柔、坦诚的原创角色。",
+    )
+    source = engine.record_turn(
+        "agent_lumi",
+        "user_chen",
+        "我们去游戏厅吧。",
+        "好，我还想再玩一局。",
+        turn_id="turn-arcade-001",
+    )
+    receipt = engine.archive_turn(
+        "agent_lumi",
+        "user_chen",
+        source.source_turn_id,
+        idempotency_key="archive-turn-arcade-001",
+    )
+    print(receipt.status, receipt.outcome_code)
+```
+
+提取器也可以返回 `ArchivalNoMemoryDecision(reason_code="ordinary_acknowledgement")`，明确表示这轮没有值得长期保存的新内容；它仍是成功终态，不会生成占位记忆。相同关系中的相同幂等键和请求可以安全重试，若把同一个键绑定到另一条 Source Turn 则会冲突。
+
+当 `async_archival=True` 时，`archive_turn()` 只持久化并返回 `pending`，不会启动隐藏处理。宿主随后调用 `process_pending()` 逐批消费，或在停机/检查点前调用 `drain(timeout=...)` 处理调用时可见的任务快照。回执只包含 ID、状态、版本化提取器描述、计数和安全结果，不包含 Source Transcript；读取原文仍必须通过同一 `Agent × User` 范围内的 `get_turn()`。
+
+完整终态回执默认保留 30 天（`archival_receipt_retention_days`），到期后可由 `compact_archival_receipts()` 压缩为最小 tombstone。压缩不会删除已经提交的记忆或结构化 Timeline，也不会破坏幂等重试；它只移除不再需要的详细运维字段。
+
+`remember()` 仍是兼容旧集成的 Prompt/JSON 归档入口，但不会自动建立规范 Source Turn 的来源关系。新集成应优先使用 `record_turn()`（或 `begin_turn()` → `complete_turn()`）再调用 `archive_turn()`。完整说明见[中文使用手册](docs/USAGE_zh-CN.md#可靠归档从-source-turn-生成长期记忆)和 [English guide](docs/USAGE.md#reliable-archival-derive-long-term-memory-from-a-source-turn)。
 
 ## 关系人格内核
 

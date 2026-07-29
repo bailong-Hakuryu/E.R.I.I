@@ -1,6 +1,27 @@
 """Data models module for E.R.I.I."""
 
 from erii.models.config import ERIIConfig
+from erii.models.archival import (
+    ArchivalArtifactsDecision,
+    ArchivalCapabilityError,
+    ArchivalConflictError,
+    ArchivalDrainReport,
+    ArchivalNoMemoryDecision,
+    ArchivalOutcomeCode,
+    ArchivalPhase,
+    ArchivalProcessingError,
+    ArchivalReceipt,
+    ArchivalStatus,
+    ArchivalSubmissionError,
+    ArchivalTombstone,
+    MemoryCandidate,
+    MemoryExtractionRequest,
+    MemoryExtractorV1,
+    ShutdownReport,
+    TimelineCandidate,
+    TimelineEntry,
+)
+from erii.models.provenance import ArtifactProvenanceState, ExtractorDescriptor
 from erii.models.adjudication import (
     AdjudicationBatchResult,
     AdjudicationRecord,
@@ -149,6 +170,26 @@ from erii.models.turn import (
 
 __all__ = [
     "AdjudicationBatchResult",
+    "ArchivalArtifactsDecision",
+    "ArchivalCapabilityError",
+    "ArchivalConflictError",
+    "ArchivalDrainReport",
+    "ArchivalNoMemoryDecision",
+    "ArchivalOutcomeCode",
+    "ArchivalPhase",
+    "ArchivalProcessingError",
+    "ArchivalReceipt",
+    "ArchivalStatus",
+    "ArchivalSubmissionError",
+    "ArchivalTombstone",
+    "ArtifactProvenanceState",
+    "ExtractorDescriptor",
+    "MemoryCandidate",
+    "MemoryExtractionRequest",
+    "MemoryExtractorV1",
+    "ShutdownReport",
+    "TimelineCandidate",
+    "TimelineEntry",
     "AdjudicationRecord",
     "BaselineLevel",
     "BeliefOperation",

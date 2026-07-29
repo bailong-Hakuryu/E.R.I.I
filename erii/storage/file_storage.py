@@ -14,7 +14,8 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Union
 import uuid
 
 from erii.models.adjudication import (
@@ -24,6 +25,19 @@ from erii.models.adjudication import (
     PersonaGrowthProposal,
     PersonaGrowthStatus,
 )
+from erii.models.archival import (
+    ArchivalConflictError,
+    ArchivalNotFoundError,
+    ArchivalPhase,
+    ArchivalRecord,
+    ArchivalStatus,
+    ArchivalTombstone,
+    CommitPermit,
+    PreparedArchivalBatch,
+    TimelineEntry,
+    merge_archival_tombstone_batch,
+)
+from erii.models.provenance import ArtifactProvenanceState
 from erii.models.node import MemoryNode
 from erii.models.persona import (
     PersonaCompilationConflictError,
@@ -136,6 +150,9 @@ class FileStorage(BaseStorage):
         directory = os.path.join(self.root_dir, "_reply_attempts")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
+
+    def _get_archival_state_path(self) -> str:
+        return os.path.join(self.root_dir, "_archival_state.json")
 
     def _get_turn_lock_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
@@ -274,6 +291,29 @@ class FileStorage(BaseStorage):
             "blueprints": dict(data.get("blueprints", {})),
         }
 
+    def _load_archival_state(self) -> Dict[str, Any]:
+        file_path = self._get_archival_state_path()
+        if not os.path.exists(file_path):
+            return {
+                "version": 1,
+                "records": [],
+                "artifacts": {},
+                "consumer_lease": None,
+                "imported_timeline": [],
+                "tombstones": [],
+            }
+        with open(file_path, "r", encoding="utf-8") as file_obj:
+            data = json.load(file_obj)
+        if data.get("version") != 1 or not isinstance(data.get("records"), list):
+            raise ArchivalConflictError("unsupported or invalid archival state")
+        data.setdefault("artifacts", {})
+        data.setdefault("consumer_lease", None)
+        data.setdefault("imported_timeline", [])
+        data.setdefault("tombstones", [])
+        if not isinstance(data["artifacts"], dict):
+            raise ArchivalConflictError("invalid archival artifact aggregate")
+        return data
+
     def save_nodes(
         self, agent_id: str, user_id: str, nodes: List[MemoryNode]
     ) -> None:
@@ -291,12 +331,25 @@ class FileStorage(BaseStorage):
         """Loads memory nodes from nodes.json file."""
         with self.lock_manager.lock(agent_id, user_id):
             file_path = self._get_nodes_path(agent_id, user_id)
-            if not os.path.exists(file_path):
-                return []
+            nodes_by_id: Dict[str, MemoryNode] = {}
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    raw_list = json.load(f)
-                return [MemoryNode.from_dict(item) for item in raw_list]
+                with self._turn_guard("__archival_global__"):
+                    state = self._load_archival_state()
+                    for raw_batch in state["artifacts"].values():
+                        batch = PreparedArchivalBatch.from_dict(raw_batch)
+                        for node in batch.memories:
+                            if (
+                                node.agent_id == agent_id
+                                and node.user_id == user_id
+                            ):
+                                nodes_by_id[node.node_id] = node
+                if os.path.exists(file_path):
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        raw_list = json.load(f)
+                    for item in raw_list:
+                        node = MemoryNode.from_dict(item)
+                        nodes_by_id[node.node_id] = node
+                return list(nodes_by_id.values())
             except Exception as e:
                 logger.error("Failed to load nodes for %s/%s: %s", agent_id, user_id, str(e))
                 return []
@@ -356,18 +409,593 @@ class FileStorage(BaseStorage):
         self, agent_id: str, user_id: str, limit: int = 5
     ) -> List[str]:
         """Retrieves formatted recent timeline entries."""
-        with self.lock_manager.lock(agent_id, user_id):
-            file_path = self._get_timeline_path(agent_id, user_id)
-            if not os.path.exists(file_path):
-                return []
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    entries = json.load(f)
-                recent = entries[-limit:]
-                return [f"[{item['timestamp']}] {item['content']}" for item in recent]
-            except Exception as e:
-                logger.error("Failed to read timeline for %s/%s: %s", agent_id, user_id, str(e))
-                return []
+        try:
+            entries = self.list_timeline_entries(agent_id, user_id)
+            recent = entries[-limit:] if limit > 0 else []
+            return [
+                (
+                    f"[{item.recorded_at or item.legacy_timestamp or 'unknown'}] "
+                    f"{item.content}"
+                )
+                for item in recent
+            ]
+        except Exception as e:
+            logger.error(
+                "Failed to read timeline for %s/%s: %s",
+                agent_id,
+                user_id,
+                str(e),
+            )
+            return []
+
+    def list_timeline_entries(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> List[TimelineEntry]:
+        """Projects legacy and modern Timeline data into stable records."""
+        relationship = self.get_relationship(agent_id, user_id)
+        relationship_id = (
+            relationship.relationship_id
+            if relationship is not None
+            else "legacy_unavailable"
+        )
+        file_path = self._get_timeline_path(agent_id, user_id)
+        by_id: Dict[str, TimelineEntry] = {}
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            for raw in state["imported_timeline"]:
+                entry = TimelineEntry.from_dict(raw)
+                if entry.agent_id == agent_id and entry.user_id == user_id:
+                    by_id[entry.timeline_entry_id] = entry
+            for raw_batch in state["artifacts"].values():
+                batch = PreparedArchivalBatch.from_dict(raw_batch)
+                for entry in batch.timeline:
+                    if entry.agent_id == agent_id and entry.user_id == user_id:
+                        by_id[entry.timeline_entry_id] = entry
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as file_obj:
+                    legacy_entries = json.load(file_obj)
+                for index, item in enumerate(legacy_entries):
+                    timestamp = item.get("timestamp")
+                    content = str(item.get("content", ""))
+                    entry_id = str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            (
+                                f"erii:legacy-timeline:{agent_id}:{user_id}:"
+                                f"{index}:{timestamp}:{content}"
+                            ),
+                        )
+                    )
+                    by_id.setdefault(
+                        entry_id,
+                        TimelineEntry(
+                            timeline_entry_id=entry_id,
+                            relationship_id=relationship_id,
+                            agent_id=agent_id,
+                            user_id=user_id,
+                            content=content,
+                            recorded_at=None,
+                            legacy_timestamp=(
+                                str(timestamp) if timestamp else None
+                            ),
+                            provenance_state=(
+                                ArtifactProvenanceState.LEGACY_UNAVAILABLE
+                            ),
+                        ),
+                    )
+        return sorted(
+            by_id.values(),
+            key=lambda item: (
+                item.recorded_at or item.legacy_timestamp or "",
+                item.timeline_entry_id,
+            ),
+        )
+
+    def import_timeline_entries(
+        self,
+        agent_id: str,
+        user_id: str,
+        entries: List[TimelineEntry],
+    ) -> None:
+        """Idempotently imports structured Timeline records."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            existing = {
+                item["timeline_entry_id"]: item
+                for item in state["imported_timeline"]
+            }
+            for entry in entries:
+                if entry.agent_id != agent_id or entry.user_id != user_id:
+                    raise ArchivalConflictError(
+                        "Timeline entry belongs to another Agent x User scope"
+                    )
+                raw = entry.to_dict()
+                current = existing.get(entry.timeline_entry_id)
+                if current is not None and current != raw:
+                    raise ArchivalConflictError("Timeline entry identity conflict")
+                existing[entry.timeline_entry_id] = raw
+            state["imported_timeline"] = list(existing.values())
+            self._write_json_atomic(self._get_archival_state_path(), state)
+
+    def list_archival_tombstones(
+        self,
+        relationship_id: str,
+    ) -> List[ArchivalTombstone]:
+        """Returns imported and locally derived terminal ledger records."""
+        by_id: Dict[str, ArchivalTombstone] = {}
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            for raw in state["tombstones"]:
+                tombstone = ArchivalTombstone.from_dict(raw)
+                if tombstone.relationship_id == relationship_id:
+                    by_id[tombstone.archival_id] = tombstone
+            for raw in state["records"]:
+                record = ArchivalRecord.from_dict(raw)
+                if (
+                    record.receipt.relationship_id == relationship_id
+                    and record.receipt.status
+                    in {ArchivalStatus.COMPLETED, ArchivalStatus.FAILED}
+                ):
+                    tombstone = ArchivalTombstone.from_record(record)
+                    by_id[tombstone.archival_id] = tombstone
+        return list(by_id.values())
+
+    def import_archival_tombstones(
+        self,
+        relationship_id: str,
+        tombstones: List[ArchivalTombstone],
+    ) -> None:
+        """Idempotently imports the portable archival ledger."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            merged = merge_archival_tombstone_batch(
+                relationship_id,
+                tombstones,
+                existing=tuple(
+                    ArchivalTombstone.from_dict(item)
+                    for item in state["tombstones"]
+                ),
+                live_records=tuple(
+                    ArchivalRecord.from_dict(item)
+                    for item in state["records"]
+                ),
+            )
+            state["tombstones"] = [item.to_dict() for item in merged]
+            self._write_json_atomic(self._get_archival_state_path(), state)
+
+    def validate_archival_tombstones(
+        self,
+        relationship_id: str,
+        tombstones: List[ArchivalTombstone],
+    ) -> None:
+        """Preflights a portable ledger batch without mutating storage."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            merge_archival_tombstone_batch(
+                relationship_id,
+                tombstones,
+                existing=tuple(
+                    ArchivalTombstone.from_dict(item)
+                    for item in state["tombstones"]
+                ),
+                live_records=tuple(
+                    ArchivalRecord.from_dict(item)
+                    for item in state["records"]
+                ),
+            )
+
+    def atomic_archival_store_v1(self):
+        """Returns this adapter's atomic archival capability."""
+        return self
+
+    def create_archival_record(
+        self,
+        record: ArchivalRecord,
+    ) -> Union[ArchivalRecord, ArchivalTombstone]:
+        """Creates an idempotent archival record in the global atomic ledger."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            for raw in state["tombstones"]:
+                tombstone = ArchivalTombstone.from_dict(raw)
+                if tombstone.archival_id == record.receipt.archival_id:
+                    raise ArchivalConflictError("archival_id already exists")
+                if tombstone.relationship_id != record.receipt.relationship_id:
+                    continue
+                if (
+                    tombstone.idempotency_fingerprint
+                    == record.idempotency_fingerprint
+                ):
+                    if (
+                        tombstone.request_fingerprint
+                        != record.request_fingerprint
+                    ):
+                        raise ArchivalConflictError(
+                            "idempotency key is already bound to another archival request"
+                        )
+                    return tombstone
+                if tombstone.request_fingerprint == record.request_fingerprint:
+                    return tombstone
+            for raw in state["records"]:
+                existing = ArchivalRecord.from_dict(raw)
+                if (
+                    existing.receipt.relationship_id
+                    == record.receipt.relationship_id
+                    and existing.idempotency_fingerprint
+                    == record.idempotency_fingerprint
+                ):
+                    if existing.request_fingerprint != record.request_fingerprint:
+                        raise ArchivalConflictError(
+                            "idempotency key is already bound to another archival request"
+                        )
+                    return existing
+                if existing.receipt.archival_id == record.receipt.archival_id:
+                    if existing.to_dict() != record.to_dict():
+                        raise ArchivalConflictError("archival_id already exists")
+                    return existing
+            for raw in state["records"]:
+                existing = ArchivalRecord.from_dict(raw)
+                if (
+                    existing.receipt.relationship_id
+                    == record.receipt.relationship_id
+                    and existing.request_fingerprint == record.request_fingerprint
+                ):
+                    return existing
+            state["records"].append(record.to_dict())
+            self._write_json_atomic(self._get_archival_state_path(), state)
+            return record
+
+    def compact_archival_records(self, *, before: str) -> int:
+        """Replaces expired terminal receipts with minimal durable tombstones."""
+        cutoff = datetime.fromisoformat(before.replace("Z", "+00:00"))
+        if cutoff.tzinfo is None or cutoff.utcoffset() is None:
+            raise ValueError("archival compaction cutoff must include an offset")
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            tombstones = {
+                item.archival_id: item
+                for item in (
+                    ArchivalTombstone.from_dict(raw)
+                    for raw in state["tombstones"]
+                )
+            }
+            retained = []
+            compacted = 0
+            for raw in state["records"]:
+                record = ArchivalRecord.from_dict(raw)
+                receipt = record.receipt
+                if receipt.status not in {
+                    ArchivalStatus.COMPLETED,
+                    ArchivalStatus.FAILED,
+                }:
+                    retained.append(raw)
+                    continue
+                terminal_text = receipt.completed_at or receipt.updated_at
+                terminal_at = datetime.fromisoformat(
+                    terminal_text.replace("Z", "+00:00")
+                )
+                if terminal_at.tzinfo is None or terminal_at.utcoffset() is None:
+                    retained.append(raw)
+                    continue
+                if terminal_at > cutoff:
+                    retained.append(raw)
+                    continue
+                tombstone = ArchivalTombstone.from_record(record)
+                existing = tombstones.get(tombstone.archival_id)
+                if existing is not None and existing != tombstone:
+                    raise ArchivalConflictError(
+                        "archival tombstone conflicts with terminal receipt"
+                    )
+                tombstones[tombstone.archival_id] = tombstone
+                compacted += 1
+            if compacted:
+                state["records"] = retained
+                state["tombstones"] = [
+                    item.to_dict() for item in tombstones.values()
+                ]
+                self._write_json_atomic(self._get_archival_state_path(), state)
+            return compacted
+
+    def get_archival_record(
+        self,
+        relationship_id: str,
+        archival_id: str,
+    ) -> ArchivalRecord:
+        """Loads one record without allowing archival IDs to cross scope."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            for raw in state["records"]:
+                record = ArchivalRecord.from_dict(raw)
+                if (
+                    record.receipt.relationship_id == relationship_id
+                    and record.receipt.archival_id == archival_id
+                ):
+                    return record
+        raise ArchivalNotFoundError("archival was not found in this relationship")
+
+    def list_archival_records(
+        self,
+        relationship_id: Optional[str] = None,
+    ) -> List[ArchivalRecord]:
+        """Lists records in durable insertion order."""
+        with self._turn_guard("__archival_global__"):
+            records = [
+                ArchivalRecord.from_dict(item)
+                for item in self._load_archival_state()["records"]
+            ]
+        if relationship_id is not None:
+            records = [
+                item
+                for item in records
+                if item.receipt.relationship_id == relationship_id
+            ]
+        return records
+
+    @staticmethod
+    def _archival_ready(
+        record: ArchivalRecord,
+        now: float,
+    ) -> bool:
+        receipt = record.receipt
+        if receipt.status == ArchivalStatus.PENDING:
+            return True
+        if receipt.status == ArchivalStatus.RETRY_WAIT:
+            return receipt.next_attempt_at is None or receipt.next_attempt_at <= now
+        return (
+            receipt.status == ArchivalStatus.PROCESSING
+            and record.lease_expires_at is not None
+            and record.lease_expires_at <= now
+        )
+
+    def claim_next_archival_record(
+        self,
+        *,
+        now: float,
+        lease_seconds: float,
+        permit_seconds: float,
+        archival_id: Optional[str] = None,
+    ) -> Optional[ArchivalRecord]:
+        """Claims one ready record through a cross-process atomic replacement."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            for index, raw in enumerate(state["records"]):
+                existing = ArchivalRecord.from_dict(raw)
+                if archival_id is not None and existing.receipt.archival_id != archival_id:
+                    continue
+                if not self._archival_ready(existing, now):
+                    continue
+                recovered_expired_lease = (
+                    existing.receipt.status == ArchivalStatus.PROCESSING
+                )
+                phase = existing.receipt.phase
+                receipt = replace(
+                    existing.receipt,
+                    status=ArchivalStatus.PROCESSING,
+                    extraction_attempts=(
+                        existing.receipt.extraction_attempts + 1
+                        if (
+                            phase == ArchivalPhase.EXTRACTION
+                            and not recovered_expired_lease
+                        )
+                        else existing.receipt.extraction_attempts
+                    ),
+                    commit_attempts=(
+                        existing.receipt.commit_attempts + 1
+                        if (
+                            phase == ArchivalPhase.COMMIT
+                            and not recovered_expired_lease
+                        )
+                        else existing.receipt.commit_attempts
+                    ),
+                    retryable=None,
+                    safe_summary=None,
+                    next_attempt_at=None,
+                    updated_at=datetime.now().astimezone().isoformat(),
+                )
+                claimed = replace(
+                    existing,
+                    receipt=receipt,
+                    record_version=existing.record_version + 1,
+                    lease_token=uuid.uuid4().hex,
+                    lease_expires_at=now + lease_seconds,
+                    attempt_id=str(uuid.uuid4()),
+                    recovered_expired_lease=recovered_expired_lease,
+                    commit_permit=(
+                        CommitPermit(
+                            token=uuid.uuid4().hex,
+                            binding_digest=str(existing.commit_binding_digest),
+                            expires_at=now + permit_seconds,
+                        )
+                        if phase == ArchivalPhase.COMMIT
+                        else None
+                    ),
+                )
+                state["records"][index] = claimed.to_dict()
+                self._write_json_atomic(self._get_archival_state_path(), state)
+                return claimed
+        return None
+
+    def renew_archival_lease(
+        self,
+        *,
+        relationship_id: str,
+        archival_id: str,
+        attempt_id: str,
+        lease_token: str,
+        now: float,
+        lease_seconds: float,
+    ) -> bool:
+        """Renews one current, unexpired processing lease."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            for index, raw in enumerate(state["records"]):
+                existing = ArchivalRecord.from_dict(raw)
+                if (
+                    existing.receipt.relationship_id != relationship_id
+                    or existing.receipt.archival_id != archival_id
+                ):
+                    continue
+                if (
+                    existing.receipt.status != ArchivalStatus.PROCESSING
+                    or existing.attempt_id != attempt_id
+                    or existing.lease_token != lease_token
+                    or existing.lease_expires_at is None
+                    or existing.lease_expires_at <= now
+                ):
+                    return False
+                renewed = replace(
+                    existing,
+                    lease_expires_at=now + lease_seconds,
+                )
+                state["records"][index] = renewed.to_dict()
+                self._write_json_atomic(self._get_archival_state_path(), state)
+                return True
+        return False
+
+    @staticmethod
+    def _validate_archival_update(
+        existing: ArchivalRecord,
+        record: ArchivalRecord,
+    ) -> None:
+        if (
+            existing.receipt.archival_id != record.receipt.archival_id
+            or existing.receipt.relationship_id != record.receipt.relationship_id
+            or existing.idempotency_fingerprint != record.idempotency_fingerprint
+            or existing.request_fingerprint != record.request_fingerprint
+        ):
+            raise ArchivalConflictError("immutable archival identity changed")
+        if record.record_version != existing.record_version + 1:
+            raise ArchivalConflictError("stale archival record version")
+        if (
+            existing.receipt.status != ArchivalStatus.PROCESSING
+            or not existing.lease_token
+            or existing.lease_token != record.lease_token
+            or existing.lease_expires_at is None
+            or existing.lease_expires_at <= time.time()
+        ):
+            raise ArchivalConflictError("archival processing lease is no longer valid")
+
+    def bind_prepared_archival_batch(
+        self,
+        record: ArchivalRecord,
+        batch: PreparedArchivalBatch,
+    ) -> ArchivalRecord:
+        """Freezes one exact batch before allowing its commit."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            for index, raw in enumerate(state["records"]):
+                existing = ArchivalRecord.from_dict(raw)
+                if existing.receipt.archival_id != record.receipt.archival_id:
+                    continue
+                self._validate_archival_update(existing, record)
+                if record.prepared_batch != batch:
+                    raise ArchivalConflictError("prepared batch payload mismatch")
+                if (
+                    record.commit_permit is None
+                    or record.commit_permit.binding_digest != batch.batch_digest
+                    or record.commit_permit.expires_at <= time.time()
+                ):
+                    raise ArchivalConflictError("prepared batch permit is invalid")
+                if existing.commit_binding_digest not in (None, batch.batch_digest):
+                    raise ArchivalConflictError(
+                        "archival is already bound to another batch"
+                    )
+                state["records"][index] = record.to_dict()
+                self._write_json_atomic(self._get_archival_state_path(), state)
+                return record
+        raise ArchivalNotFoundError("archival was not found")
+
+    def commit_archival_batch(self, record: ArchivalRecord) -> ArchivalRecord:
+        """Publishes artifacts and the terminal receipt at one JSON replace."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            for index, raw in enumerate(state["records"]):
+                existing = ArchivalRecord.from_dict(raw)
+                if existing.receipt.archival_id != record.receipt.archival_id:
+                    continue
+                self._validate_archival_update(existing, record)
+                if (
+                    existing.prepared_batch is None
+                    or existing.commit_binding_digest
+                    != existing.prepared_batch.batch_digest
+                    or existing.commit_permit is None
+                    or existing.commit_permit != record.commit_permit
+                    or existing.commit_permit.binding_digest
+                    != existing.commit_binding_digest
+                    or existing.commit_permit.expires_at <= time.time()
+                ):
+                    raise ArchivalConflictError("archival commit permit is invalid")
+                state["artifacts"][
+                    existing.receipt.archival_id
+                ] = existing.prepared_batch.to_dict()
+                stored = replace(
+                    record,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    attempt_id=None,
+                    commit_permit=None,
+                    recovered_expired_lease=False,
+                )
+                state["records"][index] = stored.to_dict()
+                self._write_json_atomic(self._get_archival_state_path(), state)
+                return stored
+        raise ArchivalNotFoundError("archival was not found")
+
+    def acquire_archival_consumer(
+        self,
+        consumer_id: str,
+        *,
+        now: float,
+        lease_seconds: float,
+    ) -> bool:
+        """Enforces one active consumer for this FileStorage ledger."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            lease = state.get("consumer_lease")
+            if (
+                lease is not None
+                and lease.get("consumer_id") != consumer_id
+                and float(lease.get("expires_at", 0.0)) > now
+            ):
+                return False
+            state["consumer_lease"] = {
+                "consumer_id": consumer_id,
+                "expires_at": now + lease_seconds,
+            }
+            self._write_json_atomic(self._get_archival_state_path(), state)
+            return True
+
+    def release_archival_consumer(self, consumer_id: str) -> None:
+        """Releases the consumer lease only when still owned by this caller."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            lease = state.get("consumer_lease")
+            if lease is not None and lease.get("consumer_id") == consumer_id:
+                state["consumer_lease"] = None
+                self._write_json_atomic(self._get_archival_state_path(), state)
+
+    def update_archival_record(self, record: ArchivalRecord) -> ArchivalRecord:
+        """Persists a lease-fenced retry or terminal failure."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            for index, raw in enumerate(state["records"]):
+                existing = ArchivalRecord.from_dict(raw)
+                if existing.receipt.archival_id != record.receipt.archival_id:
+                    continue
+                self._validate_archival_update(existing, record)
+                stored = replace(
+                    record,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    attempt_id=None,
+                    commit_permit=None,
+                    recovered_expired_lease=False,
+                )
+                state["records"][index] = stored.to_dict()
+                self._write_json_atomic(self._get_archival_state_path(), state)
+                return stored
+        raise ArchivalNotFoundError("archival was not found")
 
     def get_or_create_identity(self, kind: IdentityKind, external_id: str) -> str:
         """Resolves an external key to a stable ID in the file registry."""
