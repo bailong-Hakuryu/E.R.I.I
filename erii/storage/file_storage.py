@@ -37,6 +37,13 @@ from erii.models.archival import (
     TimelineEntry,
     merge_archival_tombstone_batch,
 )
+from erii.models.consolidation import (
+    PersonaReflectionDecisionRecord,
+    PersonaReflectionRecord,
+    ReflectionProvenanceState,
+    RelationshipProcessingConflictError,
+    RelationshipProcessingRun,
+)
 from erii.models.provenance import ArtifactProvenanceState
 from erii.models.node import MemoryNode
 from erii.models.persona import (
@@ -63,7 +70,7 @@ from erii.models.turn import (
 )
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
-from erii.storage.base import BaseStorage
+from erii.storage.base import BaseStorage, cross_process_file_lock
 
 logger = logging.getLogger("erii")
 
@@ -154,17 +161,72 @@ class FileStorage(BaseStorage):
     def _get_archival_state_path(self) -> str:
         return os.path.join(self.root_dir, "_archival_state.json")
 
+    def _get_relationship_processing_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self.root_dir, "_relationship_processing")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.json")
+
     def _get_turn_lock_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
         directory = os.path.join(self.root_dir, "_turn_locks")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.lock")
 
+    def _get_relationship_history_lock_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self.root_dir, "_relationship_history_locks")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.lock")
+
+    def _get_relationship_processing_lock_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self.root_dir, "_relationship_processing_locks")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.lock")
+
+    @contextmanager
+    def relationship_processing_guard(self, relationship_id: str):
+        """Serializes host model calls before their decisions become durable."""
+        with cross_process_file_lock(
+            self._get_relationship_processing_lock_path(relationship_id)
+        ):
+            yield
+
     @contextmanager
     def _turn_guard(self, relationship_id: str):
         """Serializes turn aggregates across FileStorage instances/processes."""
         with self.lock_manager.lock("__turn_records__", relationship_id):
             lock_path = self._get_turn_lock_path(relationship_id)
+            with open(lock_path, "a+b") as lock_file:
+                lock_file.seek(0, os.SEEK_END)
+                if lock_file.tell() == 0:
+                    lock_file.write(b"\0")
+                    lock_file.flush()
+                    os.fsync(lock_file.fileno())
+                lock_file.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    if os.name == "nt":
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    @contextmanager
+    def _relationship_history_guard(self, relationship_id: str):
+        """Serializes one relationship history across instances and processes."""
+        with self.lock_manager.lock("__relationship_history__", relationship_id):
+            lock_path = self._get_relationship_history_lock_path(relationship_id)
             with open(lock_path, "a+b") as lock_file:
                 lock_file.seek(0, os.SEEK_END)
                 if lock_file.tell() == 0:
@@ -1220,7 +1282,7 @@ class FileStorage(BaseStorage):
 
     def append_relationship_event(self, event: RelationshipEvent) -> RelationshipEvent:
         """Appends an event once, rejecting conflicting reuse of an event ID."""
-        with self.lock_manager.lock("__relationship_history__", event.relationship_id):
+        with self._relationship_history_guard(event.relationship_id):
             registry = self._load_identity_registry()
             if event.relationship_id not in registry["relationships"]:
                 raise ValueError("relationship event references an unknown relationship")
@@ -1259,7 +1321,7 @@ class FileStorage(BaseStorage):
 
     def list_relationship_events(self, relationship_id: str) -> List[RelationshipEvent]:
         """Loads events in append order."""
-        with self.lock_manager.lock("__relationship_events__", relationship_id):
+        with self._relationship_history_guard(relationship_id):
             file_path = self._get_relationship_events_path(relationship_id)
             if not os.path.exists(file_path):
                 return []
@@ -1272,7 +1334,7 @@ class FileStorage(BaseStorage):
     ) -> AdjudicationRecord:
         """Atomically appends one complete adjudication record to its journal."""
         relationship_id = record.receipt.relationship_id
-        with self.lock_manager.lock("__relationship_history__", relationship_id):
+        with self._relationship_history_guard(relationship_id):
             registry = self._load_identity_registry()
             if relationship_id not in registry["relationships"]:
                 raise ValueError("adjudication references an unknown relationship")
@@ -1326,12 +1388,339 @@ class FileStorage(BaseStorage):
         relationship_id: str,
     ) -> List[AdjudicationRecord]:
         """Loads candidate decision records in commit order."""
-        with self.lock_manager.lock("__relationship_adjudication__", relationship_id):
+        with self._relationship_history_guard(relationship_id):
             file_path = self._get_relationship_adjudications_path(relationship_id)
             if not os.path.exists(file_path):
                 return []
             with open(file_path, "r", encoding="utf-8") as file_obj:
                 return [AdjudicationRecord.from_dict(item) for item in json.load(file_obj)]
+
+    def _load_relationship_processing_state(
+        self,
+        relationship_id: str,
+    ) -> Dict[str, Any]:
+        file_path = self._get_relationship_processing_path(relationship_id)
+        if not os.path.exists(file_path):
+            return {
+                "version": 1,
+                "runs": [],
+                "reflection_decisions": [],
+                "reflections": [],
+            }
+        with open(file_path, "r", encoding="utf-8") as file_obj:
+            state = json.load(file_obj)
+        state.setdefault("version", 1)
+        state.setdefault("runs", [])
+        state.setdefault("reflection_decisions", [])
+        state.setdefault("reflections", [])
+        return state
+
+    def _require_completed_processing_turn(
+        self,
+        relationship_id: str,
+        source_turn_id: str,
+        source_revision: str,
+    ) -> TurnRecord:
+        file_path = self._get_turn_records_path(relationship_id)
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                for raw_record in json.load(file_obj):
+                    if raw_record.get("turn_id") != source_turn_id:
+                        continue
+                    record = TurnRecord.from_dict(raw_record)
+                    if (
+                        record.status != TurnStatus.COMPLETED
+                        or record.source_revision != source_revision
+                    ):
+                        break
+                    return record
+        raise RelationshipProcessingConflictError(
+            "relationship processing requires the exact completed Source Turn"
+        )
+
+    def create_relationship_processing_run(
+        self,
+        run: RelationshipProcessingRun,
+    ) -> RelationshipProcessingRun:
+        """Freezes one run identity exactly once."""
+        with self._relationship_history_guard(run.relationship_id):
+            registry = self._load_identity_registry()
+            if run.relationship_id not in registry["relationships"]:
+                raise ValueError("relationship processing references an unknown relationship")
+            self._require_completed_processing_turn(
+                run.relationship_id,
+                run.source_turn_id,
+                run.source_revision,
+            )
+            state = self._load_relationship_processing_state(run.relationship_id)
+            for raw_run in state["runs"]:
+                existing = RelationshipProcessingRun.from_dict(raw_run)
+                same_identity = (
+                    existing.relationship_id == run.relationship_id
+                    and existing.source_turn_id == run.source_turn_id
+                    and existing.source_revision == run.source_revision
+                    and existing.processing_identity == run.processing_identity
+                )
+                if existing.processing_id != run.processing_id and not same_identity:
+                    continue
+                if existing.same_frozen_input_as(run):
+                    return existing
+                raise RelationshipProcessingConflictError(
+                    "relationship processing identity has different frozen input"
+                )
+            state["runs"].append(run.to_dict())
+            self._write_json_atomic(
+                self._get_relationship_processing_path(run.relationship_id),
+                state,
+            )
+            return run
+
+    def get_relationship_processing_run(
+        self,
+        relationship_id: str,
+        processing_id: str,
+    ) -> Optional[RelationshipProcessingRun]:
+        """Loads one relationship-scoped processing run."""
+        with self._relationship_history_guard(relationship_id):
+            state = self._load_relationship_processing_state(relationship_id)
+            for raw_run in state["runs"]:
+                if raw_run.get("processing_id") == processing_id:
+                    return RelationshipProcessingRun.from_dict(raw_run)
+            return None
+
+    def list_relationship_processing_runs(
+        self,
+        relationship_id: str,
+    ) -> List[RelationshipProcessingRun]:
+        """Returns runs in durable creation order."""
+        with self._relationship_history_guard(relationship_id):
+            state = self._load_relationship_processing_state(relationship_id)
+            return [
+                RelationshipProcessingRun.from_dict(item)
+                for item in state["runs"]
+            ]
+
+    def update_relationship_processing_run(
+        self,
+        run: RelationshipProcessingRun,
+        expected_record_version: int,
+    ) -> RelationshipProcessingRun:
+        """CAS-updates mutable run progress while preserving frozen input."""
+        with self._relationship_history_guard(run.relationship_id):
+            state = self._load_relationship_processing_state(run.relationship_id)
+            for index, raw_run in enumerate(state["runs"]):
+                if raw_run.get("processing_id") != run.processing_id:
+                    continue
+                existing = RelationshipProcessingRun.from_dict(raw_run)
+                if existing == run:
+                    return existing
+                if (
+                    existing.record_version != expected_record_version
+                    or run.record_version != expected_record_version + 1
+                    or not existing.same_frozen_input_as(run)
+                ):
+                    raise RelationshipProcessingConflictError(
+                        "relationship processing run changed concurrently"
+                    )
+                state["runs"][index] = run.to_dict()
+                self._write_json_atomic(
+                    self._get_relationship_processing_path(run.relationship_id),
+                    state,
+                )
+                return run
+        raise RelationshipProcessingConflictError(
+            "relationship processing run does not exist"
+        )
+
+    def _relationship_history_for_reflection(
+        self,
+        relationship_id: str,
+    ):
+        events: Dict[str, RelationshipEvent] = {}
+        event_path = self._get_relationship_events_path(relationship_id)
+        if os.path.exists(event_path):
+            with open(event_path, "r", encoding="utf-8") as file_obj:
+                for item in json.load(file_obj):
+                    event = RelationshipEvent.from_dict(item)
+                    events[event.event_id] = event
+        adjudications: List[AdjudicationRecord] = []
+        adjudication_path = self._get_relationship_adjudications_path(
+            relationship_id
+        )
+        if os.path.exists(adjudication_path):
+            with open(adjudication_path, "r", encoding="utf-8") as file_obj:
+                adjudications = [
+                    AdjudicationRecord.from_dict(item)
+                    for item in json.load(file_obj)
+                ]
+            for record in adjudications:
+                for event in record.events:
+                    events[event.event_id] = event
+        return events, adjudications
+
+    def _validate_reflection_decision(
+        self,
+        decision: PersonaReflectionDecisionRecord,
+        existing_reflections: List[PersonaReflectionRecord],
+    ) -> None:
+        events, adjudications = self._relationship_history_for_reflection(
+            decision.relationship_id
+        )
+        if decision.event_id not in events:
+            raise RelationshipProcessingConflictError(
+                "reflection references an unknown relationship event"
+            )
+        provenance = decision.context_provenance
+        if provenance.relationship_event_id != decision.event_id:
+            raise RelationshipProcessingConflictError(
+                "reflection provenance references another event"
+            )
+        known_reflections = {
+            item.reflection_id: item for item in existing_reflections
+        }
+        if (
+            decision.target_reflection_id is not None
+            and decision.target_reflection_id not in known_reflections
+        ):
+            raise RelationshipProcessingConflictError(
+                "reflection target does not exist in this relationship"
+            )
+        missing_prior = set(provenance.prior_reflection_ids).difference(
+            known_reflections
+        )
+        if missing_prior:
+            raise RelationshipProcessingConflictError(
+                "reflection provenance references unknown prior reflections"
+            )
+        if provenance.provenance_state != ReflectionProvenanceState.COMPLETE:
+            return
+        if (
+            decision.source_turn_id != provenance.source_turn_id
+            or decision.source_revision != provenance.source_revision
+        ):
+            raise RelationshipProcessingConflictError(
+                "reflection decision and provenance source do not match"
+            )
+        self._require_completed_processing_turn(
+            decision.relationship_id,
+            decision.source_turn_id,
+            decision.source_revision,
+        )
+        matching = [
+            record
+            for record in adjudications
+            if any(event.event_id == decision.event_id for event in record.events)
+        ]
+        if len(matching) != 1:
+            raise RelationshipProcessingConflictError(
+                "complete reflection provenance requires one accepted decision"
+            )
+        receipt = matching[0].receipt
+        evidence_ids = {item.evidence_id for item in receipt.evidence}
+        if (
+            provenance.decision_id != receipt.decision_id
+            or receipt.source_turn_id != decision.source_turn_id
+            or receipt.source_revision != decision.source_revision
+            or not provenance.evidence_ids
+            or not set(provenance.evidence_ids).issubset(evidence_ids)
+        ):
+            raise RelationshipProcessingConflictError(
+                "reflection provenance is not bound to its decision evidence"
+            )
+
+    def commit_persona_reflection_decision(
+        self,
+        decision: PersonaReflectionDecisionRecord,
+    ) -> PersonaReflectionDecisionRecord:
+        """Atomically appends a decision and its optional formal reflection."""
+        with self._relationship_history_guard(decision.relationship_id):
+            state = self._load_relationship_processing_state(
+                decision.relationship_id
+            )
+            for raw_decision in state["reflection_decisions"]:
+                existing = PersonaReflectionDecisionRecord.from_dict(raw_decision)
+                if (
+                    existing.decision_id != decision.decision_id
+                    and existing.interpretation_identity
+                    != decision.interpretation_identity
+                ):
+                    continue
+                if existing.same_payload_as(decision):
+                    return existing
+                raise RelationshipProcessingConflictError(
+                    "reflection interpretation identity has different content"
+                )
+            reflections = [
+                PersonaReflectionRecord.from_dict(item)
+                for item in state["reflections"]
+            ]
+            self._validate_reflection_decision(decision, reflections)
+            record = decision.reflection_record
+            if record is not None:
+                for existing in reflections:
+                    if existing.reflection_id != record.reflection_id:
+                        continue
+                    if existing.same_payload_as(record):
+                        break
+                    raise RelationshipProcessingConflictError(
+                        "reflection ID has different content"
+                    )
+                else:
+                    state["reflections"].append(record.to_dict())
+            state["reflection_decisions"].append(decision.to_dict())
+            self._write_json_atomic(
+                self._get_relationship_processing_path(
+                    decision.relationship_id
+                ),
+                state,
+            )
+            return decision
+
+    def get_persona_reflection_decision(
+        self,
+        relationship_id: str,
+        decision_id: str,
+    ) -> Optional[PersonaReflectionDecisionRecord]:
+        with self._relationship_history_guard(relationship_id):
+            state = self._load_relationship_processing_state(relationship_id)
+            for item in state["reflection_decisions"]:
+                if item.get("decision_id") == decision_id:
+                    return PersonaReflectionDecisionRecord.from_dict(item)
+            return None
+
+    def list_persona_reflection_decisions(
+        self,
+        relationship_id: str,
+    ) -> List[PersonaReflectionDecisionRecord]:
+        with self._relationship_history_guard(relationship_id):
+            state = self._load_relationship_processing_state(relationship_id)
+            return [
+                PersonaReflectionDecisionRecord.from_dict(item)
+                for item in state["reflection_decisions"]
+            ]
+
+    def get_persona_reflection_record(
+        self,
+        relationship_id: str,
+        reflection_id: str,
+    ) -> Optional[PersonaReflectionRecord]:
+        with self._relationship_history_guard(relationship_id):
+            state = self._load_relationship_processing_state(relationship_id)
+            for item in state["reflections"]:
+                if item.get("reflection_id") == reflection_id:
+                    return PersonaReflectionRecord.from_dict(item)
+            return None
+
+    def list_persona_reflection_records(
+        self,
+        relationship_id: str,
+    ) -> List[PersonaReflectionRecord]:
+        with self._relationship_history_guard(relationship_id):
+            state = self._load_relationship_processing_state(relationship_id)
+            return [
+                PersonaReflectionRecord.from_dict(item)
+                for item in state["reflections"]
+            ]
 
     def save_persona_growth_proposal(
         self,
@@ -1387,6 +1776,23 @@ class FileStorage(BaseStorage):
                 return []
             with open(file_path, "r", encoding="utf-8") as file_obj:
                 return [PersonaGrowthProposal.from_dict(item) for item in json.load(file_obj)]
+
+    def get_persona_growth_proposal(
+        self,
+        proposal_id: str,
+    ) -> Optional[PersonaGrowthProposal]:
+        """Finds one stable proposal identity across relationship files."""
+        with self.lock_manager.lock("__domain_registry__", "identities"):
+            relationship_ids = tuple(
+                self._load_identity_registry()["relationships"]
+            )
+        for relationship_id in relationship_ids:
+            for proposal in self.list_persona_growth_proposals(
+                relationship_id
+            ):
+                if proposal.proposal_id == proposal_id:
+                    return proposal
+        return None
 
     def save_persona_compilation_proposal(
         self,

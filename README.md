@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0a6-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-0.4.0a7-orange.svg)]()
 
 E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI 伴侣、虚拟角色和叙事型 Agent。
 
@@ -26,7 +26,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 当前版本能够做什么
 
-`v0.4.0a6` 已实现：
+`v0.4.0a7` 已实现：
 
 - 按 `(agent_id, user_id)` 隔离记忆；
 - 核心人格文本、体验时间线和分类印象节点；
@@ -54,7 +54,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - 不可信候选的 Pydantic Schema、精确证据核验和逐候选裁决；
 - LLM 定性关系信号到五维状态的确定性、有界映射；
 - 技术重试幂等、底层经历去重、历史佐证和显式历史重处理；
-- 不可变 Persona Reflection，以及积累型/转折型人格成长提案；
+- accepted Relationship Event 之后独立、不可变的 Persona Reflection，以及积累型/转折型人格成长提案；
 - 宿主在对话外按提案版本批准、拒绝或撤销人格成长；
 - 证据、裁决回执和人格成长提案的 MemoryPack 携带能力；
 - 显式观察但不暗改关系状态的时间上下文；
@@ -64,15 +64,18 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - 默认只读的结构化召回，以及只强化最终入选记忆的显式模式；
 - 类型化 Promise、Promise Condition、Open Loop 与追加式 Resolution；
 - 同一 World Time 时钟内派生的到期/逾期承诺和开放事项召回信号；
-- SQLite Schema v5 与 FileStorage 可靠归档账本；MemoryPack `0.4.0a6` 携带结构化 Timeline、归档来源和最小终态 tombstone；
+- `process_relationship_turn()` 自动编排严格关系提取、确定性裁决与后置反思，并持久冻结同源重试决定；
+- 合法 `no_relationship_event` / `no_reflection`、反思局部失败与正式 Reflection Record 的独立可查询结果；
+- 只使用显式分组证据、可通过 History Fingerprint 重建的 Episode 与 Relationship Chapter；证据不足的事件不会被丢弃；
+- 五轴回复连续性评估，以及由带来源情境信号激活、不会继承另一段关系亲密度的 Contextual Voice Pattern；关系安全由当前 Relationship Snapshot 确定性分档，情绪只能由可选的严格 `InteractionContextEvaluatorV1` 在当前关系/Turn 证据内提出；
+- SQLite Schema v6 与 FileStorage 可靠归档/关系处理账本；MemoryPack `0.4.0a7` 携带结构化 Timeline、归档来源、正式反思和可恢复的持久关系处理 run；
 - 由宿主显式控制的后台归档生命周期。
 
 当前版本尚未实现：
 
-- 事件、情节和关系阶段的分层巩固；
 - 完整的授权、加密或多租户安全边界。
 
-这些能力属于 `v0.4.0` 及后续路线，不应将 README 中的规划理解为已经交付。
+这项产品安全能力属于后续路线；关系范围校验不应被理解为已经交付认证或租户隔离。
 
 ## 安装
 
@@ -217,7 +220,7 @@ completed = engine.list_turns("agent_lumi", "user_chen", status="completed")
 
 `SourceTurnReceipt` 只报告 `source_turn_id`、relationship、revision、接受时间、固定处理计划与各通道状态，不回显 User/Agent 原文；需要查看原文时必须在同一 `Agent × User` 范围内调用 `get_turn()`。相同 `turn_id` 和相同载荷可安全重试；复用 ID 却改变消息或终态会抛出冲突。
 
-`interaction_context` 只接受宿主实际观察到的临时情境，不能冒充由内核或评估器推导的关系状态。可重试的生成或评估失败应让 Turn 保持 `open`，并且只记录脱敏后的失败元数据，不保存未展示草稿：
+`interaction_context` 只接受宿主实际观察到的临时情境，不能冒充由内核或评估器推导的关系状态。内核产生的关系安全与评估器提出的情绪信号都绑定当前 `relationship_id + turn_id + producer_version`，仅用于本轮表达选择；旧版未绑定的派生标签可读但不能激活语气。可重试的生成或评估失败应让 Turn 保持 `open`，并且只记录脱敏后的失败元数据，不保存未展示草稿：
 
 ```python
 engine.record_reply_attempt_failure(
@@ -316,6 +319,51 @@ with ERIIEngine(config=config, memory_extractor=MyMemoryExtractor()) as engine:
 完整终态回执默认保留 30 天（`archival_receipt_retention_days`），到期后可由 `compact_archival_receipts()` 压缩为最小 tombstone。压缩不会删除已经提交的记忆或结构化 Timeline，也不会破坏幂等重试；它只移除不再需要的详细运维字段。
 
 `remember()` 仍是兼容旧集成的 Prompt/JSON 归档入口，但不会自动建立规范 Source Turn 的来源关系。新集成应优先使用 `record_turn()`（或 `begin_turn()` → `complete_turn()`）再调用 `archive_turn()`。完整说明见[中文使用手册](docs/USAGE_zh-CN.md#可靠归档从-source-turn-生成长期记忆)和 [English guide](docs/USAGE.md#reliable-archival-derive-long-term-memory-from-a-source-turn)。
+
+## 自动关系处理与分层巩固
+
+`0.4.0a7` 的规范关系路径不再要求宿主先手工拼候选：
+
+```text
+completed Source Turn
+  → RelationshipEventExtractorV1: candidates | no_relationship_event
+  → 持久冻结完整提取决定
+  → 确定性证据裁决
+  → accepted Relationship Event（权威追加历史）
+  → PersonaReflectionInterpreterV1: reflection | no_reflection
+  → Episode / Relationship Chapter（可重建投影）
+```
+
+在构造 `ERIIEngine` 时注入版本化 `relationship_event_extractor`，需要角色内心解释时再注入 `persona_reflection_interpreter`。Turn 的固定处理计划必须包含 `relationship_adjudication`，随后由宿主显式调用：
+
+```python
+run = engine.process_relationship_turn(
+    "agent_lumi",
+    "user_chen",
+    receipt.source_turn_id,
+)
+
+same_run = engine.get_relationship_processing_run(
+    "agent_lumi",
+    "user_chen",
+    run.processing_id,
+)
+reflections = engine.list_persona_reflections("agent_lumi", "user_chen")
+consolidation = engine.get_relationship_consolidation(
+    "agent_lumi",
+    "user_chen",
+)
+```
+
+自动提取只能返回中性事实、精确 Evidence 和定性信号，不能携带 `persona_reflection` 或人格成长意图。同一来源、revision 与处理身份的重试直接恢复已经冻结的决定，不会重新调用模型扩张历史；FileStorage 与 SQLiteStorage 还会跨 Engine 实例/进程串行化首次外部调用。已有 run 在重启后无需重新配置 extractor 即可读取或继续；若该 run 已冻结“需要反思”，恢复时仍须提供解释器，不能静默降级。显式复核旧来源必须使用 `processing_mode="historical_reprocessing"` 与新的稳定 `reprocessing_id`。
+
+每个 run 还会冻结裁决开始时两本追加日志的高水位与内容指纹：可信宿主直写的 Relationship Event journal，以及候选裁决 journal。续跑只使用这份基线，并在同一批次内按依赖解析顺序加入新事件；不会用 `recorded_at` 猜测“当时哪些事件已经存在”。MemoryPack 同时携带 direct-event journal 顺序，因此导入可以用同一裁决器精确重放 `accepted`、`corroborated`、`rejected` 与 `ignored`，并拒绝对回执或事件结果的自洽伪造。高水位是每个 run 的常量级元数据，不会复制整段历史。
+
+事件一旦被接受，后续反思失败也不会撤销它。合法 `no_reflection` 不创建占位内心独白；Correction 与 Reinterpretation 会追加新反思并引用旧 `reflection_id`，不会覆盖角色当时真实拥有的理解。同一 target/kind 下复用 `interpretation_id` 是幂等重试，使用新 ID 才会追加下一次理解。
+
+Relationship Event 始终是权威历史。Episode 只在稳定发生身份或类型化时间链等显式证据支持时分组，Relationship Chapter 还需要显式跨情节引用；证据不足的事件保留在 `unconsolidated_event_ids`。这些结果带 `history_fingerprint`、可随策略升级重建，也不会自行推动关系状态。
+
+完整的提取器、反思解释器、重试、查询和携带示例见[中文使用手册](docs/USAGE_zh-CN.md#自动关系处理从-source-turn-到-event-reflection-与-consolidation)与 [English guide](docs/USAGE.md#automatic-relationship-processing-from-source-turn-to-event-reflection-and-consolidation)。
 
 ## 关系人格内核
 
@@ -545,7 +593,7 @@ with ERIIEngine(storage_driver=storage) as engine:
     ...
 ```
 
-SQLite 驱动启用 WAL，并使用参数化 SQL。`0.4.0a5` 会把已有数据库原地迁移到 Schema v4，以 `source_turns` 表保存关系范围内的 Turn Record；FileStorage 则在 `_turn_records` 目录保存同一模型。两者都保留 `open`、`completed` 与 `abandoned` 状态，但都不是授权或加密边界。
+SQLite 驱动启用 WAL，并使用参数化 SQL。`0.4.0a7` 会把已有数据库原地迁移到 Schema v6：除 `source_turns` 与可靠归档数据外，还保存关系处理运行、合法零产物、反思决定和正式反思记录。FileStorage 提供相同的关系范围与幂等语义。两者都不是授权、加密或多租户边界。
 
 ## 独白与未完成事件
 
@@ -582,9 +630,9 @@ pack = engine.export_memory(
 engine.import_memory("./lumi-memory.json", overwrite=False)
 ```
 
-MemoryPack `0.4.0a5` 在既有数据之外新增根字段 `turn_records`，携带完整可见 Source Transcript、Turn 状态、连续性评估摘要和固定处理计划。因为这些原文属于特定关系，含 `turn_records` 的 Pack 只允许恢复到原来的 `Agent × User` 与 `relationship_id`；传入另一组 Agent/User ID 会被拒绝，`overwrite=True` 也不能绕过该边界。
+MemoryPack `0.4.0a7` 在既有 `turn_records`、结构化 Timeline 与归档 tombstone 之外，携带正式 Persona Reflection、direct-event journal 顺序和全部持久 Relationship Processing Run，包括可恢复的非终态/partial 阶段与冻结决定。这样换用 FileStorage/SQLite 后仍能保留 accepted/no-event/no-reflection 结果、普通重试身份和续跑位置；这些记录不复制完整 Prompt、人设或 Source Transcript。导出、精确身份导入和在线关系处理共用同一个 relationship guard；导入保持 direct-event/adjudication 两本日志各自的追加顺序，并在写入任何普通记忆字段前核验完整不可变 Relationship/Blueprint 身份、精确 Source Turn、Timeline 稳定 ID、目标与 incoming 合并后的时间生命周期、反思唯一裁决来源、Manifest、已批准成长及目标已有账本冲突。Episode 和 Relationship Chapter 是可重建投影，不进入 Pack。
 
-`0.4.0a4` 及更早、没有 `turn_records` 的 Pack 仍可读取，并保留原有关系事件和时间载荷迁移规则。事件按 `event_id` 幂等导入，引用不完整或越过关系边界的时间历史会被拒绝；旧版体验时间线仍可能在重复导入时追加重复项。在依赖它处理重要数据前，请保留原始存储备份并验证导入结果。
+因为完整来源、反思和处理账本属于特定关系，含这些数据的 Pack 只允许恢复到原来的 `Agent × User` 与 `relationship_id`；传入另一组 Agent/User ID 会被拒绝，`overwrite=True` 也不能绕过该边界。旧 Pack 仍可读取，但迁移不会为缺失来源补造当时上下文。在依赖它处理重要数据前，请保留原始存储备份并验证导入结果。这里的指纹与重放用于检查 Pack 的结构、因果和内部自洽性，并不认证 Pack 的真实来源：能够整体改写 Pack 的一方也能重新计算未加密指纹。正式产品仍需在内核外为导出文件增加签名或 MAC、加密、授权与密钥管理。
 
 ## 混合召回
 
@@ -651,7 +699,7 @@ python -m unittest discover -s tests -v
 python -m compileall -q erii examples tests
 ```
 
-仓库的测试覆盖存储、衰减、召回、任务队列、MemoryPack、时间锚定、独白可见性、安全过滤、显式服务生命周期、关系隔离、人设不可变性、事件幂等、证据裁决、历史重处理、人格成长、时间承诺和投影重建。
+仓库的测试覆盖存储、衰减、召回、任务队列、MemoryPack、时间锚定、独白可见性、安全过滤、显式服务生命周期、关系隔离、人设不可变性、事件幂等、证据裁决、冻结重试、独立反思、历史重处理、人格成长、五轴连续性、情境语气、时间承诺和分层投影重建。
 
 ## 路线图
 
@@ -696,7 +744,21 @@ python -m compileall -q erii examples tests
 - FileStorage 与 SQLite Schema v4 持久化；
 - MemoryPack `turn_records` 精确关系恢复，禁止跨 `Agent × User` 重映射完整对话。
 
-后续 alpha/beta 将继续处理事件、情节和关系阶段的分层巩固，以及迁移与长期评测。
+### v0.4.0a6 — 可靠幂等归档
+
+- completed Source Turn 到 Timeline / MemoryNode 的严格 `artifacts | no_memory` 提取；
+- 持久回执、冻结批次、租约恢复、原子提交与最小 tombstone；
+- FileStorage 与 SQLite Schema v5；MemoryPack 携带结构化 Timeline 与归档 ledger。
+
+### v0.4.0a7 — 自动关系处理与分层巩固
+
+- completed Source Turn 到 frozen extraction、确定性裁决和 accepted Event 后置反思；
+- 正式 Persona Reflection / no-reflection 决定、追加式 Correction / Reinterpretation；
+- 五轴连续性与有来源的 Contextual Voice Pattern；
+- 只用显式分组证据的 Episode / Relationship Chapter，以及诚实保留的未巩固事件；
+- SQLite Schema v6 与 MemoryPack 关系处理/反思携带。
+
+后续 alpha/beta 将继续处理迁移、长期评测和产品安全边界。
 
 Web UI、多 Agent 共享图、托管平台和主动消息发送不属于 `v0.4.0` 范围。
 

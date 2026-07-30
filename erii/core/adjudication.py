@@ -227,12 +227,40 @@ def list_complete_relationship_events(
 ) -> List[RelationshipEvent]:
     """Returns direct and adjudicated events once in deterministic history order."""
     direct = storage.list_relationship_events(relationship_id)
-    adjudicated = [
-        event
-        for record in storage.list_relationship_adjudications(relationship_id)
-        for event in record.events
-    ]
-    return _unique_events([*direct, *adjudicated])
+    adjudications = storage.list_relationship_adjudications(relationship_id)
+    return relationship_events_from_journals(direct, adjudications)
+
+
+def relationship_events_from_journals(
+    direct_events: Sequence[RelationshipEvent],
+    adjudications: Sequence[AdjudicationRecord],
+) -> List[RelationshipEvent]:
+    """Builds the deterministic event view from two frozen journal prefixes."""
+    return _unique_events(
+        [
+            *direct_events,
+            *(
+                event
+                for record in adjudications
+                for event in record.events
+            ),
+        ]
+    )
+
+
+def relationship_adjudication_baseline_fingerprint(
+    direct_events: Sequence[RelationshipEvent],
+    adjudications: Sequence[AdjudicationRecord],
+) -> str:
+    """Binds one replay baseline to both append-only journal prefixes."""
+    return _canonical_hash(
+        {
+            "direct_events": [event.to_dict() for event in direct_events],
+            "adjudications": [
+                record.to_dict() for record in adjudications
+            ],
+        }
+    )
 
 
 class RelationshipAdjudicator:
@@ -246,14 +274,22 @@ class RelationshipAdjudicator:
         profile: RelationshipProfile,
         source_turn: SourceTurn,
         candidates: RelationshipCandidateBatch,
+        *,
+        baseline_direct_events: Optional[
+            Sequence[RelationshipEvent]
+        ] = None,
+        baseline_adjudications: Optional[
+            Sequence[AdjudicationRecord]
+        ] = None,
     ) -> AdjudicationBatchResult:
         """Adjudicates one bounded candidate batch with candidate-level atomicity."""
-        policy = self._policy_for(profile)
         batch_fingerprint = self._batch_fingerprint(source_turn, candidates)
         lock = self._storage.lock_manager.lock(
             "__relationship_adjudication__", profile.relationship_id
         )
-        with lock:
+        with self._storage.relationship_processing_guard(
+            profile.relationship_id
+        ), lock:
             existing_records = self._storage.list_relationship_adjudications(
                 profile.relationship_id
             )
@@ -269,108 +305,68 @@ class RelationshipAdjudicator:
                     raise CandidateConflictError(
                         "a source processing run cannot add, remove, or change candidates"
                     )
-            records_by_decision = {
-                record.receipt.decision_id: record for record in existing_records
+            expected_decision_ids = {
+                self._decision_id(profile, source_turn, candidate)
+                for candidate in candidates.candidates
             }
-            existing_events = list_complete_relationship_events(
-                self._storage,
-                profile.relationship_id,
-            )
-            events_by_id = {event.event_id: event for event in existing_events}
-            occurrence_events = self._occurrence_index(existing_records)
-
-            resolved: Dict[str, AdjudicationRecord] = {}
-            pending = {candidate.candidate_key: candidate for candidate in candidates.candidates}
-            input_keys = set(pending)
-
-            while pending:
-                made_progress = False
-                for candidate_key, candidate in list(pending.items()):
-                    decision_id = self._decision_id(profile, source_turn, candidate)
-                    existing = records_by_decision.get(decision_id)
-                    if existing is not None:
-                        fingerprint = self._candidate_fingerprint(source_turn, candidate)
-                        if existing.receipt.candidate_fingerprint != fingerprint:
-                            raise CandidateConflictError(
-                                "source turn, revision, and candidate_key were reused "
-                                "with different content"
-                            )
-                        record = existing
-                    else:
-                        unknown_dependencies = [
-                            dependency
-                            for dependency in candidate.depends_on
-                            if dependency not in input_keys
-                        ]
-                        if unknown_dependencies:
-                            record = self._reject_without_evidence(
-                                profile,
-                                source_turn,
-                                candidate,
-                                policy,
-                                batch_fingerprint,
-                                ["unknown_candidate_dependency"],
-                            )
-                        elif not all(dependency in resolved for dependency in candidate.depends_on):
-                            continue
-                        elif any(
-                            resolved[dependency].receipt.outcome
-                            not in (DecisionOutcome.ACCEPTED, DecisionOutcome.CORROBORATED)
-                            for dependency in candidate.depends_on
-                        ):
-                            record = self._reject_without_evidence(
-                                profile,
-                                source_turn,
-                                candidate,
-                                policy,
-                                batch_fingerprint,
-                                ["candidate_dependency_not_accepted"],
-                            )
-                        else:
-                            record = self._adjudicate_candidate(
-                                profile=profile,
-                                source_turn=source_turn,
-                                candidate=candidate,
-                                policy=policy,
-                                batch_fingerprint=batch_fingerprint,
-                                records_by_decision=records_by_decision,
-                                events_by_id=events_by_id,
-                                occurrence_events=occurrence_events,
-                            )
-
-                    stored = self._storage.commit_relationship_adjudication(record)
-                    resolved[candidate_key] = stored
-                    records_by_decision[stored.receipt.decision_id] = stored
-                    for event in stored.events:
-                        events_by_id[event.event_id] = event
-                    if stored.events:
-                        occurrence_events.setdefault(
-                            stored.receipt.occurrence_fingerprint,
-                            stored.events[0],
-                        )
-                    del pending[candidate_key]
-                    made_progress = True
-
-                if made_progress:
-                    continue
-
-                # What remains is a dependency cycle. Each candidate gets its own
-                # minimal receipt so one malformed graph does not discard others.
-                for candidate_key, candidate in list(pending.items()):
-                    record = self._reject_without_evidence(
-                        profile,
-                        source_turn,
-                        candidate,
-                        policy,
-                        batch_fingerprint,
-                        ["candidate_dependency_cycle"],
+            current_records = {
+                record.receipt.decision_id: record
+                for record in existing_records
+                if record.receipt.decision_id in expected_decision_ids
+            }
+            if (
+                baseline_direct_events is None
+                and baseline_adjudications is None
+            ):
+                baseline_direct_events = (
+                    self._storage.list_relationship_events(
+                        profile.relationship_id
                     )
-                    stored = self._storage.commit_relationship_adjudication(record)
-                    resolved[candidate_key] = stored
-                    del pending[candidate_key]
+                )
+                baseline_adjudications = tuple(
+                    record
+                    for record in existing_records
+                    if record.receipt.decision_id
+                    not in expected_decision_ids
+                )
+            elif (
+                baseline_direct_events is None
+                or baseline_adjudications is None
+            ):
+                raise ValueError(
+                    "both relationship adjudication baseline journals are required"
+                )
+
+            canonical, resolution_order = self._reconstruct_batch_records(
+                profile,
+                source_turn,
+                candidates,
+                baseline_direct_events=baseline_direct_events,
+                baseline_adjudications=baseline_adjudications,
+                timestamp_hints=current_records,
+                reusable_records=current_records,
+            )
+            canonical_by_id = {
+                record.receipt.decision_id: record
+                for record in canonical.records
+            }
+            stored_by_id: Dict[str, AdjudicationRecord] = {}
+            for decision_id in resolution_order:
+                expected = canonical_by_id[decision_id]
+                stored = self._storage.commit_relationship_adjudication(
+                    expected
+                )
+                if stored.to_dict() != expected.to_dict():
+                    raise CandidateConflictError(
+                        "persisted candidate decision differs from canonical replay"
+                    )
+                stored_by_id[decision_id] = stored
 
             return AdjudicationBatchResult(
-                records=[resolved[candidate.candidate_key] for candidate in candidates.candidates]
+                records=[
+                    stored_by_id[record.receipt.decision_id]
+                    for record in canonical.records
+                ]
             )
 
     def propose_persona_growth(
@@ -406,6 +402,7 @@ class RelationshipAdjudicator:
             if not all(self._event_has_reflection(event) for event in supporting_events):
                 raise ValueError("persona growth requires accepted historical reflections")
 
+            policy = self._policy_for(profile)
             if intent.trigger_kind == GrowthTriggerKind.ACCUMULATION:
                 if len(supporting_events) < 2:
                     raise ValueError("accumulation growth requires at least two accepted events")
@@ -421,7 +418,11 @@ class RelationshipAdjudicator:
                     raise ValueError("accumulation growth requires independent source turns")
             elif not any(
                 receipt_by_event.get(event.event_id) is not None
-                and receipt_by_event[event.event_id].pivotal_eligible
+                and self._event_is_pivotal(
+                    event,
+                    receipt_by_event[event.event_id],
+                    policy,
+                )
                 for event in supporting_events
             ):
                 raise ValueError("pivotal growth requires a rule-confirmed pivotal event")
@@ -512,6 +513,238 @@ class RelationshipAdjudicator:
                 updated,
                 expected_status=current.status,
             )
+
+    def _reconstruct_batch_records(
+        self,
+        profile: RelationshipProfile,
+        source_turn: SourceTurn,
+        candidates: RelationshipCandidateBatch,
+        *,
+        baseline_direct_events: Sequence[RelationshipEvent],
+        baseline_adjudications: Sequence[AdjudicationRecord],
+        timestamp_hints: Optional[
+            Mapping[str, AdjudicationRecord]
+        ] = None,
+        reusable_records: Optional[
+            Mapping[str, AdjudicationRecord]
+        ] = None,
+    ) -> Tuple[AdjudicationBatchResult, Tuple[str, ...]]:
+        """Purely replays one batch against an immutable history baseline."""
+        direct_events = tuple(baseline_direct_events)
+        base_records = tuple(baseline_adjudications)
+        for event in direct_events:
+            if event.relationship_id != profile.relationship_id:
+                raise ValueError(
+                    "relationship adjudication baseline event crosses "
+                    "relationship boundaries"
+                )
+        base_decision_ids = set()
+        for record in base_records:
+            if record.receipt.relationship_id != profile.relationship_id:
+                raise ValueError(
+                    "relationship adjudication baseline decision crosses "
+                    "relationship boundaries"
+                )
+            decision_id = record.receipt.decision_id
+            if decision_id in base_decision_ids:
+                raise ValueError(
+                    "relationship adjudication baseline repeats a decision"
+                )
+            base_decision_ids.add(decision_id)
+
+        policy = self._policy_for(profile)
+        batch_fingerprint = self._batch_fingerprint(
+            source_turn,
+            candidates,
+        )
+        expected_decision_ids = {
+            self._decision_id(profile, source_turn, candidate)
+            for candidate in candidates.candidates
+        }
+        if base_decision_ids & expected_decision_ids:
+            raise ValueError(
+                "relationship adjudication baseline contains the current batch"
+            )
+
+        events = _unique_events(
+            [
+                *direct_events,
+                *(
+                    event
+                    for record in base_records
+                    for event in record.events
+                ),
+            ]
+        )
+        events_by_id = {event.event_id: event for event in events}
+        occurrence_events = self._occurrence_index(base_records)
+        hints = dict(timestamp_hints or {})
+        reusable = dict(reusable_records or {})
+        resolved: Dict[str, AdjudicationRecord] = {}
+        pending = {
+            candidate.candidate_key: candidate
+            for candidate in candidates.candidates
+        }
+        input_keys = set(pending)
+        resolution_order: List[str] = []
+
+        def accept_resolution(
+            candidate_key: str,
+            candidate: RelationshipEventCandidate,
+            record: AdjudicationRecord,
+        ) -> None:
+            decision_id = self._decision_id(
+                profile,
+                source_turn,
+                candidate,
+            )
+            canonical = self._apply_timestamp_hint(
+                record,
+                hints.get(decision_id),
+            )
+            resolved[candidate_key] = canonical
+            resolution_order.append(decision_id)
+            for event in canonical.events:
+                events_by_id[event.event_id] = event
+            if canonical.events:
+                occurrence_events.setdefault(
+                    canonical.receipt.occurrence_fingerprint,
+                    canonical.events[0],
+                )
+            del pending[candidate_key]
+
+        while pending:
+            made_progress = False
+            for candidate_key, candidate in list(pending.items()):
+                decision_id = self._decision_id(
+                    profile,
+                    source_turn,
+                    candidate,
+                )
+                existing = reusable.get(decision_id)
+                if existing is not None:
+                    fingerprint = self._candidate_fingerprint(
+                        source_turn,
+                        candidate,
+                    )
+                    if (
+                        existing.receipt.candidate_fingerprint
+                        != fingerprint
+                    ):
+                        raise CandidateConflictError(
+                            "source turn, revision, and candidate_key were "
+                            "reused with different content"
+                        )
+                    accept_resolution(
+                        candidate_key,
+                        candidate,
+                        existing,
+                    )
+                    made_progress = True
+                    continue
+                unknown_dependencies = [
+                    dependency
+                    for dependency in candidate.depends_on
+                    if dependency not in input_keys
+                ]
+                if unknown_dependencies:
+                    record = self._reject_without_evidence(
+                        profile,
+                        source_turn,
+                        candidate,
+                        policy,
+                        batch_fingerprint,
+                        ["unknown_candidate_dependency"],
+                    )
+                elif not all(
+                    dependency in resolved
+                    for dependency in candidate.depends_on
+                ):
+                    continue
+                elif any(
+                    resolved[dependency].receipt.outcome
+                    not in (
+                        DecisionOutcome.ACCEPTED,
+                        DecisionOutcome.CORROBORATED,
+                    )
+                    for dependency in candidate.depends_on
+                ):
+                    record = self._reject_without_evidence(
+                        profile,
+                        source_turn,
+                        candidate,
+                        policy,
+                        batch_fingerprint,
+                        ["candidate_dependency_not_accepted"],
+                    )
+                else:
+                    record = self._adjudicate_candidate(
+                        profile=profile,
+                        source_turn=source_turn,
+                        candidate=candidate,
+                        policy=policy,
+                        batch_fingerprint=batch_fingerprint,
+                        records_by_decision={},
+                        events_by_id=events_by_id,
+                        occurrence_events=occurrence_events,
+                    )
+                accept_resolution(candidate_key, candidate, record)
+                made_progress = True
+
+            if made_progress:
+                continue
+
+            # What remains is a dependency cycle. Preserve one minimal,
+            # deterministic rejection per frozen candidate.
+            for candidate_key, candidate in list(pending.items()):
+                record = self._reject_without_evidence(
+                    profile,
+                    source_turn,
+                    candidate,
+                    policy,
+                    batch_fingerprint,
+                    ["candidate_dependency_cycle"],
+                )
+                accept_resolution(candidate_key, candidate, record)
+
+        return (
+            AdjudicationBatchResult(
+                records=[
+                    resolved[candidate.candidate_key]
+                    for candidate in candidates.candidates
+                ]
+            ),
+            tuple(resolution_order),
+        )
+
+    @staticmethod
+    def _apply_timestamp_hint(
+        record: AdjudicationRecord,
+        hint: Optional[AdjudicationRecord],
+    ) -> AdjudicationRecord:
+        """Copies only nondeterministic durable timestamps from a stored hint."""
+        if hint is None:
+            return record
+        events = tuple(
+            replace(
+                event,
+                recorded_at=(
+                    hint.events[index].recorded_at
+                    if index < len(hint.events)
+                    else hint.receipt.created_at
+                ),
+            )
+            for index, event in enumerate(record.events)
+        )
+        return replace(
+            record,
+            receipt=replace(
+                record.receipt,
+                created_at=hint.receipt.created_at,
+                event_ids=tuple(event.event_id for event in events),
+            ),
+            events=events,
+        )
 
     def _adjudicate_candidate(
         self,
@@ -899,6 +1132,241 @@ class RelationshipAdjudicator:
         )
         return AdjudicationRecord(receipt=receipt, events=events)
 
+    @classmethod
+    def _reconstruct_accepted_record(
+        cls,
+        profile: RelationshipProfile,
+        source_turn: SourceTurn,
+        candidate: RelationshipEventCandidate,
+        *,
+        batch_fingerprint: str,
+        evidence: Sequence[EvidenceReference],
+        prior_events: Sequence[RelationshipEvent],
+        receipt_created_at: str,
+        event_recorded_at: str,
+    ) -> AdjudicationRecord:
+        """Rebuilds the only canonical accepted record for import validation."""
+        if not evidence:
+            raise ValueError("accepted adjudication requires verified evidence")
+        if candidate.signal.extraction_confidence < MIN_EXTRACTION_CONFIDENCE:
+            raise ValueError("low-confidence candidate cannot be accepted")
+
+        temporal_payload: Optional[TemporalPayload] = (
+            candidate.temporal_payload.to_durable()
+            if candidate.temporal_payload is not None
+            else None
+        )
+        if isinstance(temporal_payload, PromiseSpec):
+            if (
+                candidate.signal.extraction_confidence
+                < MIN_PROMISE_EXTRACTION_CONFIDENCE
+                or candidate.signal.interpretation_confidence
+                < MIN_PROMISE_INTERPRETATION_CONFIDENCE
+            ):
+                raise ValueError("low-confidence Promise candidate cannot be accepted")
+            evidenced_roles = {item.role for item in evidence}
+            required_roles = {
+                PromiseResponsibleParty.AGENT: SourceRole.AGENT,
+                PromiseResponsibleParty.USER: SourceRole.USER,
+            }
+            if any(
+                required_roles[party] not in evidenced_roles
+                for party in temporal_payload.responsible_parties
+            ):
+                raise ValueError(
+                    "Promise candidate cannot be accepted without responsible-party evidence"
+                )
+        elif temporal_payload is not None and (
+            candidate.signal.extraction_confidence
+            < MIN_TEMPORAL_EXTRACTION_CONFIDENCE
+            or candidate.signal.interpretation_confidence
+            < MIN_TEMPORAL_INTERPRETATION_CONFIDENCE
+        ):
+            raise ValueError("low-confidence temporal candidate cannot be accepted")
+        if temporal_payload is not None and (
+            candidate.persona_reflection is not None
+            or candidate.growth_trigger != GrowthTriggerKind.NONE
+        ):
+            raise ValueError(
+                "temporal lifecycle candidate cannot contain persona side effects"
+            )
+        if candidate.event_type not in _SIGNAL_EVENT_TYPES[
+            candidate.signal.signal_type
+        ]:
+            raise ValueError("candidate signal cannot produce this event type")
+
+        prior_by_id = {event.event_id: event for event in prior_events}
+        temporal_error, temporal_references = (
+            cls._validate_temporal_event_targets(
+                profile,
+                temporal_payload,
+                prior_by_id,
+            )
+        )
+        if temporal_error is not None:
+            raise ValueError(
+                f"accepted temporal candidate has invalid target: {temporal_error}"
+            )
+        terminal_error = cls._validate_temporal_terminal_transition(
+            temporal_payload,
+            prior_by_id,
+        )
+        if terminal_error is not None:
+            raise ValueError(
+                f"accepted temporal candidate has invalid transition: {terminal_error}"
+            )
+        if (
+            isinstance(temporal_payload, OpenLoopSpec)
+            and temporal_payload.origin_memory_node_id is not None
+            and any(
+                isinstance(event.temporal_payload, OpenLoopSpec)
+                and event.temporal_payload.origin_memory_node_id
+                == temporal_payload.origin_memory_node_id
+                for event in prior_events
+            )
+        ):
+            raise ValueError(
+                "accepted Open Loop candidate repeats an already formalized origin"
+            )
+
+        effective_occurred_at = cls._effective_occurred_at(candidate, evidence)
+        occurrence_fingerprint = cls._occurrence_fingerprint(
+            profile,
+            candidate,
+            effective_occurred_at,
+            temporal_payload,
+        )
+        duplicate = next(
+            (
+                event
+                for event in prior_events
+                if (
+                    event.metadata.get("adjudication", {}).get(
+                        "occurrence_fingerprint"
+                    )
+                    == occurrence_fingerprint
+                )
+                or (
+                    temporal_payload is None
+                    and event.event_type == candidate.event_type
+                    and (
+                        event.occurred_at == effective_occurred_at
+                        or event.occurred_at is None
+                        or effective_occurred_at is None
+                    )
+                    and _normalized_summary(event.content)
+                    == _normalized_summary(candidate.summary)
+                )
+            ),
+            None,
+        )
+        if duplicate is not None:
+            raise ValueError(
+                "duplicate candidate cannot create a new accepted relationship event"
+            )
+
+        reasons: List[str] = []
+        valid_references = [
+            event_id
+            for event_id in candidate.references
+            if event_id in prior_by_id
+        ]
+        if len(valid_references) != len(candidate.references):
+            reasons.append("unresolved_references_removed")
+        for event_id in temporal_references:
+            if event_id not in valid_references:
+                valid_references.append(event_id)
+
+        policy = cls._policy_for(profile)
+        state_delta: Mapping[str, float] = {}
+        has_interaction_evidence = any(
+            item.role in (SourceRole.USER, SourceRole.AGENT) for item in evidence
+        )
+        if not has_interaction_evidence:
+            reasons.append("non_interaction_evidence_not_applied")
+        elif temporal_payload is not None:
+            pass
+        elif candidate.signal.interpretation_confidence >= MIN_STATE_CONFIDENCE:
+            state_delta = cls._state_delta(candidate, policy)
+        else:
+            reasons.append("relationship_interpretation_not_applied")
+
+        reflection: Optional[str] = None
+        if candidate.persona_reflection is not None:
+            if (
+                has_interaction_evidence
+                and candidate.signal.interpretation_confidence
+                >= MIN_REFLECTION_CONFIDENCE
+            ):
+                reflection = candidate.persona_reflection
+            else:
+                reasons.append("persona_reflection_not_persisted")
+        pivotal_eligible = cls._pivotal_eligible(
+            candidate,
+            policy,
+            reflection,
+        )
+        if (
+            candidate.growth_trigger == GrowthTriggerKind.PIVOTAL
+            and not pivotal_eligible
+        ):
+            reasons.append("pivotal_trigger_not_confirmed")
+
+        decision_id = cls._decision_id(profile, source_turn, candidate)
+        event = RelationshipEvent(
+            event_id=str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"{decision_id}:event")
+            ),
+            relationship_id=profile.relationship_id,
+            event_type=candidate.event_type,
+            content=candidate.summary,
+            temporal_payload=temporal_payload,
+            state_delta=state_delta,
+            occurred_at=effective_occurred_at,
+            recorded_at=event_recorded_at,
+            metadata={
+                "adjudication": {
+                    "decision_id": decision_id,
+                    "occurrence_fingerprint": occurrence_fingerprint,
+                    "occurrence_key": candidate.occurrence_key,
+                    "signal_type": candidate.signal.signal_type.value,
+                    "signal_strength": candidate.signal.strength.value,
+                    "references": valid_references,
+                    "persona_reflection": reflection,
+                    "growth_trigger": candidate.growth_trigger.value,
+                    "pivotal_eligible": pivotal_eligible,
+                }
+            },
+        )
+        receipt = DecisionReceipt(
+            decision_id=decision_id,
+            relationship_id=profile.relationship_id,
+            source_turn_id=source_turn.turn_id,
+            source_revision=source_turn.revision,
+            candidate_key=candidate.candidate_key,
+            candidate_fingerprint=cls._candidate_fingerprint(
+                source_turn,
+                candidate,
+            ),
+            batch_fingerprint=batch_fingerprint,
+            occurrence_fingerprint=occurrence_fingerprint,
+            outcome=DecisionOutcome.ACCEPTED,
+            reason_codes=reasons or ["accepted"],
+            extraction_confidence=candidate.signal.extraction_confidence,
+            interpretation_confidence=candidate.signal.interpretation_confidence,
+            extractor_version=source_turn.extractor_version,
+            contract_version=source_turn.contract_version,
+            rule_version=RULE_VERSION,
+            policy_version=policy.version,
+            processing_mode=source_turn.processing_mode,
+            reprocessing_id=source_turn.reprocessing_id,
+            evidence=evidence,
+            event_ids=(event.event_id,),
+            pivotal_eligible=pivotal_eligible,
+            created_at=receipt_created_at,
+        )
+        return AdjudicationRecord(receipt=receipt, events=(event,))
+
     @staticmethod
     def _verify_evidence(
         relationship_id: str,
@@ -995,10 +1463,43 @@ class RelationshipAdjudicator:
             and reflection is not None
         )
 
-    @staticmethod
-    def _event_has_reflection(event: RelationshipEvent) -> bool:
+    def _event_has_reflection(self, event: RelationshipEvent) -> bool:
+        """Prefers formal reflection history, with read-only legacy fallback."""
+        try:
+            records = self._storage.list_persona_reflection_records(
+                event.relationship_id
+            )
+        except (AttributeError, NotImplementedError):
+            records = ()
+        if any(record.event_id == event.event_id for record in records):
+            return True
         adjudication = event.metadata.get("adjudication", {})
         return bool(adjudication.get("persona_reflection"))
+
+    @staticmethod
+    def _event_is_pivotal(
+        event: RelationshipEvent,
+        receipt: DecisionReceipt,
+        policy: RelationshipPolicySpec,
+    ) -> bool:
+        """Re-evaluates modern neutral candidates after reflection exists."""
+        if receipt.pivotal_eligible:
+            return True
+        adjudication = event.metadata.get("adjudication", {})
+        try:
+            signal_type = RelationshipSignalType(
+                adjudication.get("signal_type")
+            )
+            signal_strength = SignalStrength(
+                adjudication.get("signal_strength")
+            )
+        except (TypeError, ValueError):
+            return False
+        return (
+            signal_type in policy.pivotal_signals
+            and signal_strength == SignalStrength.STRONG
+            and receipt.interpretation_confidence >= MIN_PIVOTAL_CONFIDENCE
+        )
 
     @staticmethod
     def _decision_id(
@@ -1060,24 +1561,6 @@ class RelationshipAdjudicator:
     ) -> Tuple[Optional[str], Tuple[str, ...]]:
         """Validates typed target references before an event can enter history."""
 
-        def target_event(
-            event_id: str,
-            expected_type: RelationshipEventType,
-            expected_payload_type: type,
-            label: str,
-        ) -> Tuple[Optional[RelationshipEvent], Optional[str]]:
-            event = events_by_id.get(event_id)
-            if event is None:
-                return None, f"{label}_target_not_found"
-            if event.relationship_id != profile.relationship_id:
-                return None, f"{label}_target_relationship_mismatch"
-            if event.event_type != expected_type or not isinstance(
-                event.temporal_payload,
-                expected_payload_type,
-            ):
-                return None, f"{label}_target_not_structured"
-            return event, None
-
         if isinstance(payload, OpenLoopSpec) and payload.origin_memory_node_id is not None:
             origin = next(
                 (
@@ -1099,6 +1582,38 @@ class RelationshipAdjudicator:
             ):
                 return "open_loop_origin_already_formalized", ()
             return None, ()
+
+        return self._validate_temporal_event_targets(
+            profile,
+            payload,
+            events_by_id,
+        )
+
+    @staticmethod
+    def _validate_temporal_event_targets(
+        profile: RelationshipProfile,
+        payload: Optional[TemporalPayload],
+        events_by_id: Mapping[str, RelationshipEvent],
+    ) -> Tuple[Optional[str], Tuple[str, ...]]:
+        """Validates temporal references using relationship events only."""
+
+        def target_event(
+            event_id: str,
+            expected_type: RelationshipEventType,
+            expected_payload_type: type,
+            label: str,
+        ) -> Tuple[Optional[RelationshipEvent], Optional[str]]:
+            event = events_by_id.get(event_id)
+            if event is None:
+                return None, f"{label}_target_not_found"
+            if event.relationship_id != profile.relationship_id:
+                return None, f"{label}_target_relationship_mismatch"
+            if event.event_type != expected_type or not isinstance(
+                event.temporal_payload,
+                expected_payload_type,
+            ):
+                return None, f"{label}_target_not_structured"
+            return event, None
 
         if isinstance(payload, PromiseConditionConfirmation):
             target, error = target_event(

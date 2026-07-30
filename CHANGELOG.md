@@ -2,6 +2,45 @@
 
 本项目的用户可感知变化记录在此文件。版本遵循语义化版本；`0.x` 阶段仍可能出现受控的破坏性变更。
 
+## [0.4.0a7] - 2026-07-30
+
+### Added
+
+- `process_relationship_turn()` 自动编排 completed Source Turn、严格关系事件提取、确定性裁决与 accepted Event 后置人格反思；宿主分别提供版本化 `RelationshipEventExtractorV1` 与可选 `PersonaReflectionInterpreterV1`。
+- 严格 `candidates | no_relationship_event` 提取决定与 `reflection | no_reflection` 解释决定。自动事件候选拒绝 Persona Reflection、Persona Growth 和未知字段。
+- 持久 `RelationshipProcessingRun`：完整提取决定在裁决前冻结，同一关系、来源 revision 与处理身份的重试恢复既有运行，不重新采样或扩张历史。
+- `get_relationship_processing_run()`、`list_relationship_processing_runs()`、`get_persona_reflection()`、`list_persona_reflections()` 与 `get_relationship_consolidation()` 查询接口；`get_source_processing_outcomes()` 现在映射真实关系通道结果。
+- 独立、不可变的 `PersonaReflectionRecord` 及最小 `ReflectionContextProvenance`；合法无反思保留决定但不创建占位记录，反思失败不会撤销 accepted Event。
+- Correction 与 Reinterpretation 追加记录并引用旧 `reflection_id`；旧 Event metadata 反思只在 Recall/Growth 中保留只读兼容，不会被伪造成缺少情绪方向、强度与核心含义的正式 Persona Reflection Record。
+- 保守、确定性的 Episode 与 Relationship Chapter 投影。只有 occurrence identity、类型化时间链或显式跨事件引用等分组证据才会合并；其他事件留在 `unconsolidated_event_ids`。
+- `history_fingerprint` 与 `projection_version` 使叙事投影可验证、可重建；Episode/Chapter 不成为 Relationship State 或关系等级的写入来源。
+- `ContinuityEvaluatorV1` 五轴发现、确定性 `ContinuityAggregationPolicyV1`，以及由带来源 Interaction Context Signal 激活的 Contextual Voice Pattern。
+- 确定性的 `RelationshipSafetySignalProjector` 与可选、版本化的 `InteractionContextEvaluatorV1`：前者只从当前 Relationship Snapshot 生成 `low | moderate | high` 安全分档，后者只能在当前 Turn 消息、同关系 accepted Event 和宿主观察信号中引用证据并提出获批词表内的情绪。
+- FileStorage 与 SQLiteStorage 的关系处理/反思持久化契约，SQLite Schema 升级到 v6；MemoryPack `0.4.0a7` 携带正式反思与全部持久关系处理 run，保留 frozen decision 和可恢复阶段。
+- FileStorage 与 SQLiteStorage 的跨实例/进程关系处理 guard，保证同一处理身份在决定持久化前只执行一次首次外部提取/反思调用。
+- 每个 Relationship Processing Run 冻结 direct-event 与 adjudication journal 的高水位和完整内容指纹；MemoryPack 携带 direct-event journal 顺序，以常量级 run 元数据精确恢复裁决前史。
+
+### Changed
+
+- 新集成的默认关系路径从“宿主手工构造候选”改为“Source Turn → `process_relationship_turn()`”；手工候选接口继续作为兼容、测试与高级纠错入口。
+- Relationship Event 明确保持权威追加历史；Persona Reflection、Episode 与 Relationship Chapter 分别成为独立解释记录和可重建叙事投影。
+- 既有 run 可在重启后无需 extractor 读取或继续；是否执行反思作为冻结计划保留。Correction/Reinterpretation 以 target、kind 与 `interpretation_id` 共同形成幂等身份，换用新 ID 可连续追加。
+- MemoryPack 导出、精确身份导入与在线关系处理共用同一 guard，不会读取或并发写入事件/run/反思之间的半成品阶段；导入分别保持 direct-event 与 adjudication journal 的 FIFO 顺序，并在任何普通记忆字段写入前精确预检不可变 Relationship/Blueprint 身份、Source Turn、Timeline 稳定 ID、frozen candidate、规范 run 身份/版本、裁决回执、目标与 incoming 的合并时间生命周期、正式反思唯一来源、人格上下文及目标已有账本冲突。
+- MemoryPack 导入不再用墙钟 `recorded_at` 推测裁决前史，而是从冻结 journal 高水位重放同一确定性批次；`accepted`、`corroborated`、`rejected` 与 `ignored` 全部执行完整回执比较。
+- 所有内核/评估器派生的 Interaction Context Signal 和 Voice Pattern Activation 都绑定当前 relationship 与 Turn；派生信号还必须带有仅由本 Engine 生产器赋予、不会序列化的运行时证明，手工构造或反序列化的来源标签不能授权激活。旧版未绑定派生信号保持可读，但不再具有运行时激活权限。同一 Engine 生命周期内，相同 Turn 输入的情绪评估结果只在有界临时缓存中复用，不进入长期记忆。
+- 包版本与 MemoryPack 当前版本升级为 `0.4.0a7`。
+
+### Compatibility
+
+- `0.4.0a6` 及更早的 FileStorage、SQLite 与 MemoryPack 继续可读；迁移不会从旧 metadata 补造不存在的上下文来源。
+- Relationship Event 的旧 `reflection` / `correction` 类型继续保留，但不等同于 a7 的独立 Persona Reflection Record。
+- Episode 与 Relationship Chapter 不进入 MemoryPack；导入后根据权威事件历史和当前投影策略重建。
+
+### Security
+
+- 所有新运行、反思和投影查询仍严格限定在原始 `Agent × User` 关系内；公开 interaction-context 入口只接受 `host_observed`，不允许宿主伪装 `core_derived` / `evaluator_inferred` 信号。内部派生信号必须同时匹配当前 `relationship_id + source_turn_id + producer_version` 与非序列化运行时证明，评估器引用范围由内核白名单校验。这种范围校验不是认证、授权、加密或多租户隔离；a7 不提供完整的产品安全边界。
+- MemoryPack 的 journal 高水位、内容指纹与生产裁决重放用于发现结构、因果和内部自洽性错误，不是来源认证或恶意篡改证明。能够整体重写 Pack 的一方也能重新计算未加密指纹；正式服务必须在内核外提供签名或 MAC、加密、授权和密钥管理。
+
 ## [0.4.0a6] - 2026-07-29
 
 ### Added

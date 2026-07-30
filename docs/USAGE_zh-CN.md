@@ -2,7 +2,7 @@
 
 **简体中文** · [English](USAGE.md)
 
-> 适用于 E.R.I.I. `0.4.0a6`。当前版本仍是 alpha：适合本地开发、原型验证和受控集成，不应未经加固直接承担公开生产服务。
+> 适用于 E.R.I.I. `0.4.0a7`。当前版本仍是 alpha：适合本地开发、原型验证和受控集成，不应未经加固直接承担公开生产服务。
 
 E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长期记忆内核。它不负责生成聊天回复，也不绑定某一种模型；它负责保存角色与某个用户共同经历过什么、当前如何理解这些经历，以及哪些承诺和未完成事项仍值得被想起。
 
@@ -30,7 +30,8 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 | 从这轮交互可靠派生 MemoryNode 与结构化 Timeline | 配置 `MemoryExtractorV1` → `archive_turn()` → `process_pending()` / `drain()` |
 | 只想保存对话并召回一段 Prompt 上下文 | `remember()` → `process_pending()` → `recall()` |
 | 需要独立的人设与用户关系 | `initialize_relationship()` → 关系事件 → `recall_structured()`；初期用 `full`，或先批准 Manifest |
-| 需要让模型提出关系事件 | `adjudicate_relationship_candidates()` |
+| 从 completed Turn 自动派生关系事件与人格反思 | 配置 `RelationshipEventExtractorV1` / `PersonaReflectionInterpreterV1` → `process_relationship_turn()` |
+| 为测试、纠错工具或高级流程手工提交关系候选 | `adjudicate_relationship_candidates()` |
 | 需要保存承诺或未完成事项 | `record_promise()` / `record_open_loop()` |
 | 需要搬家、备份或让用户带走数据 | `export_memory()` / `import_memory()` |
 | 非 Python 宿主 | REST 参考服务，或自行封装 Python API |
@@ -94,7 +95,7 @@ python -m pip install -e ".[dev]"
 python -c "import erii; print(erii.__version__)"
 ```
 
-应输出 `0.4.0a6`。
+应输出 `0.4.0a7`。
 
 alpha 阶段用于长期环境时，应固定一个经过验证的 commit 或 release，不要让部署脚本无条件跟随 `main`。
 
@@ -642,7 +643,7 @@ compacted_count = engine.compact_archival_receipts()
 
 只有到期终态回执会被压缩。已经提交的 MemoryNode 与结构化 Timeline 不会被删除；重试原请求仍会解析到同一个 archival identity，也不会重新提取。因此 `get_archival_receipt()` 可能返回完整 `ArchivalReceipt`（`retention_state="full"`），也可能返回最小 `ArchivalTombstone`（`retention_state="compacted"`）。tombstone 保留终态、结果、来源与请求/幂等指纹，但移除提取器描述、尝试详情、摘要和产物清单。
 
-MemoryPack `0.4.0a6` 会携带：
+MemoryPack `0.4.0a7` 仍携带 a6 归档部分：
 
 - 带 Source Turn、archival 与提取器来源的派生 MemoryNode；
 - 具有稳定 ID 和相同来源的结构化 `timeline_entries`；
@@ -660,6 +661,383 @@ record_turn()（或 begin_turn() → complete_turn()）→ archive_turn()
 
 只有需要兼容早期 Prompt/JSON 管线时，才继续使用 `remember()`。
 
+## 自动关系处理：从 Source Turn 到 Event、Reflection 与 Consolidation
+
+`0.4.0a7` 提供了从 completed Source Turn 进入权威关系历史的默认路径：
+
+```text
+completed Source Turn
+  → RelationshipEventExtractorV1
+      → candidates | no_relationship_event
+  → 持久冻结完整提取决定
+  → 确定性证据裁决
+  → accepted Relationship Event
+  → 对每个 accepted Event 调用 PersonaReflectionInterpreterV1
+      → reflection | no_reflection
+  → 可重建 Episode / Relationship Chapter 投影
+```
+
+这些层的权威不同：
+
+- Source Transcript 以最高保真度保存双方实际可见地说过什么；
+- accepted Relationship Event 是权威、追加式关系历史；
+- Persona Reflection Record 保存角色如何理解某个 accepted Event；
+- Episode 与 Relationship Chapter 是可重建叙事投影；
+- Current Belief 和 Relationship State 由 Relationship Event 确定性投影，不由反思或巩固模型直接写入。
+
+### 1. 提供严格、版本化的宿主能力
+
+内核负责编排生命周期，但不绑定 LLM 供应商。宿主至少提供带非敏感 `ExtractorDescriptor` 的 `RelationshipEventExtractorV1`；需要符合角色的内心解释时，再提供带 `ReflectionInterpreterDescriptor` 的 `PersonaReflectionInterpreterV1`。
+
+下面用严格字典演示。正式适配器可以调用任意本地或远程模型，但必须在返回内核前校验并转换供应商响应：
+
+```python
+from erii import (
+    ERIIEngine,
+    ExtractorDescriptor,
+    ReflectionInterpreterDescriptor,
+)
+
+
+class MyRelationshipExtractor:
+    descriptor = ExtractorDescriptor(
+        extractor_id="my-app.relationship-events",
+        extractor_version="1.0",
+        extraction_schema_version="1",
+    )
+
+    def extract(self, request):
+        user_text = request.transcript.user_message.content
+        if "一起看雪" not in user_text:
+            return {
+                "kind": "no_relationship_event",
+                "reason_code": "ordinary_exchange",
+            }
+
+        return {
+            "kind": "candidates",
+            "candidates": [
+                {
+                    "candidate_key": "shared-first-snow",
+                    "event_type": "shared_experience",
+                    "summary": "我们第一次一起看雪。",
+                    "signal": {
+                        "signal_type": "shared_experience",
+                        "strength": "moderate",
+                        "extraction_confidence": 0.96,
+                        "interpretation_confidence": 0.86,
+                    },
+                    "evidence": [
+                        {
+                            "source_id": (
+                                request.transcript.user_message.message_id
+                            ),
+                            "source_revision": request.source_revision,
+                            "quote": user_text,
+                        }
+                    ],
+                    "occurrence_key": "shared:first-snow",
+                }
+            ],
+        }
+
+
+class MyReflectionInterpreter:
+    descriptor = ReflectionInterpreterDescriptor(
+        interpreter_id="my-app.persona-reflection",
+        interpreter_version="1.0",
+        interpretation_schema_version="1",
+    )
+
+    def interpret(self, request):
+        # request.event 已经通过确定性裁决。
+        # request 还带有有界 Blueprint/Manifest、Baseline、
+        # 已批准成长、Evidence 与同关系历史上下文。
+        if request.event.event_type.value != "shared_experience":
+            return {
+                "kind": "no_reflection",
+                "reason_code": "ordinary_event",
+            }
+        return {
+            "kind": "reflection",
+            "content": "我想记住雪安静落下来的样子。",
+            "emotional_direction": "warm",
+            "emotional_intensity": "moderate",
+            "core_meaning": "这段新的共同经历对我变得珍贵。",
+        }
+
+
+engine = ERIIEngine(
+    storage_dir="./erii_memory",
+    relationship_event_extractor=MyRelationshipExtractor(),
+    persona_reflection_interpreter=MyReflectionInterpreter(),
+)
+```
+
+自动提取 Schema 刻意没有 `persona_reflection` 和人格成长字段。它只能提出有界中性事件、精确 Evidence、定性 Relationship Signal、时间信息、稳定 occurrence identity 与显式引用/依赖。未知字段、空 `candidates`、混用 `candidates` / `no_relationship_event`，或夹带人格化输出都会使提取失败，不能静默忽略。
+
+反思解释器只在事件 accepted 后运行。它不能改写事件、Evidence、Character Blueprint 或 Relationship State，也不能批准 Persona Growth。
+
+### 2. 先封存 Source Turn，再显式处理
+
+普通处理要求 Turn 已经 completed，并且固定 Source Processing Plan 包含 `relationship_adjudication`。已配置关系提取器时可以保留默认计划，也可以显式声明：
+
+```python
+source = engine.record_turn(
+    "agent_lumi",
+    "user_chen",
+    "我们第一次一起看雪了。",
+    "嗯，我会记得这一场雪。",
+    turn_id="turn-first-snow-001",
+    processing_channels=("relationship_adjudication",),
+)
+
+run = engine.process_relationship_turn(
+    "agent_lumi",
+    "user_chen",
+    source.source_turn_id,
+)
+
+print(run.processing_id)
+print(run.status)
+print(run.outcome)
+print(run.event_ids)
+```
+
+`process_relationship_turn()` 是同步、由宿主显式控制的调用，不启动隐藏线程。持久运行严格属于当前 `Agent × User` 与 Source revision，完整提取决定会在任何候选裁决前冻结。
+
+持久结果会区分：
+
+- `events_accepted`：至少一个事件进入权威历史；
+- `no_relationship_event`：提取成功并明确判定没有关系事件；
+- `no_accepted_events`：候选完成检查，但没有候选通过确定性裁决；
+- `partial_failed`：accepted Event 仍已提交，但后续反思阶段失败；
+- `failed`：关系处理没有得到所需权威结果。
+
+合法 `no_relationship_event` 不等于记忆归档的 `no_memory`：归档通道仍可能保存 MemoryNode 或 Timeline；反过来，归档没有检索产物时，关系事件仍可能被接受。
+
+### 3. 查询运行、反思、巩固与 Source Turn 结果
+
+所有查询都必须给出同一个外部 `agent_id` 与 `user_id`；仅知道内部 ID 不能跨越关系边界：
+
+```python
+same_run = engine.get_relationship_processing_run(
+    "agent_lumi",
+    "user_chen",
+    run.processing_id,
+)
+runs = engine.list_relationship_processing_runs(
+    "agent_lumi",
+    "user_chen",
+)
+
+reflections = engine.list_persona_reflections(
+    "agent_lumi",
+    "user_chen",
+)
+if reflections:
+    reflection = engine.get_persona_reflection(
+        "agent_lumi",
+        "user_chen",
+        reflections[0].reflection_id,
+    )
+
+consolidation = engine.get_relationship_consolidation(
+    "agent_lumi",
+    "user_chen",
+)
+outcomes = engine.get_source_processing_outcomes(
+    "agent_lumi",
+    "user_chen",
+    source.source_turn_id,
+)
+```
+
+`get_source_processing_outcomes()` 返回 Relationship Adjudication 通道的真实状态，不把“Source Turn 已接受”伪装成“关系处理已完成”。反思失败映射为局部结果，不会抹掉 accepted Event。
+
+`list_persona_reflections()` 只返回正式内容记录。成功的 `no_reflection` 会在内部决定账本保留幂等身份，但不会创建占位记录；因此关系处理成功后列表仍可能为空。
+
+### 4. 普通重试不重采样，历史复核必须使用新身份
+
+用相同关系、`source_turn_id`、Source revision 与处理身份重复普通调用，会恢复或返回既有运行：
+
+```python
+same = engine.process_relationship_turn(
+    "agent_lumi",
+    "user_chen",
+    source.source_turn_id,
+)
+
+assert same.processing_id == run.processing_id
+```
+
+严格提取决定冻结后不会再次调用提取器。FileStorage 与 SQLiteStorage 会跨 Engine 实例和进程串行化首次外部提取/反思调用，避免两个宿主在决定持久化前各采样一次。Engine 重启后可以在不重新配置提取器的情况下返回或推进已有 run；但如果 run 已冻结 `reflection_planned=True`，完成它仍必须提供解释器，不能在重启后静默取消原定反思。共享跨进程状态的自定义存储适配器也必须提供等价的 `relationship_processing_guard()`。
+
+如果裁决已经成功、只有反思解释器失败，重试只恢复反思阶段，不能撤销或重复写入事件。
+
+模型升级不会静默重写历史。需要复核旧 Source Turn 时，显式创建独立追加式运行：
+
+```python
+reprocessed = engine.process_relationship_turn(
+    "agent_lumi",
+    "user_chen",
+    source.source_turn_id,
+    processing_mode="historical_reprocessing",
+    reprocessing_id="relationship-extractor-v2-review-001",
+)
+```
+
+`reprocessing_id` 应由宿主持久、稳定管理。历史重处理可以追加佐证、更正、重新理解或新提案，但不能覆盖旧事件、改写角色当时的理解，或重复结算同一次关系影响。
+
+### 5. 追加反思历史，不原地编辑
+
+`reflection` 会创建一个不可变、关系范围内且引用 accepted Event 的 Persona Reflection Record。其 Reflection Context Provenance 只保存 Source Turn、Evidence、Blueprint、Manifest、Baseline、已批准成长与相关历史的稳定 ID、revision、版本和哈希；不会复制完整 Prompt、人设原文、对话原文或模型推理。
+
+新证据证明旧理解有误时，追加显式指向旧 `reflection_id` 的 Correction。角色后来获得新视角、但不认为旧理解错误时，追加 Reinterpretation。两者都保留原记录，忠实表达“角色当时是这样理解的”。
+
+已配置反思解释器后，使用由宿主持久管理的稳定 interpretation identity：
+
+```python
+correction = engine.correct_persona_reflection(
+    "agent_lumi",
+    "user_chen",
+    target_reflection_id=reflection.reflection_id,
+    interpretation_id="correct-first-snow-understanding-001",
+)
+
+reinterpretation = engine.reinterpret_persona_reflection(
+    "agent_lumi",
+    "user_chen",
+    target_reflection_id=reflection.reflection_id,
+    interpretation_id="revisit-first-snow-001",
+)
+
+all_decisions = engine.list_persona_reflection_decisions(
+    "agent_lumi",
+    "user_chen",
+)
+```
+
+解释器会得到目标记录与正确的 record kind，但仍只能返回严格 `reflection | no_reflection`。持久身份由 relationship、event、record kind、目标 reflection 与 `interpretation_id` 共同组成：同一目标和 kind 下复用相同 ID 会返回原决定，换用新 ID 则追加下一次 Correction/Reinterpretation，不覆盖任何旧记录。
+
+旧式 `RelationshipEventType.REFLECTION` / `CORRECTION` 仍由 Recall/Growth 只读兼容，但不等于 a7 的独立 Persona Reflection Record。E.R.I.I. 不会从旧 metadata 合成正式记录：旧数据缺少新契约要求的情绪方向、强度、核心含义与当时上下文。`legacy_unavailable` 只保留为未来显式迁移的领域标记，不是 a7 自动产生的记录。
+
+### 6. 把 Episode 与 Chapter 当作投影，不当作事实
+
+`get_relationship_consolidation()` 从当前权威 Relationship Event 快照确定性重建一份叙事投影：
+
+- Episode 只有在稳定 occurrence identity、类型化时间链或其他显式证据表明事件属于同一具体经历时才分组；
+- Relationship Chapter 至少需要两个 Episode，并由显式跨事件引用连接；
+- 证据不足的事件保留在 `unconsolidated_event_ids`；
+- `history_fingerprint` 标识确切有序历史快照，`projection_version` 标识分组策略。
+
+仅仅时间相邻或语义相似不足以合并。“未巩固”不表示事件被拒绝、遗忘或不重要；它仍完整存在于权威历史中，未来出现显式关联后可以进入新投影。Episode/Chapter 不改变关系等级、Current Belief 或 Relationship State，也不进入 MemoryPack，而是在导入后重建。
+
+### 7. 分五轴检查连续性，只用有来源情境激活语气
+
+宿主在展示草稿前可以使用 a7 `ContinuityEvaluatorV1` 契约。评估器必须分别返回五个有来源 Finding：
+
+- `identity_values`；
+- `psychological_causality`；
+- `relationship_scope`；
+- `knowledge_memory_scope`；
+- `voice_style`。
+
+评估器不能直接给总体结论。`ContinuityAggregationPolicyV1` 确定性汇总为 `aligned`、`supported_new_choice`、`review_required` 或 `unsupported_drift`。关系串线、错误继承亲密与角色不可能知道的信息属于硬冲突；只有语言风格偏差时可以建议改写，但不能据此宣称人格漂移。
+
+获批 Persona Manifest 可以包含有原文依据的 Contextual Voice Pattern。`VoicePatternMatcher` 只有在当前 `InteractionContextSignal` 满足类型化条件和范围时才激活模式。`canonical_relationship` 模式只在匹配的显式原作关系延续中可用；称呼、亲密度和共同经历不会因为相同语域“听起来合适”就转移给当前 User。`VoicePatternActivation` 只是本轮生成与连续性检查的临时输入，不是记忆或人格变化。
+
+每类条件的来源权限是固定的：
+
+- 活动、交流媒介和环境线索来自公开的 `host_observed`；
+- `relationship_safety` 由内核从当前 Relationship Snapshot 推导，只使用 `low`、`moderate`、`high`；
+- 情绪来自可选、独立且版本化的 `InteractionContextEvaluatorV1`。
+
+情绪评估器只能看到当前 User 消息、当前关系状态、最多 16 条同关系 accepted Event、本 Turn 的宿主观察信号，以及获批 Manifest 实际使用的情绪词表。它必须返回严格的 `signals | no_signals`；每个信号都要引用请求明确提供的证据，引用另一段关系的内容会被拒绝：
+
+```python
+from erii import InteractionContextEvaluatorDescriptor
+
+
+class CurrentEmotionEvaluator:
+    descriptor = InteractionContextEvaluatorDescriptor(
+        evaluator_id="my-app.current-emotion",
+        evaluator_version="1",
+    )
+
+    def evaluate(self, request):
+        # 这里只是演示规则；实际可替换为独立模型或评估器。
+        if "！" not in request.user_message:
+            return {
+                "kind": "no_signals",
+                "reason_code": "no_distinct_emotion",
+            }
+        return {
+            "kind": "signals",
+            "signals": [
+                {
+                    "candidate_key": "current-excitement",
+                    "value": "excited",
+                    "evidence_refs": [request.user_message_evidence_ref],
+                }
+            ],
+        }
+
+
+engine = ERIIEngine(
+    storage_dir="./erii_data",
+    interaction_context_evaluator=CurrentEmotionEvaluator(),
+    continuity_evaluator=my_continuity_evaluator,
+)
+```
+
+E.R.I.I. 会为内部信号写入当前 `relationship_id`、`source_turn_id`、生产器版本，以及只属于当前 Engine 进程且不会序列化的运行时证明。属于某一关系/Turn 的信号不能挪到另一处使用；手工构造或反序列化 `core_derived` / `evaluator_inferred` 标签也不会获得激活权限。旧版未绑定范围的派生标签仍可读取，但没有激活权限。完全相同的本轮输入只会在当前 Engine 生命周期内的有界缓存中临时复用评估结果；Turn 进入终态时会逐轮清理，`close()` 会清空全部缓存。信号和 Activation 都不会成为 Source Transcript、Relationship Event、人格变化或长期记忆。
+
+Engine 把它暴露为 open Turn 上的交付前流程：
+
+```python
+opened = engine.begin_turn(
+    "agent_lumi",
+    "user_chen",
+    "今天能一起出去玩吗？",
+    interaction_context=(
+        {
+            "signal_id": "activity-game",
+            "source": "host_observed",
+            "signal_type": "activity",
+            "value": "gaming",
+        },
+    ),
+)
+
+activations = engine.activate_contextual_voice_patterns(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+)
+
+continuity = engine.evaluate_reply_continuity(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    proposed_reply,
+    persona_context_refs=(approved_manifest.manifest_id,),
+    relationship_context_refs=tuple(recalled_event_ids),
+)
+
+# 宿主应用自己的交付策略；如果回复确实展示给用户：
+receipt = engine.complete_turn(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    proposed_reply,
+    continuity_assessment=continuity.assessment,
+    delivery_disposition="shown",
+)
+```
+
+两个方法都要求 Turn 仍为 `open`，并且当前关系已绑定获批 Manifest。`evaluate_reply_continuity()` 还要求构造 Engine 时配置 `continuity_evaluator`。没有配置 `interaction_context_evaluator` 或它返回 `no_signals` 时，情绪条件不会激活；关系安全条件仍由确定性的内核投影处理。是否展示、改写或暂缓草稿仍由宿主决定；E.R.I.I. 只记录真正展示的回复。
+
 ## 核心对象是什么
 
 | 对象 | 作用 | 是否可原地覆盖 |
@@ -669,8 +1047,11 @@ record_turn()（或 begin_turn() → complete_turn()）→ archive_turn()
 | Relationship Premise | 这段关系从哪里开始 | 初始化后固定 |
 | Turn Record / Source Transcript | 某一独立关系内，一轮交互实际可见的用户/Agent 来源原文 | `open` 只能进入一次 `completed` 或 `abandoned` 终态；终态不可重新打开 |
 | SourceTurnReceipt | 只含 ID、处理计划和通道结果、不含对话正文的完成回执 | 读取原文必须查询关系范围内的 Turn Record |
+| Relationship Processing Run | 某一 Source Turn revision 的持久冻结提取/裁决/反思运行 | 按身份恢复；冻结提取决定不可替换 |
 | Relationship Event | 共同经历、观察、冲突、修复、承诺等历史 | 否，只追加 |
+| Persona Reflection Record | 角色如何理解一个 accepted Event，并带最小上下文来源 | 否；通过追加 Correction / Reinterpretation 演进 |
 | Relationship Snapshot | 从当前有效历史投影出的关系状态和解释 | 不是存档，可重建 |
+| Episode / Relationship Chapter | 对 Relationship Event 的有来源叙事投影 | 从历史与策略重建，不是权威 |
 | MemoryNode | 从对话提取出的偏好、事件、反思等可检索印象 | 由记忆流程维护 |
 | MemoryPack | 一对 `agent_id + user_id` 的可携带数据包 | 用于导入导出 |
 
@@ -1133,11 +1514,11 @@ for receipt in result.receipts:
     print(receipt.candidate_key, receipt.outcome, receipt.reason_codes)
 ```
 
-新集成应把持久 Turn Record 作为规范来源身份。上面的原始 `source_turn` 参数只为兼容旧流程和校验精确引文而保留，它不会创建或替代 Turn Record。
+新集成应把持久 Turn Record 作为规范来源身份，并默认使用 `process_relationship_turn()`。上面的原始 `source_turn` 参数只为兼容旧流程和校验精确引文而保留，它不会创建或替代 Turn Record。兼容候选仍可能包含历史 `persona_reflection` 字段；自动 `RelationshipEventExtractorV1` 输出禁止携带它，正式反思会在事件 accepted 后独立执行。
 
 裁决器会核对引文是否真的存在于指定消息中，并用版本化规则把定性信号映射为有界状态变化。模型置信度不能越过这些规则。
 
-一次普通处理运行由 `turn_id + revision + processing_mode + reprocessing_id` 标识，首次提交会固定整批候选。技术重试应原样重发；单独更换 `extractor_version` 不会创建新的处理运行。重新用新模型分析历史时，必须显式使用 `processing_mode="historical_reprocessing"` 和稳定、唯一的 `reprocessing_id`。
+普通 Relationship Processing Run 由关系、Source Turn revision、processing mode 与可选 reprocessing identity 标识。首次自动提交会冻结完整提取决定，技术重试恢复既有运行。重新用新模型分析历史时，必须显式使用 `processing_mode="historical_reprocessing"` 和稳定、唯一的 `reprocessing_id`。
 
 ## 人格成长不是普通关系事件
 
@@ -1329,6 +1710,8 @@ with ERIIEngine(storage_dir="./data/erii-memory") as engine:
 
 `0.4.0a6` 会把可靠命令、租约、冻结批次、结构化 Timeline 与归档 tombstone 放在加锁的 `_archival_state.json` 聚合中。准备好的批次通过一次原子替换发布，因此读取方只会同时看到节点、Timeline 与终态回执，或者全部看不到。
 
+`0.4.0a7` 的关系处理运行、显式零产物决定、正式人格反思与最小来源也受同一个关系级文件锁保护。不同 FileStorage 实例并发追加时不会相互覆盖关系历史。
+
 ### SQLiteStorage
 
 ```python
@@ -1350,6 +1733,8 @@ with ERIIEngine(storage_driver=storage) as engine:
 `0.4.0a5` 会把已有 SQLite 数据库原地迁移到 Schema v4。新增的 `source_turns` 表以关系范围内的聚合记录保存每个 Turn，并按持久的开启序号排序。升级 alpha 版本前应先备份重要数据库。
 
 `0.4.0a6` 会把 Schema v4 迁移到 v5，增加可靠归档记录、消费者租约、tombstone 与结构化 Timeline 来源。批次发布在一个 SQLite 事务中完成；现有 v4 Source Turn 与更早记忆数据会原地保留。
+
+`0.4.0a7` 会把 Schema v5 迁移到 v6，增加持久 Relationship Processing Run、反思决定和正式反思记录。既有事件与旧 metadata 原样保留，并继续由兼容路径只读；不会把它们转换成字段不完整的正式反思。
 
 当前版本仍以 FileStorage 为默认；选择 SQLite 必须显式传入 `SQLiteStorage`。两者都不是多租户授权边界，也都默认以明文保存数据。
 
@@ -1379,20 +1764,28 @@ engine.import_memory(
 )
 ```
 
-MemoryPack `0.4.0a6` 会携带：
+MemoryPack `0.4.0a7` 会携带：
 
 - Core Memory、MemoryNode 和旧式体验时间线；
 - 来源完整的结构化 `timeline_entries`；
 - Character Blueprint 与关系档案；
-- 追加式关系事件和证据裁决；
+- 追加式关系事件、direct-event journal 顺序和证据裁决；
 - 人格编译提案、Manifest 和人格成长提案；
 - Promise、Open Loop、条件确认和解决事件；
 - 根级 `turn_records` 集合，包括完整可见 Source Transcript 与终态；
-- 以压缩 `archival_ledger` tombstone 表示的可靠归档终态身份。
+- 以压缩 `archival_ledger` tombstone 表示的可靠归档终态身份；
+- 正式 Persona Reflection Record，以及 reflection/no-reflection 决定身份；
+- 全部持久 Relationship Processing Run，包括可恢复的非终态/partial 阶段、冻结决定、来源/处理身份和合法零产物结果。
 
-`turn_records` 含有关系私有的逐字对话历史，a6 产物来源也绑定原始来源；包含任意一种的 Pack 只能恢复到完全相同的原始 `agent_id`、`user_id` 与关系身份。传入新的宿主 ID 会被拒绝，`overwrite=True` 也不能绕过。跨机器或跨存储 Adapter 搬迁同一关系时，应保留原 ID。
+处理账本不会复制完整 Prompt、人设原文、Source Transcript 或模型推理。规范原文仍只在 `turn_records` 中；run 保存有界冻结决定、direct-event/adjudication journal 的两个高水位、完整基线指纹和迁移后续跑所需身份。导出与精确身份导入在读取或写入 Event、裁决、run 与反思时会持有与协调器相同的关系处理 guard，因此既不会捕获半完成阶段，也不会让迁移日志前缀与在线处理交错。导入不会用 `recorded_at` 猜测裁决前史，而是按冻结 journal prefix 使用生产裁决器重放 frozen candidate；因果导入只比较两本 journal 的队首，保持各自 FIFO。在写入普通记忆字段前，它会精确预检完整不可变 Relationship/Blueprint 身份、Source Turn、Timeline 稳定 ID、规范 run 身份与版本、目标已有裁决、目标与 incoming 合并后的时间生命周期、四种完整回执/Event，以及每条正式反思的唯一 accepted 来源与其 Evidence、baseline、关系绑定 Manifest、已批准成长和真正先前历史。每个 run 的基线元数据为常量大小，不会复制不断增长的完整关系历史。
 
-`0.4.0a5` 及更早的 MemoryPack 没有 a6 结构化归档账本，仍可读取，也不会伪造缺失来源。`0.4.0a4` 及更早的 Pack 还没有 `turn_records`；其旧载荷在满足人设、关系和引用完整性校验时，保留历史重映射行为。这个兼容路径不能被理解成允许重映射含完整 Source Transcript 账本或 a6 归档来源的 Pack。
+这些预检证明 Pack 在结构和因果上内部自洽，但不认证 Pack 的创建者。journal 数量与指纹都是同一文件中的未加密数据，能够整体改写 Pack 的一方也能重新计算它们。正式产品应由宿主管理签名或 MAC；需要保密时还应加入加密，并配置相应的授权与密钥管理。
+
+Episode 与 Relationship Chapter 刻意不导出，因为它们可以从 Relationship Event 重建。
+
+`turn_records` 含有关系私有的逐字对话历史，归档/关系处理来源也绑定原始来源；包含任意一种的 Pack 只能恢复到完全相同的原始 `agent_id`、`user_id` 与关系身份。传入新的宿主 ID 会被拒绝，`overwrite=True` 也不能绕过。跨机器或跨存储 Adapter 搬迁同一关系时，应保留原 ID。
+
+`0.4.0a6` 及更早的 MemoryPack 没有 a7 反思/关系处理账本，仍可读取，也不会伪造缺失来源或零产物决定。`0.4.0a5` 及更早的 Pack 还没有 a6 结构化归档账本，`0.4.0a4` 及更早的 Pack 没有 `turn_records`；旧载荷只在既有完整性规则下保留历史重映射行为。这个兼容路径不能被理解成允许重映射含 Source Transcript、归档来源、正式反思或关系处理账本的 Pack。
 
 可携带的 `archival_ledger` 不是实时运维队列。它只包含终态压缩 tombstone，不导出 pending/processing 任务、原始幂等键、尝试细节、`safe_summary` 或产物清单。派生 MemoryNode 和结构化 Timeline 在 FileStorage 与 SQLiteStorage 之间搬迁后仍可使用，并保留 Source Turn/提取器来源。
 
@@ -1402,49 +1795,49 @@ MemoryPack `0.4.0a6` 会携带：
 - 旧式体验时间线重复导入时仍可能追加重复项；
 - 已存在关系的人设或 premise 不匹配时会拒绝导入；
 - 时间事件引用缺失、跨关系或顺序无效时会拒绝导入；
+- incoming decision ID 与目标已有裁决记录内容冲突时，会在其他目标写入前拒绝导入；
+- 导入 a7 处理账本时，目标与 incoming 的两本关系 journal 必须分别前缀兼容；导入不会合并已经分叉的关系历史；
+- 即使两本 journal 分别前缀兼容，目标与 incoming 的并集仍必须构成合法时间生命周期；完整反思也必须继续只有一个 accepted 来源裁决；
+- 绑定型 Pack 必须匹配完整不可变关系/Blueprint 身份和精确 a7 Source Turn；结构化 Timeline 的稳定 ID 不能静默复用不同内容；
+- 正式反思的来源与 Pack 内裁决或人格上下文不完全一致时，会在任何目标写入前拒绝导入；
 - 含 `turn_records` 或归档来源的 Pack 禁止跨 `Agent × User` 身份导入，即使请求覆盖也不允许；
 - 处理重要数据前，应先复制原存储文件并在测试目录验证结果。
 
-## 在真实聊天循环中追加关系候选
+## 在真实聊天循环中加入自动关系处理
 
-前面的“下一步：接进一轮真实对话”已经构成最小闭环。只有产品需要让模型识别共同经历、冲突、修复或承诺时，才额外接入独立的关系提取器：
+前面的“下一步：接进一轮真实对话”已经构成最小可见消息闭环。需要识别共同经历、冲突、修复或承诺时，先配置版本化提取器/解释器，再显式处理稳定 Source Turn：
 
 ```text
 角色回复完成
   ├── complete_turn()：封存规范可见 Source Transcript
-  ├── 可选 remember()：运行旧式 MemoryNode 归档路径
-  └── 可选关系提取器：从已接受 Turn 派生 candidates
-           → adjudicate_relationship_candidates()
-           → 逐条检查 receipt.outcome
+  ├── 可选 archive_turn()：派生可检索记忆产物
+  └── process_relationship_turn(source_turn_id)
+           → 冻结严格提取决定
+           → 确定性裁决
+           → 只解释 accepted Event
+           → 检查持久 run.outcome
            → 必要时另行生成待审批的人格成长提案
 ```
 
-宿主应已经为这一对 ID 调用过 `initialize_relationship()`。可选处理代码：
+宿主应已经为这一对 ID 调用过 `initialize_relationship()`：
 
 ```python
-def adjudicate_turn_relationship(
-    engine,
-    relationship_extractor,
-    user_text,
-    reply,
-):
-    source_turn, candidates = relationship_extractor.extract(
-        user_text=user_text,
-        agent_reply=reply,
-    )
-    if not candidates:
-        return ()
-
-    result = engine.adjudicate_relationship_candidates(
+def process_visible_turn(engine, user_text, reply):
+    source = engine.record_turn(
         "agent_lumi",
         "user_chen",
-        source_turn,
-        candidates,
+        user_text,
+        reply,
+        processing_channels=("relationship_adjudication",),
     )
-    return result.receipts
+    return engine.process_relationship_turn(
+        "agent_lumi",
+        "user_chen",
+        source.source_turn_id,
+    )
 ```
 
-`relationship_extractor` 是宿主自己的组件，不是 E.R.I.I. 内置聊天模型。它的输出不能直接修改 Snapshot 或 Character Blueprint，调用方也应逐条检查 `receipt.outcome`，而不是把“请求成功”理解为所有候选都已接受。
+提取器和解释器是宿主组件，不是 E.R.I.I. 内置聊天模型。它们的输出不能直接修改 Character Blueprint，只有确定性裁决可以追加 Relationship Event。调用方应检查 `run.outcome`，不能把“方法正常返回”理解为所有候选都已接受。`adjudicate_relationship_candidates()` 只建议保留给兼容、测试和主动构造候选的高级纠错工具。
 
 ## REST 参考服务
 
@@ -1732,7 +2125,7 @@ engine.initialize_relationship(agent_id, user_id, persona_source)
 - 不在日志中打印完整对话、原始模型响应、密钥和私有人设；
 - 调用远程模型前告知用户数据会离开本地环境；
 - 定期导出 MemoryPack，并实际演练恢复；
-- 含 `turn_records` 的 `0.4.0a5` Pack 只能按原始 `Agent × User` 身份恢复；不要让产品流程依赖跨关系重映射；
+- 含 `turn_records`、归档来源、正式反思或关系处理账本的 Pack 只能按原始 `Agent × User` 身份恢复；不要让产品流程依赖跨关系重映射；
 - 升级 alpha 版本前阅读 CHANGELOG、兼容性说明并先备份；
 - 对用户提供导出和删除其数据的产品入口。
 
@@ -1743,8 +2136,9 @@ engine.initialize_relationship(agent_id, user_id, persona_source)
 - FileStorage 与 SQLite 都不是多租户安全边界；
 - 参考 REST 服务不是完整产品后端；
 - 记忆提取质量取决于宿主选择的模型和提示；
-- 关系候选提取器、聊天模型和审批界面需要宿主自行实现；
-- 尚未完成事件、情节和关系阶段的分层巩固。
+- 关系事件提取器、可选反思/连续性能力、聊天模型和审批界面需要宿主自行实现；
+- Episode/Chapter 巩固刻意保守：没有显式分组证据的事件保持未巩固，而不是按相似度强行聚类；
+- 完整认证、授权、加密和多租户隔离仍由宿主负责。
 
 ## 更多可运行示例
 

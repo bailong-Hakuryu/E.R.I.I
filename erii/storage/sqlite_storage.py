@@ -6,12 +6,13 @@ Follows Google Python Style Guide.
 
 from dataclasses import replace
 from datetime import datetime
+import hashlib
 import json
 import logging
 import os
 import sqlite3
 import time
-from contextlib import closing
+from contextlib import closing, contextmanager
 from typing import List, Optional, Union
 import uuid
 
@@ -33,6 +34,13 @@ from erii.models.archival import (
     PreparedArchivalBatch,
     TimelineEntry,
     merge_archival_tombstone_batch,
+)
+from erii.models.consolidation import (
+    PersonaReflectionDecisionRecord,
+    PersonaReflectionRecord,
+    ReflectionProvenanceState,
+    RelationshipProcessingConflictError,
+    RelationshipProcessingRun,
 )
 from erii.models.provenance import ArtifactProvenanceState
 from erii.models.node import MemoryNode
@@ -61,7 +69,7 @@ from erii.models.turn import (
 )
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
-from erii.storage.base import BaseStorage
+from erii.storage.base import BaseStorage, cross_process_file_lock
 
 logger = logging.getLogger("erii")
 
@@ -89,6 +97,25 @@ class SQLiteStorage(BaseStorage):
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         return conn
+
+    def _get_relationship_processing_lock_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        database_path = os.path.realpath(os.path.abspath(self.db_path))
+        directory = f"{database_path}.relationship_processing_locks"
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.lock")
+
+    @contextmanager
+    def relationship_processing_guard(self, relationship_id: str):
+        """Serializes host model calls before their decisions become durable."""
+        if self.db_path == ":memory:":
+            with super().relationship_processing_guard(relationship_id):
+                yield
+            return
+        with cross_process_file_lock(
+            self._get_relationship_processing_lock_path(relationship_id)
+        ):
+            yield
 
     def _init_db(self) -> None:
         """Initializes SQLite database tables."""
@@ -177,6 +204,13 @@ class SQLiteStorage(BaseStorage):
                 cursor.execute(
                     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                     (5, "reliable-archival-alpha6", utc_now()),
+                )
+                current_version = 5
+            if current_version < 6:
+                self._migrate_relationship_consolidation_v6(cursor)
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                    (6, "relationship-consolidation-alpha7", utc_now()),
                 )
             conn.commit()
 
@@ -459,6 +493,87 @@ class SQLiteStorage(BaseStorage):
             CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_entry_identity
             ON timeline_entries(timeline_entry_id)
             WHERE timeline_entry_id IS NOT NULL
+            """
+        )
+
+    @staticmethod
+    def _migrate_relationship_consolidation_v6(cursor: sqlite3.Cursor) -> None:
+        """Adds frozen relationship runs and append-only reflection history."""
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS relationship_processing_runs (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                processing_id TEXT NOT NULL UNIQUE,
+                relationship_id TEXT NOT NULL,
+                source_turn_id TEXT NOT NULL,
+                source_revision TEXT NOT NULL,
+                processing_identity TEXT NOT NULL,
+                record_version INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                data JSON NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE (
+                    relationship_id, source_turn_id, source_revision,
+                    processing_identity
+                ),
+                FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id),
+                FOREIGN KEY (relationship_id, source_turn_id)
+                    REFERENCES source_turns(relationship_id, turn_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_relationship_processing_order
+            ON relationship_processing_runs(relationship_id, sequence)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS persona_reflection_decisions (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                decision_id TEXT NOT NULL UNIQUE,
+                relationship_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                interpretation_identity TEXT NOT NULL,
+                data JSON NOT NULL,
+                recorded_at TEXT NOT NULL,
+                UNIQUE (relationship_id, interpretation_identity),
+                FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_reflection_decision_order
+            ON persona_reflection_decisions(relationship_id, sequence)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS persona_reflection_records (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                reflection_id TEXT NOT NULL UNIQUE,
+                relationship_id TEXT NOT NULL,
+                event_id TEXT NOT NULL,
+                target_reflection_id TEXT NOT NULL DEFAULT '',
+                data JSON NOT NULL,
+                recorded_at TEXT NOT NULL,
+                FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_reflection_record_order
+            ON persona_reflection_records(relationship_id, sequence)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_reflection_record_target
+            ON persona_reflection_records(relationship_id, target_reflection_id)
             """
         )
 
@@ -2017,6 +2132,481 @@ class SQLiteStorage(BaseStorage):
                 ).fetchall()
                 return [AdjudicationRecord.from_dict(json.loads(row["data"])) for row in rows]
 
+    @staticmethod
+    def _require_completed_processing_turn(
+        conn: sqlite3.Connection,
+        relationship_id: str,
+        source_turn_id: str,
+        source_revision: str,
+    ) -> TurnRecord:
+        row = conn.execute(
+            """
+            SELECT data FROM source_turns
+            WHERE relationship_id = ? AND turn_id = ?
+            """,
+            (relationship_id, source_turn_id),
+        ).fetchone()
+        if row is not None:
+            record = TurnRecord.from_dict(json.loads(row["data"]))
+            if (
+                record.status == TurnStatus.COMPLETED
+                and record.source_revision == source_revision
+            ):
+                return record
+        raise RelationshipProcessingConflictError(
+            "relationship processing requires the exact completed Source Turn"
+        )
+
+    def create_relationship_processing_run(
+        self,
+        run: RelationshipProcessingRun,
+    ) -> RelationshipProcessingRun:
+        """Freezes one relationship processing identity exactly once."""
+        with self.lock_manager.lock("__relationship_history__", run.relationship_id):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                relationship = conn.execute(
+                    "SELECT 1 FROM relationships WHERE relationship_id = ?",
+                    (run.relationship_id,),
+                ).fetchone()
+                if relationship is None:
+                    conn.rollback()
+                    raise ValueError(
+                        "relationship processing references an unknown relationship"
+                    )
+                self._require_completed_processing_turn(
+                    conn,
+                    run.relationship_id,
+                    run.source_turn_id,
+                    run.source_revision,
+                )
+                row = conn.execute(
+                    """
+                    SELECT data FROM relationship_processing_runs
+                    WHERE processing_id = ? OR (
+                        relationship_id = ? AND source_turn_id = ?
+                        AND source_revision = ? AND processing_identity = ?
+                    )
+                    """,
+                    (
+                        run.processing_id,
+                        run.relationship_id,
+                        run.source_turn_id,
+                        run.source_revision,
+                        run.processing_identity,
+                    ),
+                ).fetchone()
+                if row is not None:
+                    existing = RelationshipProcessingRun.from_dict(
+                        json.loads(row["data"])
+                    )
+                    conn.commit()
+                    if existing.same_frozen_input_as(run):
+                        return existing
+                    raise RelationshipProcessingConflictError(
+                        "relationship processing identity has different frozen input"
+                    )
+                conn.execute(
+                    """
+                    INSERT INTO relationship_processing_runs (
+                        processing_id, relationship_id, source_turn_id,
+                        source_revision, processing_identity, record_version,
+                        status, data, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run.processing_id,
+                        run.relationship_id,
+                        run.source_turn_id,
+                        run.source_revision,
+                        run.processing_identity,
+                        run.record_version,
+                        run.status.value,
+                        json.dumps(run.to_dict(), ensure_ascii=False),
+                        run.created_at,
+                        run.updated_at,
+                    ),
+                )
+                conn.commit()
+                return run
+
+    def get_relationship_processing_run(
+        self,
+        relationship_id: str,
+        processing_id: str,
+    ) -> Optional[RelationshipProcessingRun]:
+        with self.lock_manager.lock("__relationship_history__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                row = conn.execute(
+                    """
+                    SELECT data FROM relationship_processing_runs
+                    WHERE relationship_id = ? AND processing_id = ?
+                    """,
+                    (relationship_id, processing_id),
+                ).fetchone()
+                return (
+                    RelationshipProcessingRun.from_dict(json.loads(row["data"]))
+                    if row is not None
+                    else None
+                )
+
+    def list_relationship_processing_runs(
+        self,
+        relationship_id: str,
+    ) -> List[RelationshipProcessingRun]:
+        with self.lock_manager.lock("__relationship_history__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT data FROM relationship_processing_runs
+                    WHERE relationship_id = ? ORDER BY sequence ASC
+                    """,
+                    (relationship_id,),
+                ).fetchall()
+                return [
+                    RelationshipProcessingRun.from_dict(json.loads(row["data"]))
+                    for row in rows
+                ]
+
+    def update_relationship_processing_run(
+        self,
+        run: RelationshipProcessingRun,
+        expected_record_version: int,
+    ) -> RelationshipProcessingRun:
+        """CAS-updates progress without permitting frozen-input drift."""
+        with self.lock_manager.lock("__relationship_history__", run.relationship_id):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    """
+                    SELECT data FROM relationship_processing_runs
+                    WHERE relationship_id = ? AND processing_id = ?
+                    """,
+                    (run.relationship_id, run.processing_id),
+                ).fetchone()
+                if row is None:
+                    conn.rollback()
+                    raise RelationshipProcessingConflictError(
+                        "relationship processing run does not exist"
+                    )
+                existing = RelationshipProcessingRun.from_dict(
+                    json.loads(row["data"])
+                )
+                if existing == run:
+                    conn.commit()
+                    return existing
+                if (
+                    existing.record_version != expected_record_version
+                    or run.record_version != expected_record_version + 1
+                    or not existing.same_frozen_input_as(run)
+                ):
+                    conn.rollback()
+                    raise RelationshipProcessingConflictError(
+                        "relationship processing run changed concurrently"
+                    )
+                cursor = conn.execute(
+                    """
+                    UPDATE relationship_processing_runs
+                    SET record_version = ?, status = ?, data = ?, updated_at = ?
+                    WHERE processing_id = ? AND relationship_id = ?
+                      AND record_version = ?
+                    """,
+                    (
+                        run.record_version,
+                        run.status.value,
+                        json.dumps(run.to_dict(), ensure_ascii=False),
+                        run.updated_at,
+                        run.processing_id,
+                        run.relationship_id,
+                        expected_record_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    conn.rollback()
+                    raise RelationshipProcessingConflictError(
+                        "relationship processing run changed concurrently"
+                    )
+                conn.commit()
+                return run
+
+    @staticmethod
+    def _reflection_history(
+        conn: sqlite3.Connection,
+        relationship_id: str,
+    ):
+        direct_rows = conn.execute(
+            """
+            SELECT data FROM relationship_events
+            WHERE relationship_id = ? ORDER BY sequence ASC
+            """,
+            (relationship_id,),
+        ).fetchall()
+        adjudication_rows = conn.execute(
+            """
+            SELECT data FROM relationship_adjudications
+            WHERE relationship_id = ? ORDER BY sequence ASC
+            """,
+            (relationship_id,),
+        ).fetchall()
+        events = {
+            event.event_id: event
+            for event in (
+                RelationshipEvent.from_dict(json.loads(row["data"]))
+                for row in direct_rows
+            )
+        }
+        adjudications = [
+            AdjudicationRecord.from_dict(json.loads(row["data"]))
+            for row in adjudication_rows
+        ]
+        for record in adjudications:
+            for event in record.events:
+                events[event.event_id] = event
+        return events, adjudications
+
+    def _validate_reflection_decision(
+        self,
+        conn: sqlite3.Connection,
+        decision: PersonaReflectionDecisionRecord,
+    ) -> None:
+        events, adjudications = self._reflection_history(
+            conn,
+            decision.relationship_id,
+        )
+        if decision.event_id not in events:
+            raise RelationshipProcessingConflictError(
+                "reflection references an unknown relationship event"
+            )
+        provenance = decision.context_provenance
+        if provenance.relationship_event_id != decision.event_id:
+            raise RelationshipProcessingConflictError(
+                "reflection provenance references another event"
+            )
+        if decision.target_reflection_id is not None:
+            target = conn.execute(
+                """
+                SELECT 1 FROM persona_reflection_records
+                WHERE relationship_id = ? AND reflection_id = ?
+                """,
+                (decision.relationship_id, decision.target_reflection_id),
+            ).fetchone()
+            if target is None:
+                raise RelationshipProcessingConflictError(
+                    "reflection target does not exist in this relationship"
+                )
+        if provenance.prior_reflection_ids:
+            placeholders = ",".join("?" for _ in provenance.prior_reflection_ids)
+            rows = conn.execute(
+                f"""
+                SELECT reflection_id FROM persona_reflection_records
+                WHERE relationship_id = ? AND reflection_id IN ({placeholders})
+                """,
+                (decision.relationship_id, *provenance.prior_reflection_ids),
+            ).fetchall()
+            if {row["reflection_id"] for row in rows} != set(
+                provenance.prior_reflection_ids
+            ):
+                raise RelationshipProcessingConflictError(
+                    "reflection provenance references unknown prior reflections"
+                )
+        if provenance.provenance_state != ReflectionProvenanceState.COMPLETE:
+            return
+        if (
+            decision.source_turn_id != provenance.source_turn_id
+            or decision.source_revision != provenance.source_revision
+        ):
+            raise RelationshipProcessingConflictError(
+                "reflection decision and provenance source do not match"
+            )
+        self._require_completed_processing_turn(
+            conn,
+            decision.relationship_id,
+            decision.source_turn_id,
+            decision.source_revision,
+        )
+        matching = [
+            record
+            for record in adjudications
+            if any(event.event_id == decision.event_id for event in record.events)
+        ]
+        if len(matching) != 1:
+            raise RelationshipProcessingConflictError(
+                "complete reflection provenance requires one accepted decision"
+            )
+        receipt = matching[0].receipt
+        evidence_ids = {item.evidence_id for item in receipt.evidence}
+        if (
+            provenance.decision_id != receipt.decision_id
+            or receipt.source_turn_id != decision.source_turn_id
+            or receipt.source_revision != decision.source_revision
+            or not provenance.evidence_ids
+            or not set(provenance.evidence_ids).issubset(evidence_ids)
+        ):
+            raise RelationshipProcessingConflictError(
+                "reflection provenance is not bound to its decision evidence"
+            )
+
+    def commit_persona_reflection_decision(
+        self,
+        decision: PersonaReflectionDecisionRecord,
+    ) -> PersonaReflectionDecisionRecord:
+        """Atomically stores a decision and its optional formal record."""
+        with self.lock_manager.lock(
+            "__relationship_history__",
+            decision.relationship_id,
+        ):
+            with closing(self._get_connection()) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    """
+                    SELECT data FROM persona_reflection_decisions
+                    WHERE decision_id = ? OR (
+                        relationship_id = ? AND interpretation_identity = ?
+                    )
+                    """,
+                    (
+                        decision.decision_id,
+                        decision.relationship_id,
+                        decision.interpretation_identity,
+                    ),
+                ).fetchone()
+                if row is not None:
+                    existing = PersonaReflectionDecisionRecord.from_dict(
+                        json.loads(row["data"])
+                    )
+                    conn.commit()
+                    if existing.same_payload_as(decision):
+                        return existing
+                    raise RelationshipProcessingConflictError(
+                        "reflection interpretation identity has different content"
+                    )
+                self._validate_reflection_decision(conn, decision)
+                record = decision.reflection_record
+                if record is not None:
+                    existing_row = conn.execute(
+                        """
+                        SELECT data FROM persona_reflection_records
+                        WHERE reflection_id = ?
+                        """,
+                        (record.reflection_id,),
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_record = PersonaReflectionRecord.from_dict(
+                            json.loads(existing_row["data"])
+                        )
+                        if not existing_record.same_payload_as(record):
+                            conn.rollback()
+                            raise RelationshipProcessingConflictError(
+                                "reflection ID has different content"
+                            )
+                    else:
+                        conn.execute(
+                            """
+                            INSERT INTO persona_reflection_records (
+                                reflection_id, relationship_id, event_id,
+                                target_reflection_id, data, recorded_at
+                            ) VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                record.reflection_id,
+                                record.relationship_id,
+                                record.event_id,
+                                record.target_reflection_id or "",
+                                json.dumps(record.to_dict(), ensure_ascii=False),
+                                record.recorded_at,
+                            ),
+                        )
+                conn.execute(
+                    """
+                    INSERT INTO persona_reflection_decisions (
+                        decision_id, relationship_id, event_id,
+                        interpretation_identity, data, recorded_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        decision.decision_id,
+                        decision.relationship_id,
+                        decision.event_id,
+                        decision.interpretation_identity,
+                        json.dumps(decision.to_dict(), ensure_ascii=False),
+                        decision.recorded_at,
+                    ),
+                )
+                conn.commit()
+                return decision
+
+    def get_persona_reflection_decision(
+        self,
+        relationship_id: str,
+        decision_id: str,
+    ) -> Optional[PersonaReflectionDecisionRecord]:
+        with closing(self._get_connection()) as conn:
+            row = conn.execute(
+                """
+                SELECT data FROM persona_reflection_decisions
+                WHERE relationship_id = ? AND decision_id = ?
+                """,
+                (relationship_id, decision_id),
+            ).fetchone()
+            return (
+                PersonaReflectionDecisionRecord.from_dict(json.loads(row["data"]))
+                if row is not None
+                else None
+            )
+
+    def list_persona_reflection_decisions(
+        self,
+        relationship_id: str,
+    ) -> List[PersonaReflectionDecisionRecord]:
+        with closing(self._get_connection()) as conn:
+            rows = conn.execute(
+                """
+                SELECT data FROM persona_reflection_decisions
+                WHERE relationship_id = ? ORDER BY sequence ASC
+                """,
+                (relationship_id,),
+            ).fetchall()
+            return [
+                PersonaReflectionDecisionRecord.from_dict(json.loads(row["data"]))
+                for row in rows
+            ]
+
+    def get_persona_reflection_record(
+        self,
+        relationship_id: str,
+        reflection_id: str,
+    ) -> Optional[PersonaReflectionRecord]:
+        with closing(self._get_connection()) as conn:
+            row = conn.execute(
+                """
+                SELECT data FROM persona_reflection_records
+                WHERE relationship_id = ? AND reflection_id = ?
+                """,
+                (relationship_id, reflection_id),
+            ).fetchone()
+            return (
+                PersonaReflectionRecord.from_dict(json.loads(row["data"]))
+                if row is not None
+                else None
+            )
+
+    def list_persona_reflection_records(
+        self,
+        relationship_id: str,
+    ) -> List[PersonaReflectionRecord]:
+        with closing(self._get_connection()) as conn:
+            rows = conn.execute(
+                """
+                SELECT data FROM persona_reflection_records
+                WHERE relationship_id = ? ORDER BY sequence ASC
+                """,
+                (relationship_id,),
+            ).fetchall()
+            return [
+                PersonaReflectionRecord.from_dict(json.loads(row["data"]))
+                for row in rows
+            ]
+
     def save_persona_growth_proposal(
         self,
         proposal: PersonaGrowthProposal,
@@ -2113,6 +2703,22 @@ class SQLiteStorage(BaseStorage):
                     (relationship_id,),
                 ).fetchall()
                 return [PersonaGrowthProposal.from_dict(json.loads(row["data"])) for row in rows]
+
+    def get_persona_growth_proposal(
+        self,
+        proposal_id: str,
+    ) -> Optional[PersonaGrowthProposal]:
+        """Loads one globally stable persona-growth identity."""
+        with closing(self._get_connection()) as conn:
+            row = conn.execute(
+                "SELECT data FROM persona_growth_proposals WHERE proposal_id = ?",
+                (proposal_id,),
+            ).fetchone()
+        return (
+            PersonaGrowthProposal.from_dict(json.loads(row["data"]))
+            if row is not None
+            else None
+        )
 
     def save_persona_compilation_proposal(
         self,

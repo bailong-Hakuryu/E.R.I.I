@@ -46,6 +46,15 @@ class InteractionContextSignal:
     value: str
     evidence_refs: Tuple[str, ...] = ()
     recorded_at: str = field(default_factory=utc_now)
+    relationship_id: Optional[str] = None
+    source_turn_id: Optional[str] = None
+    producer_version: Optional[str] = None
+    _runtime_attestation: object = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "signal_id", _require_text(self.signal_id, "signal_id"))
@@ -68,6 +77,30 @@ class InteractionContextSignal:
             "recorded_at",
             _require_text(self.recorded_at, "recorded_at"),
         )
+        for field_name in (
+            "relationship_id",
+            "source_turn_id",
+            "producer_version",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    _require_text(value, field_name),
+                )
+        scoped_values = (
+            self.relationship_id,
+            self.source_turn_id,
+            self.producer_version,
+        )
+        if any(value is not None for value in scoped_values) and not all(
+            value is not None for value in scoped_values
+        ):
+            raise ValueError(
+                "scoped interaction context requires relationship_id, "
+                "source_turn_id, and producer_version together"
+            )
 
     def same_claim_as(self, other: "InteractionContextSignal") -> bool:
         """Compares host-controlled signal content without server time."""
@@ -77,6 +110,9 @@ class InteractionContextSignal:
             and self.signal_type == other.signal_type
             and self.value == other.value
             and self.evidence_refs == other.evidence_refs
+            and self.relationship_id == other.relationship_id
+            and self.source_turn_id == other.source_turn_id
+            and self.producer_version == other.producer_version
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -87,6 +123,9 @@ class InteractionContextSignal:
             "value": self.value,
             "evidence_refs": list(self.evidence_refs),
             "recorded_at": self.recorded_at,
+            "relationship_id": self.relationship_id,
+            "source_turn_id": self.source_turn_id,
+            "producer_version": self.producer_version,
         }
 
     @classmethod
@@ -98,6 +137,9 @@ class InteractionContextSignal:
             value=str(data["value"]),
             evidence_refs=tuple(str(item) for item in data.get("evidence_refs", [])),
             recorded_at=str(data.get("recorded_at") or utc_now()),
+            relationship_id=data.get("relationship_id"),
+            source_turn_id=data.get("source_turn_id"),
+            producer_version=data.get("producer_version"),
         )
 
 

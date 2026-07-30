@@ -79,7 +79,7 @@
 - 反思失败不撤销已接受事件或确定性状态变化，普通事件可以合法没有反思，事实提取也不能用人设补写对话中没有发生的内容；
 - Persona Reflection 以独立、不可变的 PersonaReflectionRecord 保存并引用已接受事件，不再藏在 Relationship Event metadata 中；
 - 每条反思只保存最小 ReflectionContextProvenance，通过 Source Turn、Evidence、Blueprint 哈希、Manifest 修订、Baseline、已批准成长及相关历史 ID/版本记录当时依据，不复制整份上下文；
-- Reflection Correction 与 Reinterpretation 成为显式引用原 `reflection_id` 的追加式记录；旧 metadata 反思迁移时缺失的上下文保持 `legacy_unavailable`；
+- Reflection Correction 与 Reinterpretation 成为显式引用原 `reflection_id` 的追加式记录；旧 Event metadata 反思只在 Recall/Growth 中只读兼容，不凭缺失字段合成正式 Persona Reflection Record，`legacy_unavailable` 保留为未来显式迁移的领域标记；
 - Persona Manifest 在现有 `VOICE + SITUATIONAL` 解释上增加有原文依据的 ContextualVoicePattern，结构化表达语域及其情绪、活动、关系安全、交流媒介与环境激活条件；
 - 原文表达样本只证明相应语域可用，不自动成为高频口癖或固定台词；运行时优先传递模式与依据，仅在确有需要时展开原句；
 - ContextualVoicePattern 沿用 `character | canonical_relationship | relationship_tendency` 范围，原作关系中的称呼、亲密和共同经历不得随表达风格映射给当前用户；
@@ -115,16 +115,26 @@
 - FileStorage 与 SQLiteStorage 对提交幂等和效果幂等具有共享契约测试；
 - 不把局部去重宣传为端到端 exactly-once。
 
-### alpha.7：事件、情节与关系篇章分层巩固（计划中）
+### alpha.7：事件、反思、情节与关系篇章分层巩固（已完成，`0.4.0a7`）
 
-- Relationship Event 保持权威历史；
-- Episode 从带来源的事件派生并围绕同一具体经历组织；
-- Relationship Chapter 从 Episode 与事件派生较长的关系叙事时期；
-- 所有巩固结果可重建、可追溯，不成为硬编码关系等级或关系状态写入来源。
+- `process_relationship_turn()` 把 completed Source Turn 编排为持久 Relationship Processing Run，普通重试按关系、来源版本和处理身份恢复，不重新采样；
+- `RelationshipEventExtractorV1` 只允许严格 `candidates | no_relationship_event`，自动候选不得携带 Persona Reflection 或 Persona Growth；
+- 完整提取决定在任何确定性裁决前冻结，合法无事件、全部拒绝、局部失败和接受事件具有不同可查询结果；
+- Relationship Event 保持权威追加历史；反思解释失败不得撤销已经接受的事件或关系状态变化；
+- `PersonaReflectionInterpreterV1` 只处理 accepted Event，并返回严格 `reflection | no_reflection`；
+- Persona Reflection 作为关系范围内独立、不可变记录保存；Correction 与 Reinterpretation 追加新记录并引用旧 `reflection_id`，不覆盖历史理解；
+- FileStorage 与 SQLite Schema v6 持久化处理运行、合法零产物、反思决定和反思记录，并遵守相同的 `Agent × User` 隔离与幂等契约；
+- MemoryPack `0.4.0a7` 携带正式反思和全部持久关系处理 run，保留换存储后的冻结决定、可恢复阶段、来源与重试语义；
+- 每个 run 以常量级 direct-event/adjudication journal 高水位和完整指纹冻结裁决基线；MemoryPack 携带 direct-event journal 顺序，并通过生产裁决器精确重放四类结果，不用墙钟猜测前史；
+- Episode 只使用稳定发生身份、类型化时间链等显式分组证据，从带来源的事件派生同一具体经历；
+- Relationship Chapter 只在显式跨 Episode/Event 引用支持时形成；证据不足的事件作为未巩固事件保留；
+- 每次巩固保存 History Fingerprint 与策略版本；Episode/Chapter 可从权威事件历史重建，不进入 MemoryPack，也不成为关系等级或关系状态写入来源；
+- 五轴 `ContinuityEvaluatorV1`、确定性汇总策略与来源支持的 Contextual Voice Pattern 在本阶段随公开契约落地，情境表达不会继承另一段关系的称呼、亲密或共同经历。
 
 ### beta.1：迁移与长期评测
 
 - `0.3 → 0.4` 备份、dry-run、验证与回滚；
+- MemoryPack 自洽性校验与来源真实性分层：设计可选的签名/MAC 封装、密钥轮换和验证失败策略，不把 Pack 内可重算指纹宣传成认证；
 - 删除事件后重建派生状态；
 - 长期关系故事和领域不变量测试；
 - 大数据量召回与重建性能基线。
@@ -145,4 +155,5 @@
 - 存在维护者之外的持续用户；
 - 核心与产品层解耦；
 - 具备用户支持、安全响应和持续投入能力；
+- 完成认证、授权、传输/静态加密、密钥管理与多租户隔离，并对 MemoryPack 导入建立受信任来源策略；
 - 完成目标市场的正式商标近似检索。

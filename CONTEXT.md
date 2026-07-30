@@ -118,6 +118,22 @@ _Avoid_: 后台线程配置、可变任务清单、Inner Review、静默启用�
 一个已声明处理通道独立留下的可观察结果；它区分产生派生产物的成功、合法零产物与失败。只有计划内所有通道都以成功或合法零产物终结时，Source Turn 才算处理完成；任何处理失败都不得回滚已经接受的 Source Transcript。
 _Avoid_: Source Acceptance、单一全局布尔值、把失败伪装成无产物、因一个通道失败删除另一通道结果
 
+**Relationship Processing Run（关系处理运行）**：
+针对一个确定 `Agent × User` 关系、Source Turn 版本与处理身份执行的持久运行；它先冻结严格 Relationship Event Extraction Decision、direct-event/adjudication journal 高水位与完整基线指纹，再恢复确定性裁决与后置 Persona Reflection 解释。普通重试复用既有冻结决定和裁决前史，Historical Reprocessing 必须使用新的显式身份。
+_Avoid_: Source Turn、每次重试重新采样、后台临时任务、跨关系运行
+
+**Adjudication Baseline（裁决基线）**：
+某个 Relationship Processing Run 在裁决前实际可见的 direct-event 与 adjudication 两本追加日志前缀。它由两个高水位和完整内容指纹持久绑定，不由 `recorded_at` 墙钟推断；同一批次的新事件按依赖解析顺序追加到该基线。MemoryPack 携带 direct-event journal 顺序，使导入可以重放全部裁决结果，而不为每个 run 复制完整历史。
+_Avoid_: 时间戳排序、全历史副本、可变查询窗口
+
+**MemoryPack Self-Consistency（MemoryPack 内部自洽性）**：
+通过关系范围、日志顺序、因果引用、冻结决定、未加密指纹和生产规则重放，证明一个 Pack 的当前字段彼此一致；它能发现缺失、冲突和局部改写，但不证明文件来自可信导出者。整体改写者可以重算同一文件内的高水位与指纹，来源真实性必须由宿主侧签名或 MAC、密钥管理和授权策略提供。
+_Avoid_: 来源认证、恶意篡改证明、加密、授权边界
+
+**Relationship Processing Outcome（关系处理结果）**：
+Relationship Processing Run 的持久结果，区分接受事件、合法无关系事件、没有候选被接受、反思阶段局部失败与整体失败；它映射到 Relationship Adjudication 通道的真实 Source Processing Outcome，但不把反思失败误报成事件失败。
+_Avoid_: Relationship State、单一成功布尔值、No-Memory Outcome、因反思失败撤销事件
+
 **Relationship Event Extractor Capability（关系事件提取器能力）**：
 由宿主提供具体实现、由内核定义并编排的版本化能力，把一个已接受 Source Turn 转换为严格 Relationship Event Extraction Decision；内核负责读取规范原文、组装不含人格化解释的受限事实上下文、验证证据与输出、冻结候选、处理重试并调用确定性裁决器。提取器只能提出中性的事件、证据与定性信号，不能生成 Persona Reflection 或自行写入关系历史与状态。
 _Avoid_: Persona Reflection 生成器、手工候选作为默认流程、供应商绑定的内置模型、关系状态写入器、隐藏后台 Agent
@@ -133,10 +149,6 @@ _Avoid_: No-Memory Outcome、关系处理失败、普通闲聊占位事件、自
 **Source Retry（来源重试）**：
 宿主对同一来源身份和版本的重复提交；它必须返回既有裁决结果，不产生新的事件、反思或关系状态变化。
 _Avoid_: 新互动、历史重述、重新裁决
-
-**Source Adjudication Run（来源裁决运行）**：
-对一个 Source Turn 版本和处理身份执行的一次候选裁决；它可以履行 Source Processing Plan 中声明的 Relationship Adjudication 通道，也可以作为后续显式处理运行。首次提交会固定完整候选批次指纹，普通重试不得新增、删除或改写候选，显式 Historical Reprocessing 使用独立处理身份。
-_Avoid_: 每次重试重新采样候选、候选键局部幂等、静默扩张历史
 
 **Historical Reprocessing（历史重处理）**：
 宿主显式指定既有 Source Turn 及新处理版本的一次追加式复核；内核可以读取其 Source Transcript 重新提取或裁决，并产生佐证、更正、重新理解或新提案，但不得覆盖原裁决、重写当时的理解或重复结算既有关系影响。
@@ -178,6 +190,10 @@ _Avoid_: Relationship Event Extractor、事实裁决器、人格成长审批器�
 Persona Reflection Interpreter 对一个已接受事件返回的严格判别结果，只能是一个有来源、符合角色且边界受限的 `reflection`，或不生成反思的显式 `no_reflection`；反思失败不会撤销已接受事件，普通事件也不需要被迫制造内心独白。
 _Avoid_: 空字符串、事件摘要、统一角色口癖、Relationship State 变化、用反思证明事件
 
+**No-Reflection Outcome（无人格反思结果）**：
+Persona Reflection Interpreter 以 `kind=no_reflection` 成功完成一次解释、但不创建 Persona Reflection Record 的合法零产物结果；它会留下最小决定记录以保证重试幂等，但不会制造空白反思或否定对应 Relationship Event。
+_Avoid_: 反思失败、空字符串反思、No-Relationship-Event Outcome、删除事件
+
 **Recall Rendering（当前叙述）**：
 Agent 现在讲述历史反思时采用的临时表达；措辞可以随当前风格变化，但不得改变原反思的事实、情绪方向、强度或核心含义，也不因被渲染而写入历史。
 _Avoid_: 新关系事件、历史反思重写、Renderer 生成的新内心
@@ -189,6 +205,10 @@ _Avoid_: 覆盖、删除、静默重写、无目标反思的通用纠错事件
 **Reinterpretation（重新理解）**：
 Agent 后来获得、显式引用既有 `reflection_id` 的新视角；它扩展当前理解并保存自己的来源与生成时上下文，但不宣称自己当时就已经如此理解。
 _Avoid_: 反思更正、追溯性人格改写、覆盖原反思
+
+**Legacy Reflection Event（旧式反思事件）**：
+`RelationshipEventType.REFLECTION` 或 `RelationshipEventType.CORRECTION` 表示旧式或宿主显式写入的权威关系历史事件，不等同于 a7 的独立 Persona Reflection Record。它的 metadata 只为 Recall/Growth 保留只读兼容；由于缺少情绪方向、强度、核心含义与当时上下文，内核不会自动把它合成为正式反思记录。
+_Avoid_: 新自动反思的默认存储、伪造 Persona Reflection Record、覆盖旧事件、把事件类型与反思记录类型混用
 
 **Decision Receipt（裁决回执）**：
 一次候选裁决留下的最小、持久结果，用于说明候选被接受、转为提案或拒绝，并防止相同候选被重复处理。
@@ -445,12 +465,12 @@ Contextual Voice Pattern 对现有 Persona Scope 的显式应用：`character` �
 _Avoid_: 把原作对象替换为当前用户、跨关系继承亲密、用角色级词汇证明关系级权限
 
 **Interaction Context Signal（互动情境信号）**：
-用于本轮 Situational 人格选择与连续性评估的有类型、带来源临时输入；`host_observed` 只描述地点、活动、交流媒介等宿主可观察事实，`core_derived` 来自当前 Persona Instance 的正式关系状态与历史，`evaluator_inferred` 表示独立评估器从当前消息或既有历史提出并附带依据的情绪或心理情境。不同来源不能互相冒充。
-_Avoid_: 回复模型自报情绪、无来源标签、永久人格状态、跨关系信号
+用于本轮 Situational 人格选择与连续性评估的有类型、带来源临时输入；`host_observed` 只描述地点、活动、交流媒介等宿主可观察事实，`core_derived` 由版本化内核策略从当前 Persona Instance 的正式关系状态与历史生成，`evaluator_inferred` 由独立、版本化评估器在当前 User 消息与同关系正式历史范围内提出有证据的情绪。派生信号必须同时绑定 `relationship_id`、`source_turn_id` 与 `producer_version`，不同来源不能互相冒充；旧版未绑定派生信号只读兼容但没有激活权限。
+_Avoid_: 回复模型自报情绪、无来源标签、永久人格状态、跨关系/跨 Turn 信号、宿主伪装派生来源
 
 **Voice Pattern Activation（表达模式激活）**：
-Engine 用版本化确定性规则把 Contextual Voice Pattern 的获批条件与当前 Interaction Context Signal 匹配后得到的本轮临时选择；激活结果记录模式与支持信号引用，可供生成和 Continuity Evaluation 使用，但不自动写入 Character Blueprint、Persona Growth、关系历史或长期记忆。
-_Avoid_: LLM 自选语域、永久解锁口癖、情绪状态写回、无条件引用原句
+Engine 用版本化确定性规则把 Contextual Voice Pattern 的获批条件与当前 Interaction Context Signal 匹配后得到的本轮临时选择；激活结果绑定当前 relationship 与 Turn，并记录模式与支持信号引用，可供生成和 Continuity Evaluation 使用，但不自动写入 Character Blueprint、Persona Growth、关系历史或长期记忆。
+_Avoid_: LLM 自选语域、永久解锁口癖、情绪状态写回、跨轮复用、无条件引用原句
 
 **Persona Compilation Proposal（人格编译提案）**：
 从 Character Blueprint 生成、尚未成为有效 Persona Interpretation 的完整候选版本；机械来源解析可以自动完成，但语义版本必须在高风险项得到处理后按精确内容批准。
@@ -489,12 +509,28 @@ _Avoid_: 每轮全文常驻、纯相关性决定核心人格、预算静默删�
 _Avoid_: 性格标签、第一人称伪内心、无来源故事摘要
 
 **Episode（情节）**：
-由一段关系中的一个或多个 Relationship Event 派生、围绕同一具体经历或未完成过程组织的可重建叙事单元；它必须保留来源事件引用，不能成为新的权威历史。
-_Avoid_: Relationship Event、聊天摘要、无来源剧情
+由一段关系中的一个或多个 Relationship Event 派生、围绕同一具体经历或未完成过程组织的可重建叙事单元；只有稳定发生键、类型化时间链或其他显式分组证据才能把事件归入同一 Episode，它必须保留全部来源事件引用。
+_Avoid_: Relationship Event、聊天摘要、仅因语义相似自动聚类、无来源剧情
 
 **Relationship Chapter（关系篇章）**：
-由多个 Episode 与 Relationship Event 派生、描述一段关系中较长且有证据支持的叙事时期；它不是硬编码关系等级，也不能自行推动关系状态变化。
-_Avoid_: 关系阶段、陌生人/朋友/恋人等级、数值阈值升级
+由至少两个 Episode 与其 Relationship Event 派生、通过显式跨情节引用描述一段较长且有证据支持的关系叙事；它不是硬编码关系等级，也不能自行推动关系状态变化。
+_Avoid_: 关系阶段、陌生人/朋友/恋人等级、时间相邻即合并、数值阈值升级
+
+**Relationship Consolidation（关系巩固投影）**：
+针对一个关系历史快照生成的完整可重建结果，由 Episode、Relationship Chapter、已覆盖事件和 Unconsolidated Event 共同组成，并标明 History Fingerprint 与策略版本。
+_Avoid_: 权威关系历史、关系等级、一次性自由摘要、永久缓存
+
+**Consolidation Policy（巩固策略）**：
+把权威 Relationship Event 历史确定性投影为 Episode、Relationship Chapter 与未巩固事件集合的版本化规则；相同历史快照与策略版本必须得到相同结果，规则升级通过重建产生新投影而不改写事件。
+_Avoid_: LLM 自由剧情总结、关系状态写入器、不可追溯聚类
+
+**History Fingerprint（历史指纹）**：
+对生成某次巩固投影所用的有序、关系范围内 Relationship Event 快照计算的稳定摘要；它证明投影对应哪一版历史输入，但不是授权凭证、事件内容副本或事实解释。
+_Avoid_: Relationship ID、访问令牌、聊天哈希、权威事件
+
+**Unconsolidated Event（未巩固事件）**：
+因为缺少显式分组证据而没有进入 Episode 或 Relationship Chapter、但仍完整保留在权威关系历史中的 Relationship Event；未巩固是诚实的投影结果，不表示事件较弱、无效或被遗忘。
+_Avoid_: 被拒绝事件、孤儿数据、低重要性记忆、自动删除候选
 
 **Experiential Timeline（体验时间线）**：
 Agent 以第一人称对交互经历所作的叙事性总结。

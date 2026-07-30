@@ -2,7 +2,7 @@
 
 **English** · [简体中文](USAGE_zh-CN.md)
 
-> This guide applies to E.R.I.I. `0.4.0a6`. The current release is still an alpha: it is suitable for local development, prototyping, and controlled integrations, but should not be exposed as a public production service without additional hardening.
+> This guide applies to E.R.I.I. `0.4.0a7`. The current release is still an alpha: it is suitable for local development, prototyping, and controlled integrations, but should not be exposed as a public production service without additional hardening.
 
 E.R.I.I. is a long-term memory kernel for relationship-oriented AI characters, companions, and narrative applications. It does not generate chat responses, nor is it tied to a particular model. Its job is to preserve what a character and a specific user have experienced together, how those experiences are currently understood, and which promises or unfinished matters are still worth remembering.
 
@@ -10,7 +10,7 @@ If you only want to get something running, complete the “Installation” and �
 
 ## Contents
 
-[Start here](#four-rules-to-understand-first) · [Installation](#installation) · [Ten-minute example](#run-it-in-ten-minutes) · [Real chat loop](#next-step-integrate-one-real-conversation-turn) · [Turn Recording](#turn-recording-the-canonical-source-ledger) · [Reliable archival](#reliable-archival-derive-long-term-memory-from-a-source-turn) · [Core objects](#core-objects)
+[Start here](#four-rules-to-understand-first) · [Installation](#installation) · [Ten-minute example](#run-it-in-ten-minutes) · [Real chat loop](#next-step-integrate-one-real-conversation-turn) · [Turn Recording](#turn-recording-the-canonical-source-ledger) · [Reliable archival](#reliable-archival-derive-long-term-memory-from-a-source-turn) · [Automatic relationship processing](#automatic-relationship-processing-from-source-turn-to-event-reflection-and-consolidation) · [Core objects](#core-objects)
 
 [Import a persona](#import-your-own-persona-markdown) · [Relationship premise](#choose-where-the-relationship-begins) · [Persona compilation](#advanced-compile-and-approve-a-structured-persona) · [Conversation memory](#save-ordinary-conversation-memories)
 
@@ -40,7 +40,8 @@ If you only want to get something running, complete the “Installation” and �
 | Reliably derive MemoryNodes and a structured Timeline from that exchange | configure `MemoryExtractorV1` → `archive_turn()` → `process_pending()` / `drain()` |
 | Save conversations and retrieve a block of prompt context | `remember()` → `process_pending()` → `recall()` |
 | Maintain an independent persona and user relationship | `initialize_relationship()` → Relationship Event → `recall_structured()`; start with `full`, or approve a Persona Manifest first |
-| Let a model propose Relationship Events | `adjudicate_relationship_candidates()` |
+| Automatically derive Relationship Events and persona reflections from a completed turn | configure `RelationshipEventExtractorV1` / `PersonaReflectionInterpreterV1` → `process_relationship_turn()` |
+| Manually submit Relationship Event candidates for tests, correction tools, or advanced workflows | `adjudicate_relationship_candidates()` |
 | Preserve promises or unfinished matters | `record_promise()` / `record_open_loop()` |
 | Migrate, back up, or let users take their data with them | `export_memory()` / `import_memory()` |
 | Integrate from a non-Python host application | Use the reference REST service, or wrap the Python API yourself |
@@ -120,7 +121,7 @@ Confirm that installation succeeded:
 python -c "import erii; print(erii.__version__)"
 ```
 
-The command should print `0.4.0a6`.
+The command should print `0.4.0a7`.
 
 For long-lived alpha deployments, pin a verified commit or release instead of allowing deployment scripts to follow `main` unconditionally.
 
@@ -669,7 +670,7 @@ compacted_count = engine.compact_archival_receipts()
 
 Only expired terminal receipts are compacted. Their MemoryNodes and structured Timeline entries remain intact, and retrying the original request still resolves to the same archival identity without re-extraction. `get_archival_receipt()` may therefore return either a full `ArchivalReceipt` (`retention_state="full"`) or a minimal `ArchivalTombstone` (`retention_state="compacted"`). The tombstone preserves terminal status, outcome, source and request/idempotency fingerprints while dropping the extractor descriptor, attempt details, summary, and artifact manifest.
 
-MemoryPack `0.4.0a6` carries:
+The a6 archival portion, still carried by MemoryPack `0.4.0a7`, includes:
 
 - derived MemoryNodes with Source Turn, archival, and extractor provenance;
 - structured `timeline_entries` with stable IDs and the same provenance;
@@ -687,6 +688,383 @@ record_turn() (or begin_turn() → complete_turn()) → archive_turn()
 
 Keep `remember()` only where compatibility with the earlier Prompt/JSON pipeline is required.
 
+## Automatic Relationship Processing: from Source Turn to Event, Reflection, and Consolidation
+
+`0.4.0a7` provides the default path from one completed Source Turn to authoritative relationship history:
+
+```text
+completed Source Turn
+  → RelationshipEventExtractorV1
+      → candidates | no_relationship_event
+  → freeze the complete extraction decision durably
+  → deterministic evidence adjudication
+  → accepted Relationship Event(s)
+  → PersonaReflectionInterpreterV1, once per accepted event
+      → reflection | no_reflection
+  → rebuildable Episode / Relationship Chapter projection
+```
+
+These layers have different authority:
+
+- the Source Transcript is the highest-fidelity record of what was visibly said;
+- an accepted Relationship Event is authoritative, append-only relationship history;
+- a Persona Reflection Record preserves how the character understood one accepted event;
+- Episode and Relationship Chapter are rebuildable narrative projections;
+- Current Belief and Relationship State are deterministic projections of Relationship Events, not outputs of the reflection or consolidation models.
+
+### 1. Supply strict, versioned host capabilities
+
+The kernel orchestrates the lifecycle but does not choose an LLM provider. Supply a `RelationshipEventExtractorV1` with a non-sensitive `ExtractorDescriptor`. If you want character-specific inner interpretation, also supply a `PersonaReflectionInterpreterV1` with a `ReflectionInterpreterDescriptor`.
+
+The following compact example uses strict dictionaries. A production adapter can call any local or remote model, but it must validate and convert the provider response before returning it:
+
+```python
+from erii import (
+    ERIIEngine,
+    ExtractorDescriptor,
+    ReflectionInterpreterDescriptor,
+)
+
+
+class MyRelationshipExtractor:
+    descriptor = ExtractorDescriptor(
+        extractor_id="my-app.relationship-events",
+        extractor_version="1.0",
+        extraction_schema_version="1",
+    )
+
+    def extract(self, request):
+        user_text = request.transcript.user_message.content
+        if "一起看雪" not in user_text:
+            return {
+                "kind": "no_relationship_event",
+                "reason_code": "ordinary_exchange",
+            }
+
+        return {
+            "kind": "candidates",
+            "candidates": [
+                {
+                    "candidate_key": "shared-first-snow",
+                    "event_type": "shared_experience",
+                    "summary": "We watched the first snowfall of this relationship together.",
+                    "signal": {
+                        "signal_type": "shared_experience",
+                        "strength": "moderate",
+                        "extraction_confidence": 0.96,
+                        "interpretation_confidence": 0.86,
+                    },
+                    "evidence": [
+                        {
+                            "source_id": (
+                                request.transcript.user_message.message_id
+                            ),
+                            "source_revision": request.source_revision,
+                            "quote": user_text,
+                        }
+                    ],
+                    "occurrence_key": "shared:first-snow",
+                }
+            ],
+        }
+
+
+class MyReflectionInterpreter:
+    descriptor = ReflectionInterpreterDescriptor(
+        interpreter_id="my-app.persona-reflection",
+        interpreter_version="1.0",
+        interpretation_schema_version="1",
+    )
+
+    def interpret(self, request):
+        # request.event has already passed deterministic adjudication.
+        # request also contains bounded Blueprint/Manifest, baseline,
+        # approved growth, evidence, and same-relationship prior context.
+        if request.event.event_type.value != "shared_experience":
+            return {
+                "kind": "no_reflection",
+                "reason_code": "ordinary_event",
+            }
+        return {
+            "kind": "reflection",
+            "content": "I want to remember how quietly the snow began.",
+            "emotional_direction": "warm",
+            "emotional_intensity": "moderate",
+            "core_meaning": "A new shared experience became personally precious.",
+        }
+
+
+engine = ERIIEngine(
+    storage_dir="./erii_memory",
+    relationship_event_extractor=MyRelationshipExtractor(),
+    persona_reflection_interpreter=MyReflectionInterpreter(),
+)
+```
+
+The automatic extractor schema deliberately has no `persona_reflection` or persona-growth field. It may propose only bounded neutral events, exact Evidence, qualitative Relationship Signals, temporal data, stable occurrence identity, and explicit references/dependencies. Unknown fields, an empty `candidates` result, mixed `candidates`/`no_relationship_event`, or persona-shaped output fail extraction rather than being silently ignored.
+
+The reflection interpreter runs only after an event is accepted. It cannot rewrite the event, Evidence, Character Blueprint, or Relationship State, and it cannot approve Persona Growth.
+
+### 2. Seal the Source Turn, then process it explicitly
+
+The normal processing run requires a completed Turn whose fixed Source Processing Plan includes `relationship_adjudication`. When a relationship extractor is configured, leave the default plan enabled, or declare the channel explicitly:
+
+```python
+source = engine.record_turn(
+    "agent_lumi",
+    "user_chen",
+    "我们第一次一起看雪了。",
+    "嗯，我会记得这一场雪。",
+    turn_id="turn-first-snow-001",
+    processing_channels=("relationship_adjudication",),
+)
+
+run = engine.process_relationship_turn(
+    "agent_lumi",
+    "user_chen",
+    source.source_turn_id,
+)
+
+print(run.processing_id)
+print(run.status)
+print(run.outcome)
+print(run.event_ids)
+```
+
+`process_relationship_turn()` is synchronous and host-controlled. It does not start a hidden thread. The durable run is created under the exact `Agent × User` relationship and Source revision, and the complete extraction decision is frozen before any candidate is adjudicated.
+
+Possible durable meanings include:
+
+- `events_accepted`: one or more events entered authoritative history;
+- `no_relationship_event`: extraction succeeded and explicitly found no relationship event;
+- `no_accepted_events`: candidates were checked but none passed deterministic adjudication;
+- `partial_failed`: accepted events remain committed, but a later reflection step failed;
+- `failed`: relationship processing could not produce the required authoritative result.
+
+A legal `no_relationship_event` is not a memory archival `no_memory`: the archival channel may still preserve a MemoryNode or Timeline entry. Conversely, a relationship event may be accepted even if the archival channel produces no long-term retrieval artifact.
+
+### 3. Query runs, reflections, consolidation, and the Source Turn outcome
+
+All queries require the same external `agent_id` and `user_id`; knowing an internal ID is not enough to cross the relationship boundary:
+
+```python
+same_run = engine.get_relationship_processing_run(
+    "agent_lumi",
+    "user_chen",
+    run.processing_id,
+)
+runs = engine.list_relationship_processing_runs(
+    "agent_lumi",
+    "user_chen",
+)
+
+reflections = engine.list_persona_reflections(
+    "agent_lumi",
+    "user_chen",
+)
+if reflections:
+    reflection = engine.get_persona_reflection(
+        "agent_lumi",
+        "user_chen",
+        reflections[0].reflection_id,
+    )
+
+consolidation = engine.get_relationship_consolidation(
+    "agent_lumi",
+    "user_chen",
+)
+outcomes = engine.get_source_processing_outcomes(
+    "agent_lumi",
+    "user_chen",
+    source.source_turn_id,
+)
+```
+
+`get_source_processing_outcomes()` reports the real Relationship Adjudication channel state instead of treating “Source Turn accepted” as “relationship processing completed.” A reflection failure maps to a partial relationship result; it does not erase accepted events.
+
+`list_persona_reflections()` returns formal content records. A successful `no_reflection` remains in the internal decision ledger for idempotency but does not create a placeholder reflection, so an empty list can be correct even after successful processing.
+
+### 4. Retry without resampling; reprocess only with a new identity
+
+Repeating the normal call with the same relationship, `source_turn_id`, Source revision, and processing identity resumes or returns the durable run:
+
+```python
+same = engine.process_relationship_turn(
+    "agent_lumi",
+    "user_chen",
+    source.source_turn_id,
+)
+
+assert same.processing_id == run.processing_id
+```
+
+The extractor is not called again after its strict decision has been frozen. FileStorage and SQLiteStorage serialize the first external extraction/reflection call across Engine instances and processes, so competing hosts cannot sample two decisions before one becomes durable. A restarted Engine can return or advance an existing run without configuring the extractor again. If that run froze `reflection_planned=True`, however, the interpreter remains required to finish it; restart cannot silently downgrade the planned reflection step. Custom storage adapters that share state across processes must provide an equivalent `relationship_processing_guard()`.
+
+If adjudication succeeded and only the reflection interpreter failed, retry resumes the reflection stage; it cannot revoke or duplicate the event.
+
+Model upgrades do not silently rewrite history. To revisit an old Source Turn, opt into a separate append-only run:
+
+```python
+reprocessed = engine.process_relationship_turn(
+    "agent_lumi",
+    "user_chen",
+    source.source_turn_id,
+    processing_mode="historical_reprocessing",
+    reprocessing_id="relationship-extractor-v2-review-001",
+)
+```
+
+Use a stable, host-owned `reprocessing_id`. Historical reprocessing may append corroboration, correction, reinterpretation, or a new proposal, but it must not overwrite an old event, rewrite what the character understood at the time, or apply the same relationship effect twice.
+
+### 5. Preserve reflection history instead of editing it
+
+A `reflection` creates an immutable, relationship-scoped Persona Reflection Record linked to its accepted event. Its Reflection Context Provenance stores only stable IDs, revisions, versions, and hashes for the Source Turn, Evidence, Blueprint, Manifest, baseline, approved growth, and cited prior history; it does not duplicate the full prompt, persona source, transcript, or model reasoning.
+
+When later evidence shows that an earlier understanding was wrong, append a Correction that targets the old `reflection_id`. When the character develops a new perspective without claiming the old perspective was erroneous, append a Reinterpretation. Both preserve the original record as “what the character understood then.”
+
+With a reflection interpreter configured, use a stable host-owned interpretation identity:
+
+```python
+correction = engine.correct_persona_reflection(
+    "agent_lumi",
+    "user_chen",
+    target_reflection_id=reflection.reflection_id,
+    interpretation_id="correct-first-snow-understanding-001",
+)
+
+reinterpretation = engine.reinterpret_persona_reflection(
+    "agent_lumi",
+    "user_chen",
+    target_reflection_id=reflection.reflection_id,
+    interpretation_id="revisit-first-snow-001",
+)
+
+all_decisions = engine.list_persona_reflection_decisions(
+    "agent_lumi",
+    "user_chen",
+)
+```
+
+The interpreter receives the target and the correct record kind; it still returns strict `reflection | no_reflection`. The durable identity is the combination of relationship, event, record kind, target reflection, and `interpretation_id`. Reusing the same ID for the same target and kind returns the same decision; a new ID appends another correction or reinterpretation without overwriting either prior record.
+
+Legacy Relationship Events of type `reflection` or `correction` remain available to the read-only Recall/Growth compatibility path, but they are not the same object as an a7 Persona Reflection Record. E.R.I.I. does not synthesize a formal record from that metadata: old data lacks the emotional direction, intensity, core meaning, and historical context required by the new contract. `legacy_unavailable` remains a domain marker for a future explicit migration, not a record automatically created by a7.
+
+### 6. Treat Episode and Chapter as projections, not facts
+
+`get_relationship_consolidation()` deterministically rebuilds one narrative projection from the current authoritative Relationship Event snapshot:
+
+- an Episode groups events only when a stable occurrence identity, typed temporal chain, or other explicit grouping evidence says they describe one concrete experience;
+- a Relationship Chapter requires at least two Episodes connected by explicit cross-event references;
+- events without sufficient evidence remain listed in `unconsolidated_event_ids`;
+- `history_fingerprint` identifies the exact ordered history snapshot, and `projection_version` identifies the grouping policy.
+
+Time adjacency or semantic similarity alone is not enough. “Unconsolidated” does not mean rejected, forgotten, or unimportant—the event remains in authoritative history and may join a future projection if later explicit evidence connects it. Episode and Chapter do not change relationship levels, Current Belief, or Relationship State, and they are rebuilt rather than exported in MemoryPack.
+
+### 7. Evaluate five continuity axes and activate voice only from sourced context
+
+Before showing a draft reply, a host can use the a7 `ContinuityEvaluatorV1` contract. The evaluator must return exactly one sourced finding for each axis:
+
+- `identity_values`;
+- `psychological_causality`;
+- `relationship_scope`;
+- `knowledge_memory_scope`;
+- `voice_style`.
+
+The evaluator cannot provide the aggregate verdict. `ContinuityAggregationPolicyV1` deterministically maps the findings to `aligned`, `supported_new_choice`, `review_required`, or `unsupported_drift`. Relationship crossover, inherited intimacy, and unavailable knowledge are hard conflicts. A voice-only deviation can recommend a style revision, but it does not prove persona drift.
+
+Approved Persona Manifests may contain source-backed Contextual Voice Patterns. `VoicePatternMatcher` activates a pattern only when current `InteractionContextSignal` values satisfy its typed conditions and scope. A `canonical_relationship` pattern is available only under the matching explicit canonical continuation; its terms of address, intimacy, and shared experiences never transfer merely because the same register sounds plausible. `VoicePatternActivation` is temporary input for this reply and its continuity check, not a memory or persona change.
+
+The authority for each condition type is fixed:
+
+- activity, communication modality, and environmental cues come from public `host_observed` signals;
+- `relationship_safety` comes from the kernel's current Relationship Snapshot and uses only `low`, `moderate`, or `high`;
+- emotion comes from an optional, independently versioned `InteractionContextEvaluatorV1`.
+
+An emotion evaluator sees only the current User message, the current relationship state, at most the latest 16 accepted Events from that relationship, the host-observed signals for this Turn, and the emotion values used by the approved Manifest. It must return strict `signals | no_signals`. Each signal must cite one or more references exposed by the request; evidence from another relationship is rejected:
+
+```python
+from erii import InteractionContextEvaluatorDescriptor
+
+
+class CurrentEmotionEvaluator:
+    descriptor = InteractionContextEvaluatorDescriptor(
+        evaluator_id="my-app.current-emotion",
+        evaluator_version="1",
+    )
+
+    def evaluate(self, request):
+        # Replace this toy rule with an independent model or evaluator.
+        if "!" not in request.user_message:
+            return {
+                "kind": "no_signals",
+                "reason_code": "no_distinct_emotion",
+            }
+        return {
+            "kind": "signals",
+            "signals": [
+                {
+                    "candidate_key": "current-excitement",
+                    "value": "excited",
+                    "evidence_refs": [request.user_message_evidence_ref],
+                }
+            ],
+        }
+
+
+engine = ERIIEngine(
+    storage_dir="./erii_data",
+    interaction_context_evaluator=CurrentEmotionEvaluator(),
+    continuity_evaluator=my_continuity_evaluator,
+)
+```
+
+E.R.I.I. stamps internal signals with the current `relationship_id`, `source_turn_id`, and producer version, plus a non-serialized runtime attestation owned by that Engine process. A scoped signal cannot be reused for another relationship or Turn, and manually constructing or deserializing a `core_derived` / `evaluator_inferred` label does not grant activation authority. Legacy unscoped derived signals remain readable but cannot activate a pattern. Repeated matching for exactly the same Turn input may reuse the evaluator result only inside a bounded cache in the current Engine lifetime; terminal Turn handling evicts its entries and `close()` clears the cache. Neither the signals nor activations become Source Transcript content, Relationship Events, persona changes, or long-term memory.
+
+The Engine exposes this as an open-Turn, pre-delivery workflow:
+
+```python
+opened = engine.begin_turn(
+    "agent_lumi",
+    "user_chen",
+    "Can we go out and play today?",
+    interaction_context=(
+        {
+            "signal_id": "activity-game",
+            "source": "host_observed",
+            "signal_type": "activity",
+            "value": "gaming",
+        },
+    ),
+)
+
+activations = engine.activate_contextual_voice_patterns(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+)
+
+continuity = engine.evaluate_reply_continuity(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    proposed_reply,
+    persona_context_refs=(approved_manifest.manifest_id,),
+    relationship_context_refs=tuple(recalled_event_ids),
+)
+
+# The host applies its delivery policy. If the reply is actually shown:
+receipt = engine.complete_turn(
+    "agent_lumi",
+    "user_chen",
+    opened.turn_id,
+    proposed_reply,
+    continuity_assessment=continuity.assessment,
+    delivery_disposition="shown",
+)
+```
+
+Both methods require an `open` Turn and an approved Manifest pinned to this relationship. `evaluate_reply_continuity()` also requires a configured `continuity_evaluator`. Emotion-conditioned patterns stay inactive when no `interaction_context_evaluator` is configured or when it returns `no_signals`; relationship-safety patterns still use the deterministic kernel projection. The host still controls whether to show, revise, or withhold a draft; E.R.I.I. records only the reply that was actually shown.
+
 ## Core Objects
 
 | Object | Purpose | Can it be overwritten in place? |
@@ -696,8 +1074,11 @@ Keep `remember()` only where compatibility with the earlier Prompt/JSON pipeline
 | Relationship Premise | Where this relationship begins | Fixed after initialization |
 | Turn Record / Source Transcript | The exact visible User/Agent source for one relationship-scoped interaction | `open` may become one terminal `completed` or `abandoned` revision; terminal records cannot be reopened |
 | SourceTurnReceipt | A text-free completion receipt containing IDs, plan, and channel outcomes | No transcript text; query the scoped Turn Record to read it |
+| Relationship Processing Run | A durable frozen extraction/adjudication/reflection run for one Source Turn revision | Resumed by identity; its frozen extraction decision is not replaced |
 | Relationship Event | Shared experiences, observations, conflicts, repairs, promises, and other history | No; append-only |
+| Persona Reflection Record | How the character understood one accepted event, with minimal context provenance | No; append Correction or Reinterpretation |
 | Relationship Snapshot | The relationship state and explanation projected from currently effective history | Not an archive; it can be rebuilt |
+| Episode / Relationship Chapter | A source-linked narrative projection over Relationship Events | Rebuilt from history and policy; not authoritative |
 | MemoryNode | A retrievable impression, such as a preference, event, or reflection extracted from conversation | Maintained by the memory workflow |
 | MemoryPack | A portable data package for one `agent_id + user_id` pair | Used for import and export |
 
@@ -1160,11 +1541,11 @@ for receipt in result.receipts:
     print(receipt.candidate_key, receipt.outcome, receipt.reason_codes)
 ```
 
-For new integrations, the durable Turn Record is the canonical source identity. The raw `source_turn` argument above is retained for compatibility and quotation validation; it does not create or replace a Turn Record.
+For new integrations, the durable Turn Record is the canonical source identity and `process_relationship_turn()` is the default automatic path. The raw `source_turn` argument above is retained for compatibility and quotation validation; it does not create or replace a Turn Record. The compatibility candidate may still contain the historical `persona_reflection` field, but automatic `RelationshipEventExtractorV1` output must not contain it—formal reflection now runs independently after event acceptance.
 
 The adjudicator verifies that each quotation actually exists in the specified message, then uses versioned rules to map qualitative signals to bounded state changes. Model confidence cannot bypass those rules.
 
-A normal Source Adjudication Run is identified by `turn_id + revision + processing_mode + reprocessing_id`. The first submission freezes the complete candidate batch. Technical retries must resend it unchanged; changing only `extractor_version` does not create a new processing run. To analyze historical data again with a new model, explicitly use `processing_mode="historical_reprocessing"` and a stable, unique `reprocessing_id`.
+A normal Relationship Processing Run is identified by relationship, Source Turn revision, processing mode, and optional reprocessing identity. The first automatic submission freezes the complete extraction decision; technical retries resume it unchanged. To analyze historical data again with a new model, explicitly use `processing_mode="historical_reprocessing"` and a stable, unique `reprocessing_id`.
 
 ## Advanced: Persona Growth Is Not an Ordinary Relationship Event
 
@@ -1360,6 +1741,8 @@ In `0.4.0a5`, FileStorage also persists the relationship-scoped Turn Record coll
 
 In `0.4.0a6`, reliable commands, leases, frozen batches, structured Timeline entries, and archival tombstones are maintained under the locked `_archival_state.json` aggregate. Publishing a prepared batch uses one atomic replacement, so readers see its nodes, Timeline, and terminal receipt together or see none of them.
 
+In `0.4.0a7`, relationship processing runs, explicit zero-result decisions, formal persona reflections, and their minimal provenance are persisted under the same relationship-wide file lock. Separate FileStorage instances therefore cannot overwrite each other's append-only relationship history during concurrent writes.
+
 ### SQLiteStorage
 
 ```python
@@ -1381,6 +1764,8 @@ This is appropriate for:
 `0.4.0a5` migrates an existing SQLite database in place to schema v4. The new `source_turns` table stores each Turn Record as a relationship-scoped aggregate, ordered by its durable opening sequence. Back up important databases before upgrading an alpha release.
 
 `0.4.0a6` migrates schema v4 to v5, adding reliable archival records, consumer leases, tombstones, and structured Timeline provenance. Batch publication happens inside one SQLite transaction. Existing v4 Source Turns and earlier memory data are retained in place.
+
+`0.4.0a7` migrates schema v5 to v6, adding durable relationship processing runs, reflection decisions, and formal reflection records. Existing events and legacy metadata remain intact and readable through the compatibility path; they are not converted into incomplete formal reflections.
 
 FileStorage remains the default in the current release. To select SQLite, explicitly pass a `SQLiteStorage` instance. Neither storage implementation is a multi-tenant authorization boundary, and both store data in plaintext by default.
 
@@ -1410,20 +1795,28 @@ engine.import_memory(
 )
 ```
 
-MemoryPack `0.4.0a6` carries:
+MemoryPack `0.4.0a7` carries:
 
 - Core Memory, MemoryNodes, and the legacy Experiential Timeline;
 - provenance-complete structured `timeline_entries`;
 - the Character Blueprint and relationship record;
-- append-only Relationship Events and evidence-based adjudication;
+- append-only Relationship Events, direct-event journal order, and evidence-based adjudication;
 - persona compilation Proposals, the Persona Manifest, and persona growth Proposals;
 - Promises, Open Loops, condition confirmations, and resolution events;
 - the root `turn_records` collection, including complete visible Source Transcripts and terminal state.
-- terminal reliable archival identities as compact `archival_ledger` tombstones.
+- terminal reliable archival identities as compact `archival_ledger` tombstones;
+- formal Persona Reflection Records and explicit reflection/no-reflection decision identity;
+- all durable Relationship Processing runs, including recoverable non-terminal/partial phases, frozen decisions, source/processing identity, and legal zero-result outcomes.
 
-Because `turn_records` contain relationship-private, verbatim conversation history, and a6 artifact provenance is bound to its original sources, a Pack containing either can only be restored to its exact original `agent_id`, `user_id`, and relationship identity. Supplying different host IDs is rejected, and `overwrite=True` does not bypass that rule. To move the same relationship between machines or storage adapters, preserve its original IDs.
+The processing ledger does not duplicate the complete prompt, persona source, Source Transcript, model reasoning, or growing relationship history. The canonical transcript remains in `turn_records`; each run keeps its bounded frozen decision, two direct-event/adjudication journal high-water marks, a complete baseline fingerprint, and the identities required to resume after migration. Export and exact-identity import hold the same relationship-processing guard as the coordinator, so a Pack cannot capture a half-finished transition and import cannot interleave a foreign journal prefix with online processing. Import never guesses prior history from wall-clock `recorded_at`: it replays frozen candidates through the production adjudicator against the frozen journal prefixes, considering only the head of each journal so both journals retain their own FIFO order. Before ordinary memory fields are written, import preflights the complete immutable Relationship/Blueprint identity, exact Source Turns, stable Timeline identities, canonical run identity and versions, target decision conflicts, the union of target and incoming temporal history, every complete receipt/Event result, and each formal reflection's unique accepted source against its Evidence, baseline, relationship-bound Manifest, approved growth, and genuinely prior history. The per-run baseline metadata remains constant-size.
 
-MemoryPacks from `0.4.0a5` and earlier have no structured a6 archival ledger. They remain readable, and missing provenance is not fabricated. Packs from `0.4.0a4` and earlier also have no `turn_records` and retain their historical remapping behavior for the older payload, subject to persona, relationship, and reference-integrity checks. That compatibility path must not be interpreted as permission to remap a Pack containing a Source Transcript ledger or a6 archival provenance.
+This preflight establishes structural and causal self-consistency; it does not authenticate who created the Pack. Journal counts and fingerprints are unkeyed data inside the same file, so someone able to rewrite the entire Pack can recompute them. Use a host-managed signature or MAC, encryption where confidentiality is required, and appropriate authorization and key management for product deployments.
+
+Episode and Relationship Chapter are intentionally absent because they are rebuildable projections over imported Relationship Events.
+
+Because `turn_records` contain relationship-private, verbatim conversation history, and archival/relationship-processing provenance is bound to its original sources, a Pack containing any of it can only be restored to its exact original `agent_id`, `user_id`, and relationship identity. Supplying different host IDs is rejected, and `overwrite=True` does not bypass that rule. To move the same relationship between machines or storage adapters, preserve its original IDs.
+
+MemoryPacks from `0.4.0a6` and earlier have no a7 reflection/relationship-processing ledger. They remain readable, and missing provenance or zero-result decisions are not fabricated. Packs from `0.4.0a5` and earlier also have no structured a6 archival ledger; packs from `0.4.0a4` and earlier have no `turn_records` and retain their historical remapping behavior for the older payload, subject to persona, relationship, and reference-integrity checks. That compatibility path is not permission to remap a Pack containing a Source Transcript, archival provenance, formal reflection, or relationship-processing ledger.
 
 The portable `archival_ledger` is deliberately not the live operational queue. It includes only terminal compact tombstones: no pending/processing job, raw idempotency key, attempt details, `safe_summary`, or artifact manifest is exported. Derived MemoryNodes and structured Timeline entries remain usable after a FileStorage-to-SQLiteStorage or SQLiteStorage-to-FileStorage move, and their Source Turn/extractor provenance stays intact.
 
@@ -1433,49 +1826,49 @@ Before importing, note the following:
 - Repeatedly importing a legacy Experiential Timeline may still append duplicate entries.
 - Import is rejected if the existing relationship's persona or premise does not match.
 - Import is rejected when temporal-event references are missing, cross relationships, or have invalid ordering.
+- Import is rejected before other target writes when an incoming decision ID conflicts with an existing adjudication record.
+- An a7 processing-ledger import requires the target's two relationship journals and the incoming journals to be prefix-compatible; import does not merge divergent history branches.
+- Even when both journals are prefix-compatible, their target-plus-incoming union must form one valid temporal lifecycle, and a complete reflection must still have exactly one accepted source decision.
+- Bound Packs require the complete immutable relationship/Blueprint identity and exact a7 Source Turn records; structured Timeline IDs cannot silently reuse different content.
+- Import is rejected before any target write when a formal reflection's provenance does not exactly match the packed adjudication and persona context.
 - A Pack containing `turn_records` or archival provenance cannot be imported across `Agent × User` identities, even when overwrite is requested.
 - Before processing important data, copy the original storage file and test the operation in a separate directory.
 
-## Add Relationship Candidates to a Real Chat Loop
+## Add Automatic Relationship Processing to a Real Chat Loop
 
-The earlier “Next Step: Integrate One Real Conversation Turn” section already provides the minimal end-to-end loop. Add a separate relationship extractor only when the product needs a model to recognize shared experiences, conflicts, repairs, or commitments:
+The earlier “Next Step: Integrate One Real Conversation Turn” section already provides the minimal visible-message loop. Configure the versioned extractor/interpreter capabilities once, then explicitly process the stable Source Turn when the product needs to recognize shared experiences, conflicts, repairs, or commitments:
 
 ```text
 Character reply completed
   ├── complete_turn(): seal the canonical visible Source Transcript
-  ├── optional remember(): run the legacy MemoryNode archival path
-  └── optional relationship extractor: derive candidates from the accepted turn
-           → adjudicate_relationship_candidates()
-           → inspect each receipt.outcome
+  ├── optional archive_turn(): derive retrievable memory artifacts
+  └── process_relationship_turn(source_turn_id)
+           → freeze strict extraction decision
+           → deterministic adjudication
+           → interpret accepted events only
+           → inspect the durable run outcome
            → if needed, create a separate persona growth Proposal for approval
 ```
 
-The host application should already have called `initialize_relationship()` for this pair of IDs. Optional processing code:
+The host application should already have called `initialize_relationship()` for this pair of IDs:
 
 ```python
-def adjudicate_turn_relationship(
-    engine,
-    relationship_extractor,
-    user_text,
-    reply,
-):
-    source_turn, candidates = relationship_extractor.extract(
-        user_text=user_text,
-        agent_reply=reply,
-    )
-    if not candidates:
-        return ()
-
-    result = engine.adjudicate_relationship_candidates(
+def process_visible_turn(engine, user_text, reply):
+    source = engine.record_turn(
         "agent_lumi",
         "user_chen",
-        source_turn,
-        candidates,
+        user_text,
+        reply,
+        processing_channels=("relationship_adjudication",),
     )
-    return result.receipts
+    return engine.process_relationship_turn(
+        "agent_lumi",
+        "user_chen",
+        source.source_turn_id,
+    )
 ```
 
-`relationship_extractor` is a host application component, not a chat model built into E.R.I.I. Its output cannot directly modify the Relationship Snapshot or Character Blueprint. The caller must inspect each `receipt.outcome` instead of interpreting a successful request as acceptance of every candidate.
+The extractor and interpreter remain host application components, not chat models built into E.R.I.I. Their output cannot directly modify the Character Blueprint, and only deterministic adjudication may append a Relationship Event. Inspect `run.outcome`; a successful method call is not proof that every candidate was accepted. Keep `adjudicate_relationship_candidates()` only for compatibility, tests, and advanced correction tools that intentionally construct candidates themselves.
 
 ## Reference REST Service
 
@@ -1777,7 +2170,7 @@ This is expected. The memory boundary is `(agent_id, user_id)`, not just `agent_
 - Do not log complete conversations, raw model responses, keys, or private persona sources.
 - Tell users before their data leaves the local environment for a remote model.
 - Export MemoryPacks regularly and rehearse restoration.
-- Restore `0.4.0a5` Packs containing `turn_records` only under their exact original `Agent × User` identity; do not build a product flow that relies on cross-relationship remapping.
+- Restore Packs containing `turn_records`, archival provenance, formal reflections, or relationship-processing ledger entries only under their exact original `Agent × User` identity; do not build a product flow that relies on cross-relationship remapping.
 - Before upgrading an alpha release, read the CHANGELOG and compatibility notes, then back up first.
 - Give users product-level controls to export and delete their data.
 
@@ -1788,8 +2181,9 @@ This is expected. The memory boundary is `(agent_id, user_id)`, not just `agent_
 - Neither FileStorage nor SQLite is a multi-tenant security boundary.
 - The reference REST service is not a complete product backend.
 - Memory-extraction quality depends on the model and prompt selected by the host application.
-- The host application must implement the relationship candidate extractor, chat model, and approval UI.
-- Hierarchical consolidation across events, plots, and relationship phases is not yet implemented.
+- The host application must implement the relationship event extractor, optional reflection/continuity capabilities, chat model, and approval UI.
+- Episode/Chapter consolidation is intentionally conservative: events without explicit grouping evidence remain unconsolidated rather than being clustered by similarity.
+- Complete authentication, authorization, encryption, and multi-tenant isolation remain host responsibilities.
 
 ## More Runnable Examples
 

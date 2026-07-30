@@ -5,7 +5,10 @@ Follows Google Python Style Guide.
 
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
+import errno
+import os
 import threading
+import time
 from typing import Dict, List, Optional
 from erii.models.adjudication import (
     AdjudicationRecord,
@@ -25,6 +28,11 @@ from erii.models.relationship import (
 )
 from erii.models.turn import ReplyAttemptRecord, TurnRecord, TurnStatus
 from erii.models.archival import ArchivalTombstone, TimelineEntry
+from erii.models.consolidation import (
+    PersonaReflectionDecisionRecord,
+    PersonaReflectionRecord,
+    RelationshipProcessingRun,
+)
 from erii.storage.archival import AtomicArchivalStoreV1
 
 
@@ -52,11 +60,112 @@ class KeyLockManager:
             lock.release()
 
 
+_FILE_LOCKS: Dict[str, threading.RLock] = {}
+_FILE_LOCKS_GUARD = threading.Lock()
+_FILE_LOCK_DEPTHS = threading.local()
+
+
+@contextmanager
+def cross_process_file_lock(lock_path: str):
+    """Serializes a critical section across threads, instances, and processes."""
+    normalized_path = os.path.normcase(
+        os.path.realpath(os.path.abspath(lock_path))
+    )
+    with _FILE_LOCKS_GUARD:
+        process_lock = _FILE_LOCKS.setdefault(
+            normalized_path,
+            threading.RLock(),
+        )
+    with process_lock:
+        depths = getattr(_FILE_LOCK_DEPTHS, "values", None)
+        if depths is None:
+            depths = {}
+            _FILE_LOCK_DEPTHS.values = depths
+        if normalized_path in depths:
+            depths[normalized_path] += 1
+            try:
+                yield
+            finally:
+                depths[normalized_path] -= 1
+            return
+
+        parent = os.path.dirname(normalized_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(normalized_path, "a+b") as lock_file:
+            lock_file.seek(0, os.SEEK_END)
+            if lock_file.tell() == 0:
+                lock_file.write(b"\0")
+                lock_file.flush()
+                os.fsync(lock_file.fileno())
+            lock_file.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                while True:
+                    lock_file.seek(0)
+                    try:
+                        msvcrt.locking(
+                            lock_file.fileno(),
+                            msvcrt.LK_NBLCK,
+                            1,
+                        )
+                        break
+                    except OSError as exc:
+                        if (
+                            exc.errno
+                            not in {
+                                errno.EACCES,
+                                errno.EAGAIN,
+                                errno.EDEADLK,
+                            }
+                            and getattr(exc, "winerror", None) != 33
+                        ):
+                            raise
+                        # LK_LOCK gives up after ten one-second retries on
+                        # Windows. Keep the host-controlled processing guard
+                        # valid for model calls that legitimately exceed 10s.
+                        time.sleep(0.05)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            depths[normalized_path] = 1
+            try:
+                yield
+            finally:
+                try:
+                    lock_file.seek(0)
+                    if os.name == "nt":
+                        msvcrt.locking(
+                            lock_file.fileno(),
+                            msvcrt.LK_UNLCK,
+                            1,
+                        )
+                    else:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                finally:
+                    del depths[normalized_path]
+
+
 class BaseStorage(ABC):
     """Abstract interface for memory persistence drivers."""
 
     def __init__(self) -> None:
         self.lock_manager = KeyLockManager()
+
+    @contextmanager
+    def relationship_processing_guard(self, relationship_id: str):
+        """Serializes external relationship-processing calls for one relation.
+
+        Custom adapters that share durable state across processes should
+        override this with a cross-process implementation.
+        """
+        with self.lock_manager.lock(
+            "__relationship_processing__",
+            relationship_id,
+        ):
+            yield
 
     @abstractmethod
     def save_nodes(
@@ -194,6 +303,13 @@ class BaseStorage(ABC):
         """Returns persona growth proposals for one relationship."""
         raise NotImplementedError("storage adapter does not support persona growth proposals")
 
+    def get_persona_growth_proposal(
+        self,
+        proposal_id: str,
+    ) -> Optional[PersonaGrowthProposal]:
+        """Loads one globally stable persona-growth identity when supported."""
+        raise NotImplementedError("storage adapter does not support persona growth proposals")
+
     def save_persona_compilation_proposal(
         self,
         proposal: PersonaCompilationProposal,
@@ -326,3 +442,88 @@ class BaseStorage(ABC):
     def atomic_archival_store_v1(self) -> Optional[AtomicArchivalStoreV1]:
         """Returns the optional versioned reliable-archival capability."""
         return None
+
+    def create_relationship_processing_run(
+        self,
+        run: RelationshipProcessingRun,
+    ) -> RelationshipProcessingRun:
+        """Freezes one source relationship-processing identity idempotently."""
+        raise NotImplementedError(
+            "storage adapter does not support relationship processing"
+        )
+
+    def get_relationship_processing_run(
+        self,
+        relationship_id: str,
+        processing_id: str,
+    ) -> Optional[RelationshipProcessingRun]:
+        """Loads one relationship-scoped processing run."""
+        raise NotImplementedError(
+            "storage adapter does not support relationship processing"
+        )
+
+    def list_relationship_processing_runs(
+        self,
+        relationship_id: str,
+    ) -> List[RelationshipProcessingRun]:
+        """Returns processing runs in durable creation order."""
+        raise NotImplementedError(
+            "storage adapter does not support relationship processing"
+        )
+
+    def update_relationship_processing_run(
+        self,
+        run: RelationshipProcessingRun,
+        expected_record_version: int,
+    ) -> RelationshipProcessingRun:
+        """CAS-updates one run without changing its frozen input."""
+        raise NotImplementedError(
+            "storage adapter does not support relationship processing"
+        )
+
+    def commit_persona_reflection_decision(
+        self,
+        decision: PersonaReflectionDecisionRecord,
+    ) -> PersonaReflectionDecisionRecord:
+        """Atomically stores a reflection decision and optional formal record."""
+        raise NotImplementedError(
+            "storage adapter does not support persona reflections"
+        )
+
+    def get_persona_reflection_decision(
+        self,
+        relationship_id: str,
+        decision_id: str,
+    ) -> Optional[PersonaReflectionDecisionRecord]:
+        """Loads one relationship-scoped reflection decision."""
+        raise NotImplementedError(
+            "storage adapter does not support persona reflections"
+        )
+
+    def list_persona_reflection_decisions(
+        self,
+        relationship_id: str,
+    ) -> List[PersonaReflectionDecisionRecord]:
+        """Returns reflection and no-reflection outcomes in append order."""
+        raise NotImplementedError(
+            "storage adapter does not support persona reflections"
+        )
+
+    def get_persona_reflection_record(
+        self,
+        relationship_id: str,
+        reflection_id: str,
+    ) -> Optional[PersonaReflectionRecord]:
+        """Loads one formal reflection record inside its relationship."""
+        raise NotImplementedError(
+            "storage adapter does not support persona reflections"
+        )
+
+    def list_persona_reflection_records(
+        self,
+        relationship_id: str,
+    ) -> List[PersonaReflectionRecord]:
+        """Returns append-only formal reflection history."""
+        raise NotImplementedError(
+            "storage adapter does not support persona reflections"
+        )

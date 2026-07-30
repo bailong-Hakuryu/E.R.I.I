@@ -19,6 +19,7 @@ from erii.models.relationship import (
     RelationshipPremiseMode,
     utc_now,
 )
+from erii.models.turn import ContextSignalSource
 
 
 def _require_text(value: str, field_name: str) -> str:
@@ -73,6 +74,16 @@ class PersonaScope(str, Enum):
     CHARACTER = "character"
     CANONICAL_RELATIONSHIP = "canonical_relationship"
     RELATIONSHIP_TENDENCY = "relationship_tendency"
+
+
+class VoicePatternConditionType(str, Enum):
+    """Typed runtime contexts that may activate an expression register."""
+
+    EMOTION = "emotion"
+    ACTIVITY = "activity"
+    RELATIONSHIP_SAFETY = "relationship_safety"
+    COMMUNICATION_MODALITY = "communication_modality"
+    ENVIRONMENTAL_CUE = "environmental_cue"
 
 
 class PersonaClaimKind(str, Enum):
@@ -271,6 +282,101 @@ class CanonicalPremiseTemplateCandidate(PersonaBoundaryModel):
         return self
 
 
+class VoicePatternCondition(PersonaBoundaryModel):
+    """One exact, source-authority-aware condition for a voice pattern."""
+
+    condition_id: str = Field(min_length=1, max_length=256)
+    condition_type: VoicePatternConditionType
+    values: List[str] = Field(min_length=1, max_length=32)
+    signal_source: Optional[ContextSignalSource] = None
+
+    @model_validator(mode="after")
+    def condition_has_one_authoritative_signal_source(self) -> "VoicePatternCondition":
+        normalized = [item.casefold() for item in self.values]
+        _unique(normalized, "voice pattern condition values")
+        if (
+            self.condition_type
+            == VoicePatternConditionType.RELATIONSHIP_SAFETY
+            and not set(normalized).issubset({"low", "moderate", "high"})
+        ):
+            raise ValueError(
+                "relationship_safety values must be low, moderate, or high"
+            )
+        expected_sources = {
+            VoicePatternConditionType.EMOTION: ContextSignalSource.EVALUATOR_INFERRED,
+            VoicePatternConditionType.ACTIVITY: ContextSignalSource.HOST_OBSERVED,
+            VoicePatternConditionType.RELATIONSHIP_SAFETY: (
+                ContextSignalSource.CORE_DERIVED
+            ),
+            VoicePatternConditionType.COMMUNICATION_MODALITY: (
+                ContextSignalSource.HOST_OBSERVED
+            ),
+            VoicePatternConditionType.ENVIRONMENTAL_CUE: (
+                ContextSignalSource.HOST_OBSERVED
+            ),
+        }
+        expected = expected_sources[self.condition_type]
+        if self.signal_source is None:
+            object.__setattr__(self, "signal_source", expected)
+        elif self.signal_source != expected:
+            raise ValueError(
+                f"{self.condition_type.value} conditions require "
+                f"{expected.value} signals"
+            )
+        return self
+
+
+class ContextualVoicePatternCandidate(PersonaBoundaryModel):
+    """A source-backed expression register with deterministic activation inputs."""
+
+    pattern_id: str = Field(min_length=1, max_length=256)
+    description: str = Field(min_length=1, max_length=8000)
+    scope: PersonaScope = PersonaScope.CHARACTER
+    basis: PersonaInterpretationBasis
+    source_span_ids: List[str] = Field(min_length=1, max_length=64)
+    conditions: List[VoicePatternCondition] = Field(min_length=1, max_length=32)
+    required_claim_ids: List[str] = Field(min_length=1, max_length=64)
+    required_experience_ids: List[str] = Field(default_factory=list, max_length=64)
+    canonical_premise_template_ids: List[str] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+
+    @model_validator(mode="after")
+    def pattern_lists_are_unique_and_scope_is_explicit(
+        self,
+    ) -> "ContextualVoicePatternCandidate":
+        _unique(self.source_span_ids, "voice pattern source_span_ids")
+        _unique(
+            [item.condition_id for item in self.conditions],
+            "voice pattern condition IDs",
+        )
+        _unique(
+            [item.condition_type.value for item in self.conditions],
+            "voice pattern condition types",
+        )
+        _unique(self.required_claim_ids, "voice pattern required_claim_ids")
+        _unique(
+            self.required_experience_ids,
+            "voice pattern required_experience_ids",
+        )
+        _unique(
+            self.canonical_premise_template_ids,
+            "voice pattern canonical premise template IDs",
+        )
+        if self.scope == PersonaScope.CANONICAL_RELATIONSHIP:
+            if not self.canonical_premise_template_ids:
+                raise ValueError(
+                    "canonical relationship voice patterns require an explicit "
+                    "premise template"
+                )
+        elif self.canonical_premise_template_ids:
+            raise ValueError(
+                "only canonical relationship voice patterns can name premise templates"
+            )
+        return self
+
+
 class PersonaManifestCandidate(PersonaBoundaryModel):
     """One complete, untrusted candidate interpretation of a Blueprint revision."""
 
@@ -290,6 +396,17 @@ class PersonaManifestCandidate(PersonaBoundaryModel):
     premise_templates: List[CanonicalPremiseTemplateCandidate] = Field(
         default_factory=list, max_length=128
     )
+    contextual_voice_patterns: List[ContextualVoicePatternCandidate] = Field(
+        default_factory=list,
+        max_length=1024,
+    )
+
+    def model_dump(self, *args, **kwargs) -> Dict[str, Any]:
+        """Keeps pre-a7 empty manifests byte-compatible for fingerprinting."""
+        data = super().model_dump(*args, **kwargs)
+        if not data.get("contextual_voice_patterns"):
+            data.pop("contextual_voice_patterns", None)
+        return data
 
     @model_validator(mode="after")
     def graph_is_referentially_complete(self) -> "PersonaManifestCandidate":
@@ -305,7 +422,8 @@ class PersonaManifestCandidate(PersonaBoundaryModel):
             [item.premise_template_id for item in self.premise_templates],
         )
         entity_ids = [item for group in entity_groups for item in group]
-        _unique(entity_ids, "persona graph entity IDs")
+        pattern_ids = [item.pattern_id for item in self.contextual_voice_patterns]
+        _unique(entity_ids + pattern_ids, "persona graph entity IDs")
         known_entities = set(entity_ids)
 
         def require_spans(values: Sequence[str], owner: str) -> None:
@@ -412,6 +530,71 @@ class PersonaManifestCandidate(PersonaBoundaryModel):
                     raise ValueError(
                         "premise experiences must have canonical_relationship scope"
                     )
+
+        for pattern in self.contextual_voice_patterns:
+            require_spans(pattern.source_span_ids, pattern.pattern_id)
+            missing_claims = set(pattern.required_claim_ids).difference(claims)
+            if missing_claims:
+                raise ValueError(
+                    f"{pattern.pattern_id} references unknown voice claims: "
+                    f"{sorted(missing_claims)}"
+                )
+            missing_experiences = set(pattern.required_experience_ids).difference(
+                experiences
+            )
+            if missing_experiences:
+                raise ValueError(
+                    f"{pattern.pattern_id} references unknown experiences: "
+                    f"{sorted(missing_experiences)}"
+                )
+            missing_templates = set(
+                pattern.canonical_premise_template_ids
+            ).difference(templates)
+            if missing_templates:
+                raise ValueError(
+                    f"{pattern.pattern_id} references unknown premise templates: "
+                    f"{sorted(missing_templates)}"
+                )
+
+            required_claims = [claims[item] for item in pattern.required_claim_ids]
+            if any(
+                claim.kind != PersonaClaimKind.VOICE
+                or claim.activation_tier != PersonaActivationTier.SITUATIONAL
+                or claim.applicability != PersonaApplicability.APPLICABLE
+                for claim in required_claims
+            ):
+                raise ValueError(
+                    "contextual voice patterns may depend only on applicable "
+                    "SITUATIONAL VOICE claims"
+                )
+            required_experiences = [
+                experiences[item] for item in pattern.required_experience_ids
+            ]
+            dependency_scopes = {
+                item.scope for item in (*required_claims, *required_experiences)
+            }
+            if (
+                pattern.scope == PersonaScope.CHARACTER
+                and dependency_scopes.difference({PersonaScope.CHARACTER})
+            ):
+                raise ValueError(
+                    "character voice patterns cannot inherit relationship-scoped "
+                    "dependencies"
+                )
+            if pattern.scope == PersonaScope.CANONICAL_RELATIONSHIP:
+                if PersonaScope.CANONICAL_RELATIONSHIP not in dependency_scopes:
+                    raise ValueError(
+                        "canonical relationship voice patterns require a canonical "
+                        "relationship dependency"
+                    )
+            if (
+                pattern.scope == PersonaScope.RELATIONSHIP_TENDENCY
+                and PersonaScope.CANONICAL_RELATIONSHIP in dependency_scopes
+            ):
+                raise ValueError(
+                    "relationship tendencies cannot inherit canonical relationship "
+                    "dependencies"
+                )
 
         def dependency_children(entity_id: str) -> Sequence[str]:
             if entity_id in claims:
@@ -647,6 +830,10 @@ class PersonaManifest:
     def premise_templates(self):
         return tuple(self.candidate.premise_templates)
 
+    @property
+    def contextual_voice_patterns(self):
+        return tuple(self.candidate.contextual_voice_patterns)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "manifest_id": self.manifest_id,
@@ -680,6 +867,7 @@ class PersonaManifest:
 __all__ = [
     "BaselineLevel",
     "CanonicalPremiseTemplateCandidate",
+    "ContextualVoicePatternCandidate",
     "FormativeExperienceCandidate",
     "FormativeLinkCandidate",
     "FormativeLinkType",
@@ -699,4 +887,6 @@ __all__ = [
     "PersonaScope",
     "PersonaSourceSpan",
     "RelationshipPremiseMode",
+    "VoicePatternCondition",
+    "VoicePatternConditionType",
 ]

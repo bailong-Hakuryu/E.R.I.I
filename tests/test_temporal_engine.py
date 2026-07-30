@@ -334,15 +334,26 @@ class TemporalEngineTest(unittest.TestCase):
             ],
         )
         promise = result.records[0].events[0]
-        source.resolve_promise(
+        resolution = source.resolve_promise(
             "lumi",
             "chen",
             promise.event_id,
             PromiseResolutionKind.FULFILLED,
             event_id="direct-resolution",
         )
+        independent = source.record_relationship_event(
+            "lumi",
+            "chen",
+            RelationshipEventType.OBSERVATION,
+            "A later independent direct event.",
+            event_id="direct-independent",
+        )
 
         pack = source.export_memory("lumi", "chen")
+        self.assertEqual(
+            pack.relationship_direct_event_ids,
+            [resolution.event_id, independent.event_id],
+        )
         adjudicated_ids = {
             event.event_id
             for record in pack.relationship_adjudications
@@ -376,6 +387,21 @@ class TemporalEngineTest(unittest.TestCase):
         self.assertEqual(
             len(target.list_relationship_adjudications("lumi", "another")),
             1,
+        )
+        target_profile = target.storage.get_relationship("lumi", "another")
+        imported_direct = target.storage.list_relationship_events(
+            target_profile.relationship_id
+        )
+        self.assertEqual(
+            [event.content for event in imported_direct],
+            [resolution.content, independent.content],
+        )
+        self.assertEqual(
+            target.export_memory(
+                "lumi",
+                "another",
+            ).relationship_direct_event_ids,
+            [event.event_id for event in imported_direct],
         )
         source.close()
         target.close()

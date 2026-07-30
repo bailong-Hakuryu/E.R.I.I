@@ -418,8 +418,8 @@ class RecallAssembler:
             for event in ranked
         ]
 
-    @staticmethod
     def _project_relationship_narratives(
+        self,
         events: Sequence[RelationshipEvent],
         snapshot: RelationshipSnapshot,
         selected_event_ids: Set[str],
@@ -427,8 +427,50 @@ class RecallAssembler:
         """Projects stored interpretation without inventing new relationship meaning."""
         projections: List[RelationshipNarrativeProjection] = []
 
+        try:
+            reflection_records = self.storage.list_persona_reflection_records(
+                snapshot.profile.relationship_id
+            )
+        except (AttributeError, NotImplementedError):
+            reflection_records = ()
+        reflected_event_ids: Set[str] = set()
+        for record in reflection_records:
+            if record.event_id not in selected_event_ids:
+                continue
+            reflected_event_ids.add(record.event_id)
+            references = [
+                RecallSourceReference(
+                    source_id=record.event_id,
+                    source_kind="relationship_event",
+                )
+            ]
+            if record.target_reflection_id is not None:
+                references.append(
+                    RecallSourceReference(
+                        source_id=record.target_reflection_id,
+                        source_kind="persona_reflection_record",
+                    )
+                )
+            projections.append(
+                RelationshipNarrativeProjection(
+                    projection_id=f"persona-reflection:{record.reflection_id}",
+                    source_id=record.reflection_id,
+                    source_kind="persona_reflection_record",
+                    visibility=RecallAudience.AGENT_PRIVATE,
+                    selection_reason="formal_interpretation_for_relevant_event",
+                    source_references=tuple(references),
+                    kind=record.record_kind.value,
+                    content=record.content,
+                )
+            )
+
+        # Pre-a7 events remain readable without silently rewriting them into the
+        # formal reflection store. A formal record always wins for its event.
         for event in events:
-            if event.event_id not in selected_event_ids:
+            if (
+                event.event_id not in selected_event_ids
+                or event.event_id in reflected_event_ids
+            ):
                 continue
             adjudication = event.metadata.get("adjudication", {})
             if not isinstance(adjudication, Mapping):
