@@ -13,8 +13,17 @@ from erii.adapters.persona_compiler import (
     LLMPersonaCompilerAdapter,
 )
 from erii.core.persona_compilation import PersonaCompiler
-from erii.core.persona_context import PersonaManifestRequiredError
+from erii.core.persona_context import (
+    PersonaManifestRequiredError,
+    PersonaPremiseBindingError,
+)
 from erii.core.recall import RecallBudgetUnsatisfiedError
+from erii.core.pipeline_inspection import (
+    PipelineInspectionCounts,
+    PipelineInspectionReport,
+    PipelineIssueCode,
+    inspect_relationship_pipeline,
+)
 from erii.core.consolidation import RelationshipConsolidator
 from erii.core.continuity import (
     ContinuityAggregationPolicyV1,
@@ -184,6 +193,7 @@ from erii.models.recall import (
     PersonaRecallContext,
     PersonaRecallProjection,
     RecallAudience,
+    RecallArtifactProvenance,
     RecallBudget,
     RecallNotice,
     RecallNoticeSeverity,
@@ -347,6 +357,10 @@ __all__ = [
     "PersonaManifest",
     "PersonaManifestCandidate",
     "PersonaManifestRequiredError",
+    "PersonaPremiseBindingError",
+    "PipelineInspectionCounts",
+    "PipelineInspectionReport",
+    "PipelineIssueCode",
     "PersonaRecallContext",
     "PersonaRecallProjection",
     "PersonaScope",
@@ -364,6 +378,7 @@ __all__ = [
     "PromiseSpec",
     "PromiseSpecCandidate",
     "RecallAudience",
+    "RecallArtifactProvenance",
     "RecallAudienceMismatchError",
     "RecallBudget",
     "RecallBudgetUnsatisfiedError",
@@ -540,4 +555,5 @@ __all__ = [
     "interaction_context_evaluation_decision_from_value",
     "persona_reflection_decision_from_value",
     "relationship_extraction_decision_from_value",
+    "inspect_relationship_pipeline",
 ]

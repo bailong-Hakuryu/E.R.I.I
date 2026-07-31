@@ -7,12 +7,23 @@ import json
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from erii.core.adjudication import list_complete_relationship_events
-from erii.core.persona_context import PersonaContextPlanner
+from erii.core.persona_context import (
+    PersonaContextPlanner,
+    active_persona_manifest,
+)
 from erii.core.relationship import RelationshipProjector
 from erii.core.retriever import MemoryRetriever
 from erii.core.temporal import RecallSignalDeriver
+from erii.models.archival import (
+    ArchivalArtifactKind,
+    ArchivalOutcomeCode,
+    ArchivalReceipt,
+    ArchivalStatus,
+    TimelineEntry,
+    archival_artifact_fingerprint,
+)
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
-from erii.models.persona import PersonaCompilationStatus, PersonaManifest
+from erii.models.provenance import ArtifactProvenanceState
 from erii.models.recall import (
     BudgetOmission,
     BudgetReport,
@@ -21,6 +32,7 @@ from erii.models.recall import (
     PersonaDelivery,
     PersonaRecallContext,
     RecallAudience,
+    RecallArtifactProvenance,
     RecallNotice,
     RecallNoticeSeverity,
     RecallRequest,
@@ -36,6 +48,7 @@ from erii.models.recall import (
     RelationshipRecallStatus,
 )
 from erii.models.relationship import RelationshipEvent, RelationshipSnapshot
+from erii.models.turn import TurnStatus
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 from erii.vector.base import BaseEmbeddingProvider, BaseVectorStore
@@ -106,6 +119,7 @@ class RecallAssembler:
             profile = None
 
         persona_context: Optional[PersonaRecallContext] = None
+        manifest = None
         relationship_context: Optional[RelationshipRecallContext] = None
         relationship_events: Sequence[RelationshipEvent] = ()
         event_projections: List[EventRecallProjection] = []
@@ -122,6 +136,7 @@ class RecallAssembler:
             )
         else:
             relationship_status = RelationshipRecallStatus.INITIALIZED
+            manifest = active_persona_manifest(self.storage, profile)
             relationship_events = list_complete_relationship_events(
                 self.storage,
                 profile.relationship_id,
@@ -149,7 +164,18 @@ class RecallAssembler:
                     kind="relationship_premise",
                     content="; ".join(premise_bits),
                 )
+                approved_experiences = (
+                    {
+                        item.experience_id: item
+                        for item in manifest.candidate.formative_experiences
+                    }
+                    if manifest is not None
+                    else {}
+                )
                 for experience in profile.premise.experiences:
+                    approved = approved_experiences.get(experience.experience_id)
+                    if approved is None:
+                        continue
                     narratives.append(
                         RelationshipNarrativeProjection(
                             projection_id=f"premise-experience:{experience.experience_id}",
@@ -158,7 +184,7 @@ class RecallAssembler:
                             visibility=RecallAudience.AGENT_PRIVATE,
                             selection_reason="explicit_canonical_continuation",
                             kind="premise_experience",
-                            content=experience.summary,
+                            content=f"{approved.title}: {approved.summary}",
                         )
                     )
                 for dimension, value in snapshot.state.to_dict().items():
@@ -192,7 +218,6 @@ class RecallAssembler:
             )
 
             if request.audience == RecallAudience.AGENT_PRIVATE and not legacy_compat:
-                manifest = self._active_manifest(profile)
                 growth = self.storage.list_persona_growth_proposals(profile.relationship_id)
                 persona_context = PersonaContextPlanner.plan(
                     profile,
@@ -203,16 +228,31 @@ class RecallAssembler:
                     audience=request.audience,
                 )
                 if request.options.persona_delivery == PersonaDelivery.FULL:
-                    notices.append(
-                        RecallNotice(
-                            code="character_source_is_subordinate",
-                            message=(
-                                "Full Character Blueprint text is character material only; "
-                                "host safety, privacy, authorization, and tool policy remain higher."
-                            ),
-                            severity=RecallNoticeSeverity.WARNING,
+                    if manifest is None:
+                        notices.append(
+                            RecallNotice(
+                                code="legacy_unreviewed_full_persona",
+                                message=(
+                                    "No approved Persona Manifest is available, so this "
+                                    "compatibility response contains unreviewed Blueprint "
+                                    "text and cannot guarantee relationship-scope isolation."
+                                ),
+                                severity=RecallNoticeSeverity.WARNING,
+                            )
                         )
-                    )
+                    else:
+                        notices.append(
+                            RecallNotice(
+                                code="character_source_is_subordinate",
+                                message=(
+                                    "Full delivery contains every relationship-eligible "
+                                    "Manifest item and exact supporting source span; host "
+                                    "safety, privacy, authorization, and tool policy remain "
+                                    "higher."
+                                ),
+                                severity=RecallNoticeSeverity.WARNING,
+                            )
+                        )
 
         nodes = self.storage.load_nodes(clean_agent, clean_user)
         candidate_nodes = [MemoryNode.from_dict(node.to_dict()) for node in nodes]
@@ -238,8 +278,42 @@ class RecallAssembler:
             update_index=legacy_compat,
         )
 
+        timeline_entries = None
+        if request.audience == RecallAudience.AGENT_PRIVATE:
+            try:
+                timeline_entries = self.storage.get_recent_timeline_entries(
+                    clean_agent,
+                    clean_user,
+                    limit=4,
+                )
+            except (AttributeError, NotImplementedError):
+                timeline_entries = None
+
+        current_relationship_id = (
+            profile.relationship_id if profile is not None else None
+        )
+        source_turn_ids = {
+            item.source_turn_id
+            for item in ranked_nodes
+            if item.relationship_id == current_relationship_id
+            and item.source_turn_id
+        }
+        if timeline_entries is not None:
+            source_turn_ids.update(
+                item.source_turn_id
+                for item in timeline_entries
+                if item.relationship_id == current_relationship_id
+                and item.source_turn_id
+            )
+        turn_records_by_id, archival_receipts_by_id = (
+            self._load_artifact_provenance_indexes(
+                current_relationship_id,
+                source_turn_ids,
+            )
+        )
         memory_projections: List[MemoryRecallProjection] = []
         node_projection_ids: Dict[str, str] = {}
+        turn_revision_cache: Dict[Tuple[str, str], Optional[str]] = {}
         if request.audience == RecallAudience.AGENT_PRIVATE:
             core = self.storage.get_core_memory(clean_agent, clean_user)
             if core:
@@ -263,6 +337,22 @@ class RecallAssembler:
             )
             projection_id = f"memory:{node.node_id}"
             node_projection_ids[node.node_id] = projection_id
+            source_references, complete_source_chain = (
+                self._artifact_source_references(
+                expected_relationship_id=current_relationship_id,
+                expected_agent_id=clean_agent,
+                expected_user_id=clean_user,
+                artifact_relationship_id=node.relationship_id,
+                artifact=node,
+                artifact_id=node.node_id,
+                artifact_kind=ArchivalArtifactKind.MEMORY_NODE,
+                source_turn_id=node.source_turn_id,
+                source_archival_id=node.source_archival_id,
+                turn_records_by_id=turn_records_by_id,
+                archival_receipts_by_id=archival_receipts_by_id,
+                turn_revision_cache=turn_revision_cache,
+            )
+            )
             memory_projections.append(
                 MemoryRecallProjection(
                     projection_id=projection_id,
@@ -270,6 +360,15 @@ class RecallAssembler:
                     source_kind="memory_node",
                     visibility=visibility,
                     selection_reason="relevance_and_diversity_rank",
+                    source_references=source_references,
+                    provenance=self._artifact_provenance(
+                        node.provenance_state,
+                        source_references,
+                        complete_source_chain=complete_source_chain,
+                        has_declared_source=bool(
+                            node.source_turn_id or node.source_archival_id
+                        ),
+                    ),
                     memory_type=node.node_type.value,
                     content=node.content,
                     created_at=node.created_at or None,
@@ -277,23 +376,58 @@ class RecallAssembler:
                 )
             )
         if request.audience == RecallAudience.AGENT_PRIVATE:
-            for index, entry in enumerate(
-                self.storage.get_recent_timeline(clean_agent, clean_user, limit=4)
-            ):
-                timestamp, content = self._parse_timeline(entry)
-                digest = hashlib.sha256(entry.encode("utf-8")).hexdigest()[:16]
-                memory_projections.append(
-                    MemoryRecallProjection(
-                        projection_id=f"timeline:{index}:{digest}",
-                        source_id=f"timeline:{digest}",
+            if timeline_entries is not None:
+                timeline_projections = []
+                for entry in timeline_entries:
+                    source_references, complete_source_chain = (
+                        self._artifact_source_references(
+                        expected_relationship_id=current_relationship_id,
+                        expected_agent_id=clean_agent,
+                        expected_user_id=clean_user,
+                        artifact_relationship_id=entry.relationship_id,
+                        artifact=entry,
+                        artifact_id=entry.timeline_entry_id,
+                        artifact_kind=ArchivalArtifactKind.TIMELINE_ENTRY,
+                        source_turn_id=entry.source_turn_id,
+                        source_archival_id=entry.source_archival_id,
+                        turn_records_by_id=turn_records_by_id,
+                        archival_receipts_by_id=archival_receipts_by_id,
+                        turn_revision_cache=turn_revision_cache,
+                    )
+                    )
+                    timeline_projections.append(
+                        MemoryRecallProjection(
+                        projection_id=f"timeline:{entry.timeline_entry_id}",
+                        source_id=entry.timeline_entry_id,
                         source_kind="experiential_timeline",
                         visibility=RecallAudience.AGENT_PRIVATE,
                         selection_reason="recent_experiential_timeline",
+                        source_references=source_references,
+                        provenance=self._artifact_provenance(
+                            entry.provenance_state,
+                            source_references,
+                            complete_source_chain=complete_source_chain,
+                            has_declared_source=bool(
+                                entry.source_turn_id
+                                or entry.source_archival_id
+                            ),
+                        ),
                         memory_type="timeline",
-                        content=content,
-                        created_at=timestamp,
-                        source_visibility=MemoryVisibility.INTERNAL_MONOLOGUE.value,
+                        content=entry.content,
+                        created_at=entry.recorded_at or entry.legacy_timestamp,
+                        source_visibility=(
+                            MemoryVisibility.INTERNAL_MONOLOGUE.value
+                        ),
+                        )
                     )
+            else:
+                timeline_projections = self._legacy_timeline_projections(
+                    clean_agent,
+                    clean_user,
+                )
+            for projection in timeline_projections:
+                memory_projections.append(
+                    projection
                 )
 
         signal_projections: List[RecallSignalProjection] = []
@@ -360,27 +494,6 @@ class RecallAssembler:
                 ),
             ),
         )
-
-    def _active_manifest(self, profile) -> Optional[PersonaManifest]:
-        if profile.manifest_id is None:
-            return None
-        manifest = self.storage.get_persona_manifest(profile.manifest_id)
-        if manifest is None:
-            return None
-        proposals = self.storage.list_persona_compilation_proposals(
-            profile.blueprint.blueprint_id
-        )
-        for proposal in proposals:
-            if (
-                proposal.proposal_id == manifest.approved_proposal_id
-                and proposal.revision == manifest.approved_revision
-            ):
-                return (
-                    manifest
-                    if proposal.status == PersonaCompilationStatus.APPROVED
-                    else None
-                )
-        return None
 
     def _project_events(
         self,
@@ -719,6 +832,250 @@ class RecallAssembler:
             timestamp, content = entry[1:].split("] ", 1)
             return timestamp, content
         return None, entry
+
+    def _legacy_timeline_projections(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> Tuple[MemoryRecallProjection, ...]:
+        projections = []
+        for index, entry in enumerate(
+            self.storage.get_recent_timeline(agent_id, user_id, limit=4)
+        ):
+            timestamp, content = self._parse_timeline(entry)
+            digest = hashlib.sha256(entry.encode("utf-8")).hexdigest()[:16]
+            projections.append(
+                MemoryRecallProjection(
+                    projection_id=f"timeline:{index}:{digest}",
+                    source_id=f"timeline:{digest}",
+                    source_kind="experiential_timeline",
+                    visibility=RecallAudience.AGENT_PRIVATE,
+                    selection_reason="recent_experiential_timeline",
+                    memory_type="timeline",
+                    content=content,
+                    created_at=timestamp,
+                    source_visibility=MemoryVisibility.INTERNAL_MONOLOGUE.value,
+                )
+            )
+        return tuple(projections)
+
+    def _artifact_source_references(
+        self,
+        *,
+        expected_relationship_id: Optional[str],
+        expected_agent_id: str,
+        expected_user_id: str,
+        artifact_relationship_id: Optional[str],
+        artifact: object,
+        artifact_id: str,
+        artifact_kind: ArchivalArtifactKind,
+        source_turn_id: Optional[str],
+        source_archival_id: Optional[str],
+        turn_records_by_id: Optional[Dict[str, object]],
+        archival_receipts_by_id: Optional[Dict[str, object]],
+        turn_revision_cache: Optional[
+            Dict[Tuple[str, str], Optional[str]]
+        ] = None,
+    ) -> Tuple[Tuple[RecallSourceReference, ...], bool]:
+        """Projects only source identities verified inside the recalled relationship."""
+        if (
+            expected_relationship_id is None
+            or artifact_relationship_id != expected_relationship_id
+        ):
+            return (), False
+
+        references = []
+        source_revision = None
+        if source_turn_id:
+            if turn_records_by_id is not None:
+                source_turn = turn_records_by_id.get(source_turn_id)
+                if (
+                    source_turn is not None
+                    and source_turn.relationship_id == expected_relationship_id
+                    and source_turn.status == TurnStatus.COMPLETED
+                ):
+                    source_revision = source_turn.source_revision
+            else:
+                cache_key = (expected_relationship_id, source_turn_id)
+                cache = (
+                    turn_revision_cache
+                    if turn_revision_cache is not None
+                    else {}
+                )
+                if cache_key in cache:
+                    source_revision = cache[cache_key]
+                else:
+                    try:
+                        source_turn = self.storage.get_turn_record(
+                            expected_relationship_id,
+                            source_turn_id,
+                        )
+                        source_revision = (
+                            source_turn.source_revision
+                            if source_turn.relationship_id
+                            == expected_relationship_id
+                            and source_turn.status == TurnStatus.COMPLETED
+                            else None
+                        )
+                    except (
+                        AttributeError,
+                        KeyError,
+                        LookupError,
+                        NotImplementedError,
+                    ):
+                        source_revision = None
+                    cache[cache_key] = source_revision
+            if source_revision is not None:
+                references.append(
+                    RecallSourceReference(
+                        source_id=source_turn_id,
+                        source_kind="source_turn",
+                        source_revision=source_revision,
+                    )
+                )
+
+        archival_receipt = (
+            archival_receipts_by_id.get(source_archival_id)
+            if archival_receipts_by_id is not None and source_archival_id
+            else None
+        )
+        archival_is_valid = self._archival_certifies_artifact(
+            archival_receipt,
+            relationship_id=expected_relationship_id,
+            agent_id=expected_agent_id,
+            user_id=expected_user_id,
+            source_turn_id=source_turn_id,
+            artifact=artifact,
+            artifact_id=artifact_id,
+            artifact_kind=artifact_kind,
+        )
+        if source_archival_id:
+            if archival_is_valid:
+                references.append(
+                    RecallSourceReference(
+                        source_id=source_archival_id,
+                        source_kind="archival_batch",
+                    )
+                )
+        complete_source_chain = bool(
+            source_revision is not None
+            and archival_is_valid
+            and archival_receipt.source_revision == source_revision
+        )
+        return tuple(references), complete_source_chain
+
+    def _load_artifact_provenance_indexes(
+        self,
+        relationship_id: Optional[str],
+        source_turn_ids: Set[str],
+    ) -> Tuple[
+        Optional[Dict[str, object]],
+        Optional[Dict[str, object]],
+    ]:
+        """Reads each relationship provenance ledger at most once per recall."""
+        if relationship_id is None:
+            return {}, {}
+
+        try:
+            turn_records_by_id: Optional[Dict[str, object]] = {
+                item.turn_id: item
+                for item in self.storage.get_turn_records(
+                    relationship_id,
+                    sorted(source_turn_ids),
+                )
+            }
+        except (AttributeError, NotImplementedError):
+            turn_records_by_id = None
+
+        archival_receipts_by_id: Dict[str, object] = {}
+        archival_capability_available = False
+        try:
+            archival_store = self.storage.atomic_archival_store_v1()
+            if archival_store is not None:
+                archival_capability_available = True
+                archival_receipts_by_id.update(
+                    {
+                        item.receipt.archival_id: item.receipt
+                        for item in archival_store.list_archival_records(
+                            relationship_id
+                        )
+                    }
+                )
+        except (AttributeError, NotImplementedError):
+            pass
+        try:
+            tombstones = self.storage.list_archival_tombstones(relationship_id)
+            archival_capability_available = True
+            for item in tombstones:
+                archival_receipts_by_id.setdefault(item.archival_id, item)
+        except (AttributeError, NotImplementedError):
+            pass
+        return (
+            turn_records_by_id,
+            (
+                archival_receipts_by_id
+                if archival_capability_available
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _archival_certifies_artifact(
+        receipt: object,
+        *,
+        relationship_id: str,
+        agent_id: str,
+        user_id: str,
+        source_turn_id: Optional[str],
+        artifact: object,
+        artifact_id: str,
+        artifact_kind: ArchivalArtifactKind,
+    ) -> bool:
+        """Requires one successful archival binding for this exact artifact."""
+        # A tombstone proves only the archival batch's terminal identity.  Its
+        # artifact manifest has been deliberately discarded, so it cannot
+        # certify any particular MemoryNode or TimelineEntry.
+        if not isinstance(receipt, ArchivalReceipt):
+            return False
+        if (
+            receipt.relationship_id != relationship_id
+            or receipt.agent_id != agent_id
+            or receipt.user_id != user_id
+            or source_turn_id is None
+            or receipt.source_turn_id != source_turn_id
+            or receipt.status != ArchivalStatus.COMPLETED
+            or receipt.outcome_code != ArchivalOutcomeCode.ARTIFACTS_COMMITTED
+        ):
+            return False
+        if not isinstance(artifact, (MemoryNode, TimelineEntry)):
+            return False
+        current_fingerprint = archival_artifact_fingerprint(artifact)
+        return any(
+            item.kind == artifact_kind
+            and item.artifact_id == artifact_id
+            and item.artifact_fingerprint is not None
+            and item.artifact_fingerprint == current_fingerprint
+            for item in receipt.artifact_manifest
+        )
+
+    @staticmethod
+    def _artifact_provenance(
+        declared_state: ArtifactProvenanceState,
+        references: Sequence[RecallSourceReference],
+        *,
+        complete_source_chain: bool = False,
+        has_declared_source: bool = False,
+    ) -> RecallArtifactProvenance:
+        """Classifies source trust without promoting partial legacy metadata."""
+        state = ArtifactProvenanceState(declared_state)
+        if (
+            state == ArtifactProvenanceState.COMPLETE
+            and complete_source_chain
+        ):
+            return RecallArtifactProvenance.SOURCE_LINKED
+        if references or has_declared_source:
+            return RecallArtifactProvenance.PARTIAL_SOURCE
+        return RecallArtifactProvenance.LEGACY_UNRESOLVED
 
 
 __all__ = [

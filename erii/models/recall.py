@@ -90,6 +90,14 @@ class RecallSignalReason(str, Enum):
     LEGACY_UNRESOLVED_FLAG = "legacy_unresolved_flag"
 
 
+class RecallArtifactProvenance(str, Enum):
+    """Trust level of the source chain carried by one memory projection."""
+
+    SOURCE_LINKED = "source_linked"
+    PARTIAL_SOURCE = "partial_source"
+    LEGACY_UNRESOLVED = "legacy_unresolved"
+
+
 class WorldTime(RecallModel):
     """An explicit time value in one host-owned fictional or real clock."""
 
@@ -208,6 +216,9 @@ class PersonaRecallContext(RecallModel):
 class MemoryRecallProjection(RecallProjection):
     """One immutable projection of selected legacy or structured memory."""
 
+    provenance: RecallArtifactProvenance = (
+        RecallArtifactProvenance.LEGACY_UNRESOLVED
+    )
     memory_type: str = Field(min_length=1, max_length=128)
     content: str = Field(min_length=1, max_length=200_000)
     created_at: Optional[str] = Field(default=None, min_length=1, max_length=256)

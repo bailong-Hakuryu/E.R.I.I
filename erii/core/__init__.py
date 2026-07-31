@@ -20,6 +20,18 @@ from erii.core.relationship_processing import (
 )
 from erii.core.retriever import MemoryRetriever
 from erii.core.relationship import RelationshipProjector
+from erii.core.pipeline_inspection import (
+    PipelineInspectionCounts,
+    PipelineInspectionReport,
+    PipelineIssueCode,
+    inspect_relationship_pipeline,
+)
+from erii.core.persona_context import (
+    PersonaManifestRequiredError,
+    PersonaPremiseBindingError,
+    active_persona_manifest,
+    validate_persona_premise_binding,
+)
 
 __all__ = [
     "AsyncArchiverWorker",
@@ -30,6 +42,11 @@ __all__ = [
     "MemoryBudgetManager",
     "MemoryDecayEvaluator",
     "MemoryRetriever",
+    "PipelineInspectionCounts",
+    "PipelineInspectionReport",
+    "PipelineIssueCode",
+    "PersonaManifestRequiredError",
+    "PersonaPremiseBindingError",
     "RelationshipConsolidator",
     "RelationshipProcessingCapabilityError",
     "RelationshipProcessingCoordinator",
@@ -38,4 +55,7 @@ __all__ = [
     "RelationshipProjector",
     "RelationshipSafetySignalProjector",
     "VoicePatternMatcher",
+    "active_persona_manifest",
+    "inspect_relationship_pipeline",
+    "validate_persona_premise_binding",
 ]

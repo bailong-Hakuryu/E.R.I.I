@@ -37,7 +37,11 @@ from erii.core.continuity import (
     RelationshipSafetySignalProjector,
     VoicePatternMatcher,
 )
-from erii.core.persona_context import PersonaManifestRequiredError
+from erii.core.persona_context import (
+    PersonaManifestRequiredError,
+    active_persona_manifest,
+    validate_persona_premise_binding,
+)
 from erii.core.relationship_processing import RelationshipProcessingCoordinator
 from erii.core.relationship import RelationshipProjector
 from erii.core.persona_compilation import PersonaCompiler
@@ -291,7 +295,13 @@ class ERIIEngine:
             if hasattr(self.storage, "db_path"):
                 queue_db_path = self.storage.db_path
             else:
-                configured_root = os.path.abspath(self.config.storage_dir)
+                configured_root = os.path.abspath(
+                    getattr(
+                        self.storage,
+                        "root_dir",
+                        self.config.storage_dir,
+                    )
+                )
                 legacy_root = os.path.abspath("./erii_memory")
                 legacy_queue = os.path.abspath("./erii_memory.db")
                 if configured_root == legacy_root and os.path.exists(legacy_queue):
@@ -1205,11 +1215,7 @@ class ERIIEngine:
             raise TurnConflictError(
                 "contextual voice activation is only valid before turn delivery"
             )
-        manifest = (
-            self.storage.get_persona_manifest(profile.manifest_id)
-            if profile.manifest_id is not None
-            else None
-        )
+        manifest = active_persona_manifest(self.storage, profile)
         if manifest is None:
             raise PersonaManifestRequiredError(
                 "contextual voice activation requires an approved Manifest "
@@ -1268,11 +1274,7 @@ class ERIIEngine:
             raise TurnConflictError(
                 "reply continuity evaluation is only valid before turn delivery"
             )
-        manifest = (
-            self.storage.get_persona_manifest(profile.manifest_id)
-            if profile.manifest_id is not None
-            else None
-        )
+        manifest = active_persona_manifest(self.storage, profile)
         if manifest is None:
             raise PersonaManifestRequiredError(
                 "reply continuity evaluation requires an approved Manifest "
@@ -1536,6 +1538,11 @@ class ERIIEngine:
         if current.revision != revision:
             raise ValueError("persona compilation proposal revision changed")
         parsed_decision = PersonaCompilationDecision(decision)
+        if parsed_decision == PersonaCompilationDecision.APPROVE:
+            validate_persona_premise_binding(
+                profile.premise,
+                current.candidate,
+            )
         if (
             parsed_decision == PersonaCompilationDecision.APPROVE
             and current.status == PersonaCompilationStatus.APPROVED
@@ -4787,6 +4794,10 @@ class ERIIEngine:
             )
             if target_profile.manifest_id not in (None, selected_manifest.manifest_id):
                 raise ValueError("target relationship is pinned to a different Manifest")
+            validate_persona_premise_binding(
+                target_profile.premise,
+                selected_manifest.candidate,
+            )
 
         existing_compilations = {
             (item.proposal_id, item.revision): item

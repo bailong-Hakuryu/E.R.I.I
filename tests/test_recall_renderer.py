@@ -13,6 +13,7 @@ from erii.models.recall import (
     PersonaRecallContext,
     PersonaRecallProjection,
     RecallAudience,
+    RecallArtifactProvenance,
     RecallBudget,
     RecallNotice,
     RecallOptions,
@@ -264,6 +265,68 @@ class MarkdownRecallRendererContractTest(unittest.TestCase):
         self.assertNotIn("0.72", first)
         self.assertNotIn("unused-lore", first)
         self.assertNotIn("source-memory-snow", first)
+
+    def test_memory_lines_explain_that_impressions_are_not_relationship_authority(self):
+        result = _private_result()
+        source_linked = result.memories[0].model_copy(
+            update={
+                "projection_id": "memory-source-linked",
+                "source_id": "memory-source-linked",
+                "provenance": RecallArtifactProvenance.SOURCE_LINKED,
+                "source_references": (
+                    RecallSourceReference(
+                        source_id="turn-1",
+                        source_kind="source_turn",
+                        source_revision="1",
+                    ),
+                    RecallSourceReference(
+                        source_id="archive-1",
+                        source_kind="archival_batch",
+                    ),
+                ),
+            }
+        )
+        partial_source = result.memories[0].model_copy(
+            update={
+                "projection_id": "memory-partial-source",
+                "source_id": "memory-partial-source",
+                "provenance": RecallArtifactProvenance.PARTIAL_SOURCE,
+                "source_references": (
+                    RecallSourceReference(
+                        source_id="turn-missing",
+                        source_kind="source_turn",
+                    ),
+                ),
+            }
+        )
+        legacy_core = result.memories[0].model_copy(
+            update={
+                "projection_id": "legacy-core",
+                "source_id": "legacy-core",
+                "source_kind": "legacy_core_memory",
+                "memory_type": "core",
+                "content": "A mutable legacy summary.",
+            }
+        )
+        rendered = MarkdownRecallRenderer(
+            audience=RecallAudience.AGENT_PRIVATE
+        ).render(
+            result.model_copy(
+                update={
+                    "memories": (
+                        result.memories[0],
+                        source_linked,
+                        partial_source,
+                        legacy_core,
+                    )
+                }
+            )
+        )
+
+        self.assertIn("[EVENT; LEGACY UNRESOLVED IMPRESSION]", rendered)
+        self.assertIn("[EVENT; SOURCE-LINKED IMPRESSION]", rendered)
+        self.assertIn("[EVENT; PARTIAL SOURCE IMPRESSION]", rendered)
+        self.assertIn("[CORE; LEGACY MUTABLE SUMMARY]", rendered)
 
     def test_renderer_rejects_audience_mismatch_instead_of_filtering(self):
         result = _private_result()

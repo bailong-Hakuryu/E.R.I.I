@@ -1,13 +1,17 @@
 """Deterministic planning of source-anchored persona recall context."""
 
-from typing import Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from erii.core.retriever import MemoryRetriever
 from erii.models.adjudication import PersonaGrowthProposal, PersonaGrowthStatus
 from erii.models.persona import (
+    FormativeLinkType,
     PersonaActivationTier,
     PersonaApplicability,
+    PersonaCompilationStatus,
     PersonaManifest,
+    PersonaManifestCandidate,
+    PersonaScope,
 )
 from erii.models.recall import (
     PersonaDelivery,
@@ -16,11 +20,120 @@ from erii.models.recall import (
     RecallAudience,
     RecallSourceReference,
 )
-from erii.models.relationship import RelationshipProfile
+from erii.models.relationship import (
+    RelationshipPremise,
+    RelationshipPremiseMode,
+    RelationshipProfile,
+)
 
 
 class PersonaManifestRequiredError(ValueError):
     """Raised when planned delivery has no approved, relationship-pinned Manifest."""
+
+
+class PersonaPremiseBindingError(ValueError):
+    """Raised when a canonical relationship does not exactly bind its template."""
+
+
+def validate_persona_premise_binding(
+    premise: RelationshipPremise,
+    candidate: PersonaManifestCandidate,
+) -> None:
+    """Fails closed unless one canonical premise exactly matches its Manifest.
+
+    Relationship-local source ranges are compared with the approved formative
+    experience ranges. This prevents a valid range from another character or
+    relationship from authorizing the selected canonical graph.
+    """
+    if premise.mode != RelationshipPremiseMode.CANONICAL_CONTINUATION:
+        return
+
+    templates = {
+        item.premise_template_id: item for item in candidate.premise_templates
+    }
+    template = templates.get(premise.premise_id)
+    if template is None:
+        raise PersonaPremiseBindingError(
+            "canonical premise does not name an approved Manifest template"
+        )
+    if premise.canonical_role != template.counterpart_role:
+        raise PersonaPremiseBindingError(
+            "canonical premise role does not match the approved template"
+        )
+    if premise.address_name != template.address_name:
+        raise PersonaPremiseBindingError(
+            "canonical premise address does not match the approved template"
+        )
+
+    expected_experience_ids = set(template.premise_experience_ids)
+    actual_experiences = {
+        experience.experience_id: experience for experience in premise.experiences
+    }
+    if set(actual_experiences) != expected_experience_ids:
+        raise PersonaPremiseBindingError(
+            "canonical premise must import the template's complete experience set"
+        )
+    if dict(premise.baseline_levels) != dict(template.qualitative_baseline):
+        raise PersonaPremiseBindingError(
+            "canonical premise baseline does not match the approved template"
+        )
+
+    span_by_id = {span.span_id: span for span in candidate.source_spans}
+    manifest_experiences = {
+        experience.experience_id: experience
+        for experience in candidate.formative_experiences
+    }
+    for experience_id in sorted(expected_experience_ids):
+        manifest_experience = manifest_experiences[experience_id]
+        expected_ranges = {
+            (span_by_id[span_id].start, span_by_id[span_id].end)
+            for span_id in manifest_experience.source_span_ids
+        }
+        actual_ranges = {
+            (span["start"], span["end"])
+            for span in actual_experiences[experience_id].source_spans
+        }
+        if actual_ranges != expected_ranges:
+            raise PersonaPremiseBindingError(
+                "canonical premise experience evidence does not match the "
+                "approved Manifest"
+            )
+
+
+def active_persona_manifest(
+    storage: Any,
+    profile: RelationshipProfile,
+) -> Optional[PersonaManifest]:
+    """Returns the pinned Manifest only while its exact proposal stays approved."""
+    if profile.manifest_id is None:
+        return None
+    manifest = storage.get_persona_manifest(profile.manifest_id)
+    if manifest is None:
+        return None
+    if (
+        manifest.blueprint_id != profile.blueprint.blueprint_id
+        or manifest.blueprint_revision != profile.blueprint.revision
+        or manifest.source_sha256 != profile.blueprint.source_sha256
+    ):
+        return None
+    proposals = storage.list_persona_compilation_proposals(
+        profile.blueprint.blueprint_id
+    )
+    for proposal in proposals:
+        if (
+            proposal.proposal_id == manifest.approved_proposal_id
+            and proposal.revision == manifest.approved_revision
+            and proposal.blueprint_id == manifest.blueprint_id
+            and proposal.blueprint_revision == manifest.blueprint_revision
+            and proposal.source_sha256 == manifest.source_sha256
+            and proposal.content_fingerprint == manifest.content_fingerprint
+        ):
+            return (
+                manifest
+                if proposal.status == PersonaCompilationStatus.APPROVED
+                else None
+            )
+    return None
 
 
 class PersonaContextPlanner:
@@ -47,14 +160,14 @@ class PersonaContextPlanner:
 
         authority: List[PersonaRecallProjection] = []
         interpretations: List[PersonaRecallProjection] = []
-        if delivery == PersonaDelivery.FULL:
+        if delivery == PersonaDelivery.FULL and manifest is None:
             authority.append(
                 PersonaRecallProjection(
                     projection_id=f"blueprint:{profile.blueprint.blueprint_id}:full",
                     source_id=profile.blueprint.blueprint_id,
                     source_kind="character_blueprint",
                     visibility=RecallAudience.AGENT_PRIVATE,
-                    selection_reason="explicit_full_persona_delivery",
+                    selection_reason="legacy_unreviewed_full_persona_delivery",
                     source_references=(
                         RecallSourceReference(
                             source_id=profile.blueprint.blueprint_id,
@@ -65,7 +178,7 @@ class PersonaContextPlanner:
                             end=len(profile.blueprint.source_text),
                         ),
                     ),
-                    kind="full_blueprint_subordinate_to_host_policy",
+                    kind="legacy_unreviewed_full_blueprint",
                     content=profile.blueprint.source_text,
                     activation_tier=PersonaActivationTier.FOUNDATION.value,
                 )
@@ -73,6 +186,7 @@ class PersonaContextPlanner:
 
         if manifest is not None:
             candidate = manifest.candidate
+            validate_persona_premise_binding(profile.premise, candidate)
             span_by_id = {span.span_id: span for span in candidate.source_spans}
             claim_by_id = {claim.claim_id: claim for claim in candidate.claims}
             experience_by_id = {
@@ -90,11 +204,21 @@ class PersonaContextPlanner:
                 template.premise_template_id: template
                 for template in candidate.premise_templates
             }
+            eligible_ids = cls._eligible_entity_ids(
+                profile,
+                claim_by_id,
+                experience_by_id,
+                capsule_by_id,
+                link_by_id,
+                template_by_id,
+            )
             query_tokens = MemoryRetriever.tokenize(query)
 
             selected_ids: Set[str] = set()
             required_ids: Set[str] = set()
             for claim in candidate.claims:
+                if claim.claim_id not in eligible_ids:
+                    continue
                 if claim.applicability != PersonaApplicability.APPLICABLE:
                     continue
                 if claim.activation_tier == PersonaActivationTier.FOUNDATION:
@@ -106,17 +230,33 @@ class PersonaContextPlanner:
                 selected_ids.update(
                     claim.claim_id
                     for claim in candidate.claims
+                    if claim.claim_id in eligible_ids
                     if claim.applicability == PersonaApplicability.APPLICABLE
                 )
-                selected_ids.update(experience_by_id)
+                selected_ids.update(set(experience_by_id).intersection(eligible_ids))
                 selected_ids.update(
                     capsule.capsule_id
                     for capsule in candidate.meaning_capsules
+                    if capsule.capsule_id in eligible_ids
                     if claim_by_id[capsule.claim_id].applicability
                     == PersonaApplicability.APPLICABLE
                 )
+                selected_ids.update(
+                    link.link_id
+                    for link in candidate.formative_links
+                    if link.link_id in eligible_ids
+                    if all(
+                        claim_by_id[entity_id].applicability
+                        == PersonaApplicability.APPLICABLE
+                        for entity_id in (link.from_id, link.to_id)
+                        if entity_id in claim_by_id
+                    )
+                )
+                selected_ids.update(set(template_by_id).intersection(eligible_ids))
 
             for experience in candidate.formative_experiences:
+                if experience.experience_id not in eligible_ids:
+                    continue
                 if experience.activation_tier == PersonaActivationTier.FOUNDATION:
                     selected_ids.add(experience.experience_id)
                     required_ids.add(experience.experience_id)
@@ -135,6 +275,7 @@ class PersonaContextPlanner:
                 capsules_by_claim,
                 link_by_id,
                 template_by_id,
+                eligible_ids,
             )
             cls._expand_dependency_closure(
                 required_ids,
@@ -144,6 +285,7 @@ class PersonaContextPlanner:
                 capsules_by_claim,
                 link_by_id,
                 template_by_id,
+                eligible_ids,
             )
             selected_ids.update(required_ids)
 
@@ -253,42 +395,41 @@ class PersonaContextPlanner:
                 )
                 source_span_ids.update(template.source_span_ids)
 
-            if delivery == PersonaDelivery.PLANNED:
-                foundation_spans: Set[str] = set()
-                for item in interpretations:
-                    if item.activation_tier == PersonaActivationTier.FOUNDATION.value:
-                        foundation_spans.update(
-                            reference.source_id for reference in item.source_references
-                        )
-                for span_id in sorted(source_span_ids):
-                    span = span_by_id[span_id]
-                    tier = (
-                        PersonaActivationTier.FOUNDATION.value
-                        if span_id in foundation_spans
-                        else PersonaActivationTier.SITUATIONAL.value
+            foundation_spans: Set[str] = set()
+            for item in interpretations:
+                if item.activation_tier == PersonaActivationTier.FOUNDATION.value:
+                    foundation_spans.update(
+                        reference.source_id for reference in item.source_references
                     )
-                    authority.append(
-                        PersonaRecallProjection(
-                            projection_id=f"persona-span:{span_id}",
-                            source_id=span_id,
-                            source_kind="character_blueprint_span",
-                            visibility=RecallAudience.AGENT_PRIVATE,
-                            selection_reason="source_anchor_for_selected_interpretation",
-                            source_references=(
-                                RecallSourceReference(
-                                    source_id=span_id,
-                                    source_kind="character_blueprint_span",
-                                    source_revision=str(profile.blueprint.revision),
-                                    source_hash=span.quote_sha256,
-                                    start=span.start,
-                                    end=span.end,
-                                ),
+            for span_id in sorted(source_span_ids):
+                span = span_by_id[span_id]
+                tier = (
+                    PersonaActivationTier.FOUNDATION.value
+                    if span_id in foundation_spans
+                    else PersonaActivationTier.SITUATIONAL.value
+                )
+                authority.append(
+                    PersonaRecallProjection(
+                        projection_id=f"persona-span:{span_id}",
+                        source_id=span_id,
+                        source_kind="character_blueprint_span",
+                        visibility=RecallAudience.AGENT_PRIVATE,
+                        selection_reason="source_anchor_for_selected_interpretation",
+                        source_references=(
+                            RecallSourceReference(
+                                source_id=span_id,
+                                source_kind="character_blueprint_span",
+                                source_revision=str(profile.blueprint.revision),
+                                source_hash=span.quote_sha256,
+                                start=span.start,
+                                end=span.end,
                             ),
-                            kind="source_span",
-                            content=span.quote,
-                            activation_tier=tier,
-                        )
+                        ),
+                        kind="source_span",
+                        content=span.quote,
+                        activation_tier=tier,
                     )
+                )
 
         growth = []
         for proposal in growth_proposals:
@@ -324,6 +465,133 @@ class PersonaContextPlanner:
             return False
         return bool(query_tokens.intersection(MemoryRetriever.tokenize(f"{text} {' '.join(tags)}")))
 
+    @classmethod
+    def _eligible_entity_ids(
+        cls,
+        profile: RelationshipProfile,
+        claim_by_id: Dict[str, object],
+        experience_by_id: Dict[str, object],
+        capsule_by_id: Dict[str, object],
+        link_by_id: Dict[str, object],
+        template_by_id: Dict[str, object],
+    ) -> Set[str]:
+        """Builds the relationship-scoped persona graph before relevance selection.
+
+        Character and relationship-tendency interpretation remain available to
+        every relationship. Canonical interpretation is fail-closed: it requires
+        an explicit canonical continuation, the matching approved template, and
+        the exact imported premise-experience identities for this relationship.
+        """
+        eligible: Set[str] = {
+            claim_id
+            for claim_id, claim in claim_by_id.items()
+            if claim.scope != PersonaScope.CANONICAL_RELATIONSHIP
+        }
+        eligible.update(
+            experience_id
+            for experience_id, experience in experience_by_id.items()
+            if experience.scope != PersonaScope.CANONICAL_RELATIONSHIP
+        )
+
+        premise = profile.premise
+        matching_template = None
+        imported_experience_ids: Set[str] = set()
+        if premise.mode == RelationshipPremiseMode.CANONICAL_CONTINUATION:
+            matching_template = template_by_id.get(premise.premise_id)
+            if matching_template is not None:
+                eligible.add(matching_template.premise_template_id)
+                imported_experience_ids = {
+                    experience.experience_id for experience in premise.experiences
+                }.intersection(matching_template.premise_experience_ids)
+                eligible.update(
+                    experience_id
+                    for experience_id in imported_experience_ids
+                    if experience_id in experience_by_id
+                    and experience_by_id[experience_id].scope
+                    == PersonaScope.CANONICAL_RELATIONSHIP
+                )
+
+                # A canonical claim becomes available only when the Manifest
+                # explicitly connects it to the selected premise template.
+                for link in link_by_id.values():
+                    if (
+                        link.scope == PersonaScope.CANONICAL_RELATIONSHIP
+                        and link.relation == FormativeLinkType.RELATIONSHIP_SPECIFIC
+                        and link.to_id == matching_template.premise_template_id
+                        and link.from_id in claim_by_id
+                        and claim_by_id[link.from_id].scope
+                        == PersonaScope.CANONICAL_RELATIONSHIP
+                    ):
+                        eligible.add(link.from_id)
+
+                # Source-grounded meaning attached to an imported canonical
+                # experience may activate its corresponding canonical claim.
+                for link in link_by_id.values():
+                    if (
+                        link.scope == PersonaScope.CANONICAL_RELATIONSHIP
+                        and link.from_id in imported_experience_ids
+                        and link.to_id in claim_by_id
+                        and claim_by_id[link.to_id].scope
+                        == PersonaScope.CANONICAL_RELATIONSHIP
+                    ):
+                        eligible.add(link.to_id)
+
+        # Links cannot cross back into an entity that this relationship is not
+        # permitted to see. An unmatched canonical template is never eligible.
+        for link_id, link in link_by_id.items():
+            if link.from_id not in eligible or link.to_id not in eligible:
+                continue
+            if (
+                link.scope == PersonaScope.CANONICAL_RELATIONSHIP
+                and matching_template is None
+            ):
+                continue
+            eligible.add(link_id)
+
+        # Meaning Capsules have no independent scope. Their complete approved
+        # grounding graph determines whether they are safe in this relationship.
+        for capsule_id, capsule in capsule_by_id.items():
+            if (
+                capsule.claim_id in eligible
+                and set(capsule.experience_ids).issubset(eligible)
+                and set(capsule.link_ids).issubset(eligible)
+            ):
+                eligible.add(capsule_id)
+
+        # Required meaning is atomic. If relationship filtering removes any
+        # dependency, remove the dependent claim and anything that then dangles
+        # instead of silently projecting an incomplete interpretation.
+        changed = True
+        while changed:
+            changed = False
+            for claim_id, claim in claim_by_id.items():
+                if claim_id in eligible and not set(
+                    claim.required_dependency_ids
+                ).issubset(eligible):
+                    eligible.remove(claim_id)
+                    changed = True
+            for link_id, link in link_by_id.items():
+                if link_id in eligible and (
+                    link.from_id not in eligible or link.to_id not in eligible
+                ):
+                    eligible.remove(link_id)
+                    changed = True
+            for capsule_id, capsule in capsule_by_id.items():
+                if capsule_id in eligible and (
+                    capsule.claim_id not in eligible
+                    or not set(capsule.experience_ids).issubset(eligible)
+                    or not set(capsule.link_ids).issubset(eligible)
+                ):
+                    eligible.remove(capsule_id)
+                    changed = True
+            for template_id, template in template_by_id.items():
+                if template_id in eligible and not set(
+                    template.premise_experience_ids
+                ).issubset(eligible):
+                    eligible.remove(template_id)
+                    changed = True
+        return eligible
+
     @staticmethod
     def _expand_dependency_closure(
         entity_ids: Set[str],
@@ -333,6 +601,7 @@ class PersonaContextPlanner:
         capsules_by_claim: Dict[str, List[object]],
         link_by_id: Dict[str, object],
         template_by_id: Dict[str, object],
+        eligible_ids: Set[str],
     ) -> None:
         """Expands all graph entities needed to understand selected persona meaning."""
         pending = list(entity_ids)
@@ -362,11 +631,13 @@ class PersonaContextPlanner:
             # Referencing an experience is already closed: its approved summary
             # and source spans form one projection.
             additions.intersection_update(
-                set(claim_by_id)
-                | set(experience_by_id)
-                | set(capsule_by_id)
-                | set(link_by_id)
-                | set(template_by_id)
+                (
+                    set(claim_by_id)
+                    | set(experience_by_id)
+                    | set(capsule_by_id)
+                    | set(link_by_id)
+                    | set(template_by_id)
+                ).intersection(eligible_ids)
             )
             new_ids = additions.difference(entity_ids)
             if new_ids:
@@ -409,4 +680,9 @@ class PersonaContextPlanner:
         )
 
 
-__all__ = ["PersonaContextPlanner", "PersonaManifestRequiredError"]
+__all__ = [
+    "PersonaContextPlanner",
+    "PersonaManifestRequiredError",
+    "PersonaPremiseBindingError",
+    "validate_persona_premise_binding",
+]

@@ -33,6 +33,7 @@ from erii.models.relationship import (
     RelationshipPremiseMode,
     RelationshipSnapshot,
 )
+from erii.core.persona_context import validate_persona_premise_binding
 from erii.models.turn import (
     ContextSignalSource,
     ContinuityAssessmentStatus,
@@ -281,6 +282,7 @@ class VoicePatternMatcher:
             raise TypeError("manifest must be one approved PersonaManifest")
         if not isinstance(premise, RelationshipPremise):
             premise = RelationshipPremise.from_dict(premise)
+        validate_persona_premise_binding(premise, manifest.candidate)
         clean_relationship = relationship_id.strip()
         clean_turn = source_turn_id.strip()
         clean_persona = persona_id.strip()

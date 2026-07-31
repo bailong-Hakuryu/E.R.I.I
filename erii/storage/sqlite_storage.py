@@ -70,6 +70,7 @@ from erii.models.turn import (
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage, cross_process_file_lock
+from erii.storage.timeline_order import timeline_timestamp_sort_key
 
 logger = logging.getLogger("erii")
 
@@ -211,6 +212,27 @@ class SQLiteStorage(BaseStorage):
                 cursor.execute(
                     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                     (6, "relationship-consolidation-alpha7", utc_now()),
+                )
+                current_version = 6
+            if current_version < 7:
+                self._migrate_recent_timeline_index_v7(cursor)
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                    (7, "bounded-recent-timeline-alpha7", utc_now()),
+                )
+                current_version = 7
+            if current_version < 8:
+                self._migrate_semantic_timeline_order_v8(cursor)
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                    (8, "semantic-timeline-order-alpha7", utc_now()),
+                )
+                current_version = 8
+            if current_version < 9:
+                self._migrate_stable_timeline_order_v9(cursor)
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                    (9, "utc-stable-timeline-order-alpha7", utc_now()),
                 )
             conn.commit()
 
@@ -577,6 +599,102 @@ class SQLiteStorage(BaseStorage):
             """
         )
 
+    @staticmethod
+    def _migrate_recent_timeline_index_v7(cursor: sqlite3.Cursor) -> None:
+        """Adds the scope-and-order index used by bounded Timeline reads."""
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_timeline_recent
+            ON timeline_entries(agent_id, user_id, id DESC)
+            """
+        )
+
+    @staticmethod
+    def _migrate_semantic_timeline_order_v8(cursor: sqlite3.Cursor) -> None:
+        """Indexes the effective Timeline time instead of insertion sequence."""
+        cursor.execute("DROP INDEX IF EXISTS idx_timeline_recent")
+        cursor.execute(
+            """
+            CREATE INDEX idx_timeline_recent
+            ON timeline_entries(
+                agent_id,
+                user_id,
+                timestamp DESC,
+                id DESC
+            )
+            """
+        )
+
+    @staticmethod
+    def _migrate_stable_timeline_order_v9(cursor: sqlite3.Cursor) -> None:
+        """Backfills UTC sort keys and stable identities for bounded reads."""
+        timeline_columns = {
+            row[1]
+            for row in cursor.execute("PRAGMA table_info(timeline_entries)").fetchall()
+        }
+        if "sort_key" not in timeline_columns:
+            cursor.execute(
+                "ALTER TABLE timeline_entries "
+                "ADD COLUMN sort_key TEXT NOT NULL DEFAULT ''"
+            )
+
+        rows = cursor.execute(
+            """
+            SELECT id, agent_id, user_id, timestamp, timeline_entry_id, data
+            FROM timeline_entries
+            """
+        ).fetchall()
+        for row in rows:
+            entry_id = str(row["timeline_entry_id"] or "").strip()
+            timestamp = row["timestamp"]
+            if row["data"]:
+                try:
+                    data = json.loads(row["data"])
+                except (TypeError, ValueError):
+                    data = None
+                if isinstance(data, dict):
+                    entry_id = str(data.get("timeline_entry_id") or entry_id).strip()
+                    timestamp = (
+                        data.get("recorded_at")
+                        or data.get("legacy_timestamp")
+                        or timestamp
+                    )
+            if not entry_id:
+                entry_id = str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        (
+                            f"erii:legacy-timeline:{row['agent_id']}:"
+                            f"{row['user_id']}:{row['id']}"
+                        ),
+                    )
+                )
+            cursor.execute(
+                """
+                UPDATE timeline_entries
+                SET timeline_entry_id = ?, sort_key = ?
+                WHERE id = ?
+                """,
+                (
+                    entry_id,
+                    timeline_timestamp_sort_key(timestamp),
+                    row["id"],
+                ),
+            )
+
+        cursor.execute("DROP INDEX IF EXISTS idx_timeline_recent")
+        cursor.execute(
+            """
+            CREATE INDEX idx_timeline_recent
+            ON timeline_entries(
+                agent_id,
+                user_id,
+                sort_key DESC,
+                timeline_entry_id DESC
+            )
+            """
+        )
+
     @property
     def schema_version(self) -> int:
         """Returns the latest applied storage schema migration version."""
@@ -707,41 +825,108 @@ class SQLiteStorage(BaseStorage):
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
         ts = timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        entry_id = str(uuid.uuid4())
+        sort_key = timeline_timestamp_sort_key(ts)
 
         with self.lock_manager.lock(clean_agent, clean_user):
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    INSERT INTO timeline_entries (agent_id, user_id, content, timestamp)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO timeline_entries (
+                        agent_id, user_id, content, timestamp,
+                        timeline_entry_id, sort_key
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (clean_agent, clean_user, entry, ts),
+                    (clean_agent, clean_user, entry, ts, entry_id, sort_key),
                 )
                 conn.commit()
 
     def get_recent_timeline(
         self, agent_id: str, user_id: str, limit: int = 5
     ) -> List[str]:
-        """Retrieves recent timeline entries from SQLite."""
+        """Retrieves the same semantic-time tail as structured Timeline recall."""
+        return [
+            (
+                f"[{item.recorded_at or item.legacy_timestamp or 'unknown'}] "
+                f"{item.content}"
+            )
+            for item in self.get_recent_timeline_entries(
+                agent_id,
+                user_id,
+                limit,
+            )
+        ]
+
+    @staticmethod
+    def _timeline_entry_from_row(
+        row: sqlite3.Row,
+        relationship_id: str,
+        agent_id: str,
+        user_id: str,
+    ) -> TimelineEntry:
+        """Projects one SQLite row through the canonical Timeline model."""
+        if row["data"]:
+            return TimelineEntry.from_dict(json.loads(row["data"]))
+        entry_id = str(row["timeline_entry_id"] or "").strip()
+        if not entry_id:
+            entry_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"erii:legacy-timeline:{agent_id}:{user_id}:{row['id']}",
+                )
+            )
+        return TimelineEntry(
+            timeline_entry_id=entry_id,
+            relationship_id=relationship_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            content=str(row["content"]),
+            recorded_at=None,
+            legacy_timestamp=(
+                str(row["timestamp"]) if row["timestamp"] else None
+            ),
+            provenance_state=ArtifactProvenanceState.LEGACY_UNAVAILABLE,
+        )
+
+    def get_recent_timeline_entries(
+        self,
+        agent_id: str,
+        user_id: str,
+        limit: int = 5,
+    ) -> List[TimelineEntry]:
+        """Queries only the bounded chronological tail of the Timeline."""
+        if limit <= 0:
+            return []
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
-
-        with self.lock_manager.lock(clean_agent, clean_user):
-            with closing(self._get_connection()) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    SELECT timestamp, content FROM timeline_entries
-                    WHERE agent_id = ? AND user_id = ?
-                    ORDER BY id DESC LIMIT ?
-                    """,
-                    (clean_agent, clean_user, limit),
-                )
-                rows = cursor.fetchall()
-                # Reverse order so earliest is first
-                rows.reverse()
-                return [f"[{row['timestamp']}] {row['content']}" for row in rows]
+        relationship = self.get_relationship(clean_agent, clean_user)
+        relationship_id = (
+            relationship.relationship_id
+            if relationship is not None
+            else "legacy_unavailable"
+        )
+        with closing(self._get_connection()) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, content, timestamp, timeline_entry_id, data
+                FROM timeline_entries
+                WHERE agent_id = ? AND user_id = ?
+                ORDER BY sort_key DESC, timeline_entry_id DESC
+                LIMIT ?
+                """,
+                (clean_agent, clean_user, limit),
+            ).fetchall()
+        rows.reverse()
+        return [
+            self._timeline_entry_from_row(
+                row,
+                relationship_id,
+                clean_agent,
+                clean_user,
+            )
+            for row in rows
+        ]
 
     def list_timeline_entries(
         self,
@@ -760,44 +945,22 @@ class SQLiteStorage(BaseStorage):
         with closing(self._get_connection()) as conn:
             rows = conn.execute(
                 """
-                SELECT id, content, timestamp, data
+                SELECT id, content, timestamp, timeline_entry_id, data
                 FROM timeline_entries
                 WHERE agent_id = ? AND user_id = ?
-                ORDER BY id
+                ORDER BY sort_key, timeline_entry_id
                 """,
                 (clean_agent, clean_user),
             ).fetchall()
-        result = []
-        for row in rows:
-            if row["data"]:
-                result.append(TimelineEntry.from_dict(json.loads(row["data"])))
-                continue
-            entry_id = str(
-                uuid.uuid5(
-                    uuid.NAMESPACE_URL,
-                    (
-                        f"erii:legacy-timeline:{clean_agent}:{clean_user}:"
-                        f"{row['id']}"
-                    ),
-                )
+        return [
+            self._timeline_entry_from_row(
+                row,
+                relationship_id,
+                clean_agent,
+                clean_user,
             )
-            result.append(
-                TimelineEntry(
-                    timeline_entry_id=entry_id,
-                    relationship_id=relationship_id,
-                    agent_id=clean_agent,
-                    user_id=clean_user,
-                    content=str(row["content"]),
-                    recorded_at=None,
-                    legacy_timestamp=(
-                        str(row["timestamp"]) if row["timestamp"] else None
-                    ),
-                    provenance_state=(
-                        ArtifactProvenanceState.LEGACY_UNAVAILABLE
-                    ),
-                )
-            )
-        return result
+            for row in rows
+        ]
 
     def import_timeline_entries(
         self,
@@ -833,8 +996,8 @@ class SQLiteStorage(BaseStorage):
                     """
                     INSERT INTO timeline_entries (
                         agent_id, user_id, content, timestamp,
-                        timeline_entry_id, source_archival_id, data
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        timeline_entry_id, source_archival_id, data, sort_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         clean_agent,
@@ -842,10 +1005,13 @@ class SQLiteStorage(BaseStorage):
                         entry.content,
                         entry.recorded_at
                         or entry.legacy_timestamp
-                        or "unknown",
+                        or "",
                         entry.timeline_entry_id,
                         entry.source_archival_id,
                         raw,
+                        timeline_timestamp_sort_key(
+                            entry.recorded_at or entry.legacy_timestamp
+                        ),
                     ),
                 )
             conn.commit()
@@ -1435,8 +1601,8 @@ class SQLiteStorage(BaseStorage):
                     """
                     INSERT INTO timeline_entries (
                         agent_id, user_id, content, timestamp,
-                        timeline_entry_id, source_archival_id, data
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        timeline_entry_id, source_archival_id, data, sort_key
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         entry.agent_id,
@@ -1446,6 +1612,7 @@ class SQLiteStorage(BaseStorage):
                         entry.timeline_entry_id,
                         entry.source_archival_id,
                         json.dumps(entry.to_dict(), ensure_ascii=False),
+                        timeline_timestamp_sort_key(entry.recorded_at),
                     ),
                 )
             stored = replace(
@@ -1768,6 +1935,31 @@ class SQLiteStorage(BaseStorage):
                 if row is not None:
                     return TurnRecord.from_dict(json.loads(row["data"]))
         raise TurnNotFoundError(f"turn {turn_id!r} was not found")
+
+    def get_turn_records(
+        self,
+        relationship_id: str,
+        turn_ids: List[str],
+    ) -> List[TurnRecord]:
+        """Loads only the requested relationship-scoped turns in one query."""
+        wanted = tuple(dict.fromkeys(turn_ids))
+        if not wanted:
+            return []
+        placeholders = ", ".join("?" for _item in wanted)
+        with self.lock_manager.lock("__turn_records__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT data FROM source_turns
+                    WHERE relationship_id = ?
+                      AND turn_id IN ({placeholders})
+                    ORDER BY sequence
+                    """,
+                    (relationship_id, *wanted),
+                ).fetchall()
+        return [
+            TurnRecord.from_dict(json.loads(row["data"])) for row in rows
+        ]
 
     def list_turn_records(self, relationship_id: str) -> List[TurnRecord]:
         """Returns source turns in durable opening order."""

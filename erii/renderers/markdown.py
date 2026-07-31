@@ -9,6 +9,7 @@ from erii.models.recall import (
     MemoryRecallProjection,
     PersonaRecallProjection,
     RecallAudience,
+    RecallArtifactProvenance,
     RecallResult,
     RecallSignalProjection,
     RelationshipNarrativeProjection,
@@ -55,7 +56,18 @@ class MarkdownRecallRenderer:
     @staticmethod
     def _memory_line(item: MemoryRecallProjection, index: int) -> str:
         time_prefix = f"[{item.created_at}] " if item.created_at else ""
-        return f"{index}. {time_prefix}[{item.memory_type.upper()}] {item.content}"
+        if item.source_kind == "legacy_core_memory":
+            authority = "LEGACY MUTABLE SUMMARY"
+        elif item.provenance == RecallArtifactProvenance.SOURCE_LINKED:
+            authority = "SOURCE-LINKED IMPRESSION"
+        elif item.provenance == RecallArtifactProvenance.PARTIAL_SOURCE:
+            authority = "PARTIAL SOURCE IMPRESSION"
+        else:
+            authority = "LEGACY UNRESOLVED IMPRESSION"
+        return (
+            f"{index}. {time_prefix}[{item.memory_type.upper()}; {authority}] "
+            f"{item.content}"
+        )
 
     @staticmethod
     def _event_line(item: EventRecallProjection, index: int) -> str:

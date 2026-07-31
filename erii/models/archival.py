@@ -356,10 +356,16 @@ class MemoryExtractorV1(Protocol):
 
 @dataclass(frozen=True)
 class ArchivalArtifactReference:
-    """Content-free artifact identity exposed in an archival receipt."""
+    """Content-free artifact identity exposed in an archival receipt.
+
+    ``artifact_fingerprint`` was added after the original kind-and-ID
+    manifest.  ``None`` therefore means that an older receipt can still be
+    read, but cannot certify the current artifact payload.
+    """
 
     kind: ArchivalArtifactKind
     artifact_id: str
+    artifact_fingerprint: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, ArchivalArtifactKind):
@@ -369,15 +375,35 @@ class ArchivalArtifactReference:
             "artifact_id",
             _text(self.artifact_id, "artifact_id", max_length=128),
         )
+        if self.artifact_fingerprint is not None:
+            fingerprint = _text(
+                self.artifact_fingerprint,
+                "artifact_fingerprint",
+                max_length=64,
+            )
+            if len(fingerprint) != 64 or any(
+                character not in "0123456789abcdef" for character in fingerprint
+            ):
+                raise ValueError("artifact_fingerprint must be a lowercase SHA-256")
+            object.__setattr__(self, "artifact_fingerprint", fingerprint)
 
-    def to_dict(self) -> Dict[str, str]:
-        return {"kind": self.kind.value, "artifact_id": self.artifact_id}
+    def to_dict(self) -> Dict[str, Optional[str]]:
+        return {
+            "kind": self.kind.value,
+            "artifact_id": self.artifact_id,
+            "artifact_fingerprint": self.artifact_fingerprint,
+        }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ArchivalArtifactReference":
         return cls(
             kind=ArchivalArtifactKind(str(data["kind"])),
             artifact_id=str(data["artifact_id"]),
+            artifact_fingerprint=(
+                str(data["artifact_fingerprint"])
+                if data.get("artifact_fingerprint") is not None
+                else None
+            ),
         )
 
 
@@ -511,6 +537,61 @@ class TimelineEntry:
         )
 
 
+def archival_artifact_fingerprint(
+    artifact: Union[MemoryNode, TimelineEntry],
+) -> str:
+    """Hashes every immutable field of one committed archival artifact.
+
+    MemoryNode recall/lifecycle fields are intentionally absent: reinforcement
+    may change ``base_importance``, ``access_count``, ``state``,
+    ``is_unresolved``, ``is_latest``, ``superseded_by`` and
+    ``last_accessed_at`` after a valid commit.  All remaining stored fields,
+    including content, scope and the complete extractor descriptor, are bound.
+    TimelineEntry is frozen, so its complete serialized payload is bound.
+    """
+    if isinstance(artifact, TimelineEntry):
+        kind = ArchivalArtifactKind.TIMELINE_ENTRY
+        payload = artifact.to_dict()
+    elif isinstance(artifact, MemoryNode):
+        kind = ArchivalArtifactKind.MEMORY_NODE
+        descriptor = artifact.extractor_descriptor
+        payload = {
+            "node_id": artifact.node_id,
+            "user_id": artifact.user_id,
+            "agent_id": artifact.agent_id,
+            "node_type": (
+                artifact.node_type.value
+                if isinstance(artifact.node_type, MemoryType)
+                else str(artifact.node_type)
+            ),
+            "content": artifact.content,
+            "tags": list(artifact.tags),
+            "emotional_score": artifact.emotional_score,
+            "confidence": artifact.confidence,
+            "decayable": artifact.decayable,
+            "timeline_entry": artifact.timeline_entry,
+            "visibility": artifact.visibility,
+            "foreshadowing_tags": list(artifact.foreshadowing_tags),
+            "relationship_id": artifact.relationship_id,
+            "source_turn_id": artifact.source_turn_id,
+            "source_archival_id": artifact.source_archival_id,
+            "provenance_state": artifact.provenance_state.value,
+            "extractor_descriptor": (
+                descriptor.to_dict() if descriptor is not None else None
+            ),
+            "created_at": artifact.created_at,
+        }
+    else:
+        raise TypeError("unsupported archival artifact type")
+    encoded = json.dumps(
+        {"kind": kind.value, "payload": payload},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 @dataclass(frozen=True)
 class PreparedArchivalBatch:
     """Validated immutable artifacts frozen before their publish point."""
@@ -581,12 +662,14 @@ class PreparedArchivalBatch:
             ArchivalArtifactReference(
                 ArchivalArtifactKind.TIMELINE_ENTRY,
                 item.timeline_entry_id,
+                archival_artifact_fingerprint(item),
             )
             for item in self.timeline
         ) + tuple(
             ArchivalArtifactReference(
                 ArchivalArtifactKind.MEMORY_NODE,
                 item.node_id,
+                archival_artifact_fingerprint(item),
             )
             for item in self.memories
         )

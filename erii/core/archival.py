@@ -223,10 +223,12 @@ class ArchivalCoordinator:
             )
         if isinstance(stored, ArchivalTombstone):
             return stored
-        if not process_inline or stored.receipt.status in {
-            ArchivalStatus.COMPLETED,
-            ArchivalStatus.FAILED,
-        }:
+        if (
+            process_inline
+            and stored.receipt.status == ArchivalStatus.FAILED
+        ):
+            raise ArchivalProcessingError(stored.receipt)
+        if not process_inline or stored.receipt.status == ArchivalStatus.COMPLETED:
             return stored.receipt
         self.process_pending(max_tasks=1, archival_id=stored.receipt.archival_id)
         current = store.get_archival_record(

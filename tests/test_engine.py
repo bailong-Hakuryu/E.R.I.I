@@ -1,9 +1,10 @@
 """Integration tests for ERIIEngine."""
 
+import os
 import shutil
 import tempfile
 import unittest
-from erii import ERIIEngine, SQLiteStorage
+from erii import ERIIConfig, ERIIEngine, FileStorage, SQLiteStorage
 
 
 class TestERIIEngine(unittest.TestCase):
@@ -44,6 +45,25 @@ class TestERIIEngine(unittest.TestCase):
             context = engine.recall("agent_sq", "user_sq", "pizza")
             self.assertIn("SQLite core memory", context)
 
+            engine.close()
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_custom_file_storage_owns_its_default_task_queue(self):
+        tmp_dir = tempfile.mkdtemp()
+        storage_dir = os.path.join(tmp_dir, "custom-storage")
+        try:
+            engine = ERIIEngine(
+                storage_driver=FileStorage(storage_dir),
+                config=ERIIConfig(async_archival=False),
+            )
+
+            self.assertEqual(
+                os.path.realpath(engine.archiver_worker.task_queue.db_path),
+                os.path.realpath(
+                    os.path.join(storage_dir, "erii_tasks.db")
+                ),
+            )
             engine.close()
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)

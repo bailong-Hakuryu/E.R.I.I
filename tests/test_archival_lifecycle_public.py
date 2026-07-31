@@ -442,6 +442,17 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
                     failed.outcome_code,
                     ArchivalOutcomeCode.RETRY_EXHAUSTED,
                 )
+                with self.assertRaises(ArchivalProcessingError) as replay:
+                    engine.archive_turn(
+                        "agent_erii",
+                        "user_one",
+                        "turn-invalid-output",
+                        idempotency_key="archive-invalid-output",
+                    )
+                self.assertEqual(
+                    replay.exception.receipt.status,
+                    ArchivalStatus.FAILED,
+                )
                 self.assertEqual(engine.export_memory("agent_erii", "user_one").nodes, [])
                 engine.close()
 

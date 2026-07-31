@@ -71,6 +71,7 @@ from erii.models.turn import (
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage, cross_process_file_lock
+from erii.storage.timeline_order import timeline_entry_order_key
 
 logger = logging.getLogger("erii")
 
@@ -549,11 +550,19 @@ class FileStorage(BaseStorage):
                     )
         return sorted(
             by_id.values(),
-            key=lambda item: (
-                item.recorded_at or item.legacy_timestamp or "",
-                item.timeline_entry_id,
-            ),
+            key=timeline_entry_order_key,
         )
+
+    def get_recent_timeline_entries(
+        self,
+        agent_id: str,
+        user_id: str,
+        limit: int = 5,
+    ) -> List[TimelineEntry]:
+        """Returns a bounded tail from the file driver's aggregate Timeline."""
+        if limit <= 0:
+            return []
+        return self.list_timeline_entries(agent_id, user_id)[-limit:]
 
     def import_timeline_entries(
         self,
@@ -1177,6 +1186,26 @@ class FileStorage(BaseStorage):
                         if raw_record.get("turn_id") == turn_id:
                             return TurnRecord.from_dict(raw_record)
         raise TurnNotFoundError(f"turn {turn_id!r} was not found")
+
+    def get_turn_records(
+        self,
+        relationship_id: str,
+        turn_ids: List[str],
+    ) -> List[TurnRecord]:
+        """Loads selected turns with one aggregate-file read."""
+        wanted = set(turn_ids)
+        if not wanted:
+            return []
+        with self._turn_guard(relationship_id):
+            file_path = self._get_turn_records_path(relationship_id)
+            if not os.path.exists(file_path):
+                return []
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                return [
+                    TurnRecord.from_dict(item)
+                    for item in json.load(file_obj)
+                    if item.get("turn_id") in wanted
+                ]
 
     def list_turn_records(self, relationship_id: str) -> List[TurnRecord]:
         """Returns source turns in durable append order."""

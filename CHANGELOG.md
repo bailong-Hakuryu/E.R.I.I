@@ -2,6 +2,25 @@
 
 本项目的用户可感知变化记录在此文件。版本遵循语义化版本；`0.x` 阶段仍可能出现受控的破坏性变更。
 
+## [Unreleased]
+
+### Added
+
+- 关系范围内的 Persona Context 计划与 Pipeline Inspection：宿主可以区分已批准 Manifest、旧式完整原文降级、连续性评估覆盖率、待处理通道和连续 no-event 运行。
+- 结构化 Recall 产物来源等级与引用，区分完整 Source Turn + Archival 认证、部分来源和旧式未解析记忆。
+- FileStorage/SQLiteStorage 一致的语义 Timeline 最近项读取；SQLite Schema v9 保存规范 UTC 排序键与稳定等时刻次序。
+
+### Changed
+
+- 已批准 Persona Manifest 只有在批准记录仍为当前有效状态时才可用于运行时召回；撤销后立即失效。带 Manifest 的 `FULL` delivery 也遵守当前 `Agent × User` 关系范围，旧数据继续保留显式兼容路径。
+- 完整归档回执使用不可变产物指纹认证 MemoryNode/Timeline 内容与提取器描述；旧回执缺少指纹、产物被同 ID 改写或只剩墓碑时只能报告部分来源。
+- 自定义 FileStorage 的默认持久任务队列与该存储目录共置，不再回落到进程工作目录。
+- 同步归档若命中既有终态 `FAILED` 回执，现在抛出带该回执的 `ArchivalProcessingError`，宿主不能再把幂等重放误判为成功。
+
+### Security
+
+- 关系前提、原作经历图和称呼绑定必须与批准 Manifest 的规范值及证据范围精确一致；不匹配输入失败关闭，不会从其他关系继承亲密度或原作角色位置。
+
 ## [0.4.0a7] - 2026-07-30
 
 ### Added

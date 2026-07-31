@@ -13,6 +13,7 @@ from erii.core.adjudication import (
     relationship_events_from_journals,
     list_complete_relationship_events,
 )
+from erii.core.persona_context import active_persona_manifest
 from erii.models.adjudication import (
     AdjudicationRecord,
     DecisionOutcome,
@@ -941,11 +942,7 @@ class RelationshipProcessingCoordinator:
         PersonaReflectionInterpretationRequest,
         ReflectionContextProvenance,
     ]:
-        manifest = (
-            self.storage.get_persona_manifest(profile.manifest_id)
-            if profile.manifest_id is not None
-            else None
-        )
+        manifest = active_persona_manifest(self.storage, profile)
         approved_growth = tuple(
             item
             for item in self.storage.list_persona_growth_proposals(

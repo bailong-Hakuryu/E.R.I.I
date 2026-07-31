@@ -374,6 +374,21 @@ class BaseStorage(ABC):
         """Loads one relationship-scoped turn or raises TurnNotFoundError."""
         raise NotImplementedError("storage adapter does not support turn recording")
 
+    def get_turn_records(
+        self,
+        relationship_id: str,
+        turn_ids: List[str],
+    ) -> List[TurnRecord]:
+        """Loads a selected Turn batch with a compatibility fallback."""
+        wanted = set(turn_ids)
+        if not wanted:
+            return []
+        return [
+            item
+            for item in self.list_turn_records(relationship_id)
+            if item.turn_id in wanted
+        ]
+
     def list_turn_records(self, relationship_id: str) -> List[TurnRecord]:
         """Returns durable turns for one relationship in opening order."""
         raise NotImplementedError("storage adapter does not support turn recording")
@@ -406,6 +421,22 @@ class BaseStorage(ABC):
     ) -> List[TimelineEntry]:
         """Returns structured Timeline records when supported."""
         raise NotImplementedError("storage adapter does not support structured timeline")
+
+    def get_recent_timeline_entries(
+        self,
+        agent_id: str,
+        user_id: str,
+        limit: int = 5,
+    ) -> List[TimelineEntry]:
+        """Returns a bounded chronological tail of structured Timeline records.
+
+        Existing custom adapters inherit this compatibility implementation.
+        Storage drivers with a queryable Timeline should override it so the
+        complete history is not materialized.
+        """
+        if limit <= 0:
+            return []
+        return self.list_timeline_entries(agent_id, user_id)[-limit:]
 
     def import_timeline_entries(
         self,
