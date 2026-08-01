@@ -6,21 +6,27 @@ from typing import Dict, Mapping, Optional, Sequence, Tuple
 import uuid
 
 from erii.models.continuity import (
-    ContinuityAxis,
+    CONTINUITY_AGGREGATION_POLICY_V1_VERSION,
     ContinuityEvaluationDecision,
     ContinuityEvaluationRequest,
     ContinuityEvaluationResult,
     ContinuityEvaluatorDescriptor,
     ContinuityEvaluatorV1,
-    ContinuityFindingAssessment,
-    ContinuityReasonCode,
+    ContinuityReviewBinding,
     InteractionContextEvaluationRequest,
     InteractionContextEvaluatorDescriptor,
     InteractionContextEvaluatorV1,
     InteractionContextNoSignalsDecision,
     VoicePatternActivation,
+    _attest_voice_pattern_activation,
+    _aggregate_continuity_decision_v1,
+    _continuity_style_revision_advised_v1,
     continuity_evaluation_decision_from_value,
     interaction_context_evaluation_decision_from_value,
+)
+from erii.models.continuity_evidence import (
+    ContinuityEvidenceKind,
+    ContinuityEvidenceRef,
 )
 from erii.models.persona import (
     ContextualVoicePatternCandidate,
@@ -40,6 +46,10 @@ from erii.models.turn import (
     ContinuityVerdict,
     InteractionContextSignal,
     ReplyContinuityAssessment,
+)
+from erii.models.voice_trace import (
+    VoiceActivationTrace,
+    VoiceConditionMatchTrace,
 )
 
 
@@ -86,6 +96,7 @@ class RelationshipSafetySignalProjector:
         snapshot: RelationshipSnapshot,
         *,
         source_turn_id: str,
+        history_prefix_fingerprint: str,
     ) -> InteractionContextSignal:
         if not isinstance(snapshot, RelationshipSnapshot):
             raise TypeError("snapshot must be a RelationshipSnapshot")
@@ -131,8 +142,7 @@ class RelationshipSafetySignalProjector:
             "evidence_refs": evidence_refs,
         }
         fingerprint = _canonical_hash(payload)
-        return _attest_context_signal(
-            InteractionContextSignal(
+        signal = InteractionContextSignal(
                 signal_id=str(
                     uuid.uuid5(
                         uuid.NAMESPACE_URL,
@@ -147,7 +157,17 @@ class RelationshipSafetySignalProjector:
                 source_turn_id=clean_turn,
                 producer_version=cls.VERSION,
             )
+        object.__setattr__(
+            signal,
+            "_trace_context",
+            {
+                "kind": ContextSignalSource.CORE_DERIVED.value,
+                "producer_input_fingerprint": fingerprint,
+                "history_prefix_fingerprint": history_prefix_fingerprint,
+                "relationship_projection_version": "relationship-projector/v2",
+            },
         )
+        return _attest_context_signal(signal)
 
 
 class InteractionContextEvaluationCoordinator:
@@ -227,9 +247,7 @@ class InteractionContextEvaluationCoordinator:
                 "request_fingerprint": request_fingerprint,
             }
             fingerprint = _canonical_hash(payload)
-            signals.append(
-                _attest_context_signal(
-                    InteractionContextSignal(
+            signal = InteractionContextSignal(
                     signal_id=str(
                         uuid.uuid5(
                             uuid.NAMESPACE_URL,
@@ -244,8 +262,17 @@ class InteractionContextEvaluationCoordinator:
                     source_turn_id=request.turn_id,
                     producer_version=descriptor.public_version,
                     )
-                )
+            object.__setattr__(
+                signal,
+                "_trace_context",
+                {
+                    "kind": ContextSignalSource.EVALUATOR_INFERRED.value,
+                    "candidate_key": candidate.candidate_key,
+                    "producer_input_fingerprint": request_fingerprint,
+                    "evaluator_descriptor": descriptor.to_dict(),
+                },
             )
+            signals.append(_attest_context_signal(signal))
         return tuple(signals)
 
     @staticmethod
@@ -277,6 +304,7 @@ class VoicePatternMatcher:
         persona_id: str,
         premise: RelationshipPremise,
         signals: Sequence[InteractionContextSignal],
+        context_baseline_fingerprint: str,
     ) -> Tuple[VoicePatternActivation, ...]:
         if not isinstance(manifest, PersonaManifest):
             raise TypeError("manifest must be one approved PersonaManifest")
@@ -347,6 +375,7 @@ class VoicePatternMatcher:
                 "persona_id": clean_persona,
                 "manifest_id": manifest.manifest_id,
                 "manifest_fingerprint": manifest.content_fingerprint,
+                "context_baseline_fingerprint": context_baseline_fingerprint,
                 "pattern": pattern.model_dump(mode="json"),
                 "matcher_version": cls.VERSION,
                 "signals": [
@@ -370,13 +399,22 @@ class VoicePatternMatcher:
                     f"erii:voice-activation:{fingerprint}",
                 )
             )
-            activations.append(
-                VoicePatternActivation(
+            matched_values = tuple(
+                next(
+                    value
+                    for value in condition.values
+                    if value.casefold() == signal.value.casefold()
+                )
+                for condition, signal in zip(pattern.conditions, supporting)
+            )
+            activation = VoicePatternActivation(
                     activation_id=activation_id,
                     relationship_id=clean_relationship,
                     source_turn_id=clean_turn,
                     persona_id=clean_persona,
                     manifest_id=manifest.manifest_id,
+                    manifest_fingerprint=manifest.content_fingerprint,
+                    context_baseline_fingerprint=context_baseline_fingerprint,
                     pattern_id=pattern.pattern_id,
                     pattern_scope=pattern.scope,
                     matcher_version=cls.VERSION,
@@ -387,6 +425,15 @@ class VoicePatternMatcher:
                         item.condition_id for item in pattern.conditions
                     ),
                     input_fingerprint=fingerprint,
+                )
+            activations.append(
+                _attest_voice_pattern_activation(
+                    activation,
+                    supporting,
+                    condition_types=tuple(
+                        item.condition_type.value for item in pattern.conditions
+                    ),
+                    matched_values=matched_values,
                 )
             )
         return tuple(activations)
@@ -458,43 +505,18 @@ class VoicePatternMatcher:
 class ContinuityAggregationPolicyV1:
     """Versioned deterministic aggregation of five independent findings."""
 
-    VERSION = "continuity-aggregation-v1"
-    _HARD_CONFLICTS = frozenset(
-        {
-            ContinuityReasonCode.RELATIONSHIP_CROSSOVER,
-            ContinuityReasonCode.INHERITED_INTIMACY,
-            ContinuityReasonCode.UNAVAILABLE_KNOWLEDGE,
-        }
-    )
+    VERSION = CONTINUITY_AGGREGATION_POLICY_V1_VERSION
 
     @classmethod
     def aggregate(cls, decision: ContinuityEvaluationDecision) -> ContinuityVerdict:
-        non_voice = tuple(
-            finding
-            for finding in decision.findings
-            if finding.axis != ContinuityAxis.VOICE_STYLE
-        )
-        if any(
-            finding.reason_code in cls._HARD_CONFLICTS
-            for finding in non_voice
-        ):
-            return ContinuityVerdict.UNSUPPORTED_DRIFT
-        if any(
-            finding.assessment == ContinuityFindingAssessment.UNSUPPORTED
-            for finding in non_voice
-        ):
-            return ContinuityVerdict.UNSUPPORTED_DRIFT
-        if any(
-            finding.assessment == ContinuityFindingAssessment.REVIEW
-            for finding in non_voice
-        ):
-            return ContinuityVerdict.REVIEW_REQUIRED
-        if any(
-            finding.assessment == ContinuityFindingAssessment.SUPPORTED
-            for finding in non_voice
-        ):
-            return ContinuityVerdict.SUPPORTED_NEW_CHOICE
-        return ContinuityVerdict.ALIGNED
+        return _aggregate_continuity_decision_v1(decision)
+
+    @staticmethod
+    def style_revision_advised(
+        decision: ContinuityEvaluationDecision,
+    ) -> bool:
+        """Returns the product-facing voice advisory without changing verdict."""
+        return _continuity_style_revision_advised_v1(decision)
 
 
 class ContinuityEvaluationCoordinator:
@@ -519,20 +541,13 @@ class ContinuityEvaluationCoordinator:
             evaluator.evaluate(request)
         )
         cls._validate_sources_and_reply_spans(request, decision)
-        verdict = ContinuityAggregationPolicyV1.aggregate(decision)
-        voice_finding = next(
-            item
-            for item in decision.findings
-            if item.axis == ContinuityAxis.VOICE_STYLE
+        traces = cls._project_voice_activation_traces(request, decision)
+        cited_activation_ids = tuple(
+            sorted(trace.activation_id for trace in traces)
         )
+        verdict = ContinuityAggregationPolicyV1.aggregate(decision)
         style_revision_advised = (
-            voice_finding.reason_code
-            == ContinuityReasonCode.VOICE_STYLE_DEVIATION
-            or voice_finding.assessment
-            in {
-                ContinuityFindingAssessment.REVIEW,
-                ContinuityFindingAssessment.UNSUPPORTED,
-            }
+            ContinuityAggregationPolicyV1.style_revision_advised(decision)
         )
         return ContinuityEvaluationResult(
             assessment=ReplyContinuityAssessment(
@@ -546,8 +561,12 @@ class ContinuityEvaluationCoordinator:
             findings=decision.findings,
             evaluator_descriptor=descriptor,
             aggregation_policy_version=ContinuityAggregationPolicyV1.VERSION,
+            review_binding=ContinuityReviewBinding.from_request(
+                request,
+                voice_pattern_activation_ids=cited_activation_ids,
+            ),
             style_revision_advised=style_revision_advised,
-            voice_pattern_activations=request.voice_pattern_activations,
+            voice_activation_traces=traces,
         )
 
     @staticmethod
@@ -560,9 +579,8 @@ class ContinuityEvaluationCoordinator:
             for activation in request.voice_pattern_activations
         }
         allowed_refs = {
-            *request.persona_context_refs,
-            *request.relationship_context_refs,
-            *activation_ids,
+            *(item.ref_id for item in request.persona_context_refs),
+            *(item.ref_id for item in request.relationship_context_refs),
         }
         for finding in decision.findings:
             if (
@@ -584,16 +602,129 @@ class ContinuityEvaluationCoordinator:
                     "continuity finding cites context not supplied by the kernel: "
                     + ", ".join(sorted(unknown_refs))
                 )
-            if (
-                finding.reason_code
-                == ContinuityReasonCode.SUPPORTED_CONTEXTUAL_VOICE
-                and not activation_ids.intersection(
-                    finding.supporting_basis_refs
-                )
-            ):
+            unknown_activation_refs = set(
+                finding.voice_activation_refs
+            ).difference(activation_ids)
+            if unknown_activation_refs:
                 raise ValueError(
-                    "supported contextual voice requires a matched activation reference"
+                    "continuity finding cites an unavailable voice activation: "
+                    + ", ".join(sorted(unknown_activation_refs))
                 )
+
+    @classmethod
+    def _project_voice_activation_traces(
+        cls,
+        request: ContinuityEvaluationRequest,
+        decision: ContinuityEvaluationDecision,
+    ) -> Tuple[VoiceActivationTrace, ...]:
+        cited_ids = {
+            reference
+            for finding in decision.findings
+            for reference in finding.voice_activation_refs
+        }
+        if not cited_ids:
+            return ()
+        activations = {
+            item.activation_id: item for item in request.voice_pattern_activations
+        }
+        evidence_refs = {
+            item.ref_id: item
+            for item in (
+                *request.persona_context_refs,
+                *request.relationship_context_refs,
+            )
+        }
+        allowed_evidence_ids = set(evidence_refs)
+        traces = []
+        for activation_id in sorted(cited_ids):
+            activation = activations[activation_id]
+            pattern_refs = tuple(
+                item
+                for item in evidence_refs.values()
+                if cls._is_activation_pattern_ref(item, activation)
+            )
+            if len(pattern_refs) != 1:
+                raise ValueError(
+                    "a cited voice activation requires exactly one matching "
+                    "contextual voice pattern reference"
+                )
+            pattern_ref = pattern_refs[0]
+            matches = []
+            for condition_id, condition_type, matched_value, signal in zip(
+                activation.condition_ids,
+                activation._condition_types,
+                activation._matched_values,
+                activation._supporting_signals,
+            ):
+                matches.append(
+                    VoiceConditionMatchTrace(
+                        condition_id=condition_id,
+                        signal_source=signal.source,
+                        signal_id=signal.signal_id,
+                        signal_type=condition_type,
+                        matched_value=matched_value,
+                        producer_version=(
+                            signal.producer_version
+                            or "host-observation-admission/v1"
+                        ),
+                        evidence_ref_ids=tuple(
+                            sorted(
+                                set(signal.evidence_refs).intersection(
+                                    allowed_evidence_ids
+                                )
+                            )
+                        ),
+                        source_context=cls._voice_signal_trace_context(signal),
+                    )
+                )
+            traces.append(
+                VoiceActivationTrace.create(
+                    activation_id=activation.activation_id,
+                    relationship_id=activation.relationship_id,
+                    turn_id=activation.source_turn_id,
+                    persona_id=activation.persona_id,
+                    manifest_id=activation.manifest_id,
+                    context_baseline_fingerprint=(
+                        activation.context_baseline_fingerprint
+                    ),
+                    pattern_ref_id=pattern_ref.ref_id,
+                    pattern_scope=activation.pattern_scope,
+                    matcher_version=activation.matcher_version,
+                    matcher_input_fingerprint=activation.input_fingerprint,
+                    condition_matches=tuple(matches),
+                )
+            )
+        return tuple(traces)
+
+    @staticmethod
+    def _is_activation_pattern_ref(
+        reference: ContinuityEvidenceRef,
+        activation: VoicePatternActivation,
+    ) -> bool:
+        return (
+            reference.kind
+            == ContinuityEvidenceKind.CONTEXTUAL_VOICE_PATTERN
+            and reference.locator.get("manifest_id") == activation.manifest_id
+            and reference.locator.get("content_fingerprint")
+            == activation.manifest_fingerprint
+            and reference.locator.get("pattern_id") == activation.pattern_id
+        )
+
+    @staticmethod
+    def _voice_signal_trace_context(
+        signal: InteractionContextSignal,
+    ) -> Mapping[str, object]:
+        if signal.source == ContextSignalSource.HOST_OBSERVED:
+            return {
+                "kind": ContextSignalSource.HOST_OBSERVED.value,
+                "observation_fingerprint": _canonical_hash(signal.to_dict()),
+            }
+        context = getattr(signal, "_trace_context", None)
+        if not isinstance(context, Mapping):
+            raise ValueError(
+                "derived voice signal lacks a non-portable producer trace context"
+            )
+        return context
 
 
 __all__ = [

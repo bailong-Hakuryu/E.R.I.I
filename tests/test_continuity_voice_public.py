@@ -19,6 +19,10 @@ from erii.models.continuity import (
     continuity_evaluation_decision_from_value,
     interaction_context_evaluation_decision_from_value,
 )
+from erii.models.continuity_evidence import (
+    ContinuityEvidenceKind,
+    ContinuityEvidenceRef,
+)
 from erii.models.persona import (
     ContextualVoicePatternCandidate,
     PersonaManifest,
@@ -36,6 +40,21 @@ from erii.models.turn import (
     ContextSignalSource,
     ContinuityVerdict,
     InteractionContextSignal,
+)
+
+
+_BASELINE_FINGERPRINT = "2" * 64
+_PERSONA_EVIDENCE_REF = ContinuityEvidenceRef.create(
+    ContinuityEvidenceKind.PERSONA_CLAIM,
+    {
+        "manifest_id": "manifest-1",
+        "content_fingerprint": "1" * 64,
+        "claim_id": "claim-1",
+    },
+)
+_RELATIONSHIP_EVIDENCE_REF = ContinuityEvidenceRef.create(
+    ContinuityEvidenceKind.RELATIONSHIP_EVENT,
+    {"relationship_id": "relationship-1", "event_id": "event-other"},
 )
 
 
@@ -173,6 +192,39 @@ def _approved_manifest(candidate):
     )
 
 
+def _voice_pattern_evidence_ref(manifest, pattern_id):
+    return ContinuityEvidenceRef.create(
+        ContinuityEvidenceKind.CONTEXTUAL_VOICE_PATTERN,
+        {
+            "manifest_id": manifest.manifest_id,
+            "content_fingerprint": manifest.content_fingerprint,
+            "pattern_id": pattern_id,
+        },
+    )
+
+
+def _canonical_premise():
+    return RelationshipPremise(
+        premise_id="premise-sakura",
+        mode=RelationshipPremiseMode.CANONICAL_CONTINUATION,
+        canonical_role="Sakura",
+        experiences=(
+            PremiseExperience(
+                experience_id="experience-canonical",
+                summary="A relationship-specific formative experience.",
+                source_spans=({"start": 12, "end": 26},),
+            ),
+        ),
+        baseline_levels={
+            "familiarity": BaselineLevel.MODERATE,
+            "trust": BaselineLevel.MODERATE,
+            "intimacy": BaselineLevel.LOW,
+            "safety": BaselineLevel.HIGH,
+            "conflict_tension": BaselineLevel.LOW,
+        },
+    )
+
+
 def _finding(axis, *, assessment="aligned", reason_code="aligned", severity="info"):
     return {
         "finding_id": f"finding-{axis}",
@@ -183,12 +235,13 @@ def _finding(axis, *, assessment="aligned", reason_code="aligned", severity="inf
         "reply_start": 0,
         "reply_end": 5,
         "reply_quote": "Hello",
-        "supporting_basis_refs": ["blueprint:claim-1"],
+        "supporting_basis_refs": [_PERSONA_EVIDENCE_REF.ref_id],
         "conflicting_source_refs": (
-            ["relationship:event-other"]
+            [_RELATIONSHIP_EVIDENCE_REF.ref_id]
             if assessment in {"review", "unsupported"}
             else []
         ),
+        "voice_activation_refs": [],
     }
 
 
@@ -294,31 +347,14 @@ class ContextualVoicePatternTests(unittest.TestCase):
             persona_id="persona-fresh",
             premise=RelationshipPremise(),
             signals=fresh_signals,
+            context_baseline_fingerprint=_BASELINE_FINGERPRINT,
         )
         self.assertEqual(
             [activation.pattern_id for activation in fresh],
             ["pattern-playful"],
         )
 
-        canonical = RelationshipPremise(
-            premise_id="premise-sakura",
-            mode=RelationshipPremiseMode.CANONICAL_CONTINUATION,
-            canonical_role="Sakura",
-            experiences=(
-                PremiseExperience(
-                    experience_id="experience-canonical",
-                    summary="A relationship-specific formative experience.",
-                    source_spans=({"start": 12, "end": 26},),
-                ),
-            ),
-            baseline_levels={
-                "familiarity": BaselineLevel.MODERATE,
-                "trust": BaselineLevel.MODERATE,
-                "intimacy": BaselineLevel.LOW,
-                "safety": BaselineLevel.HIGH,
-                "conflict_tension": BaselineLevel.LOW,
-            },
-        )
+        canonical = _canonical_premise()
         canonical_signals = (
             _inferred_emotion_signal(
                 "relationship-canonical",
@@ -333,6 +369,7 @@ class ContextualVoicePatternTests(unittest.TestCase):
             persona_id="persona-canonical",
             premise=canonical,
             signals=canonical_signals,
+            context_baseline_fingerprint=_BASELINE_FINGERPRINT,
         )
         repeated = VoicePatternMatcher.match(
             manifest=manifest,
@@ -341,6 +378,7 @@ class ContextualVoicePatternTests(unittest.TestCase):
             persona_id="persona-canonical",
             premise=canonical,
             signals=tuple(reversed(canonical_signals)),
+            context_baseline_fingerprint=_BASELINE_FINGERPRINT,
         )
         self.assertEqual(active, repeated)
         self.assertEqual(
@@ -367,6 +405,7 @@ class ContextualVoicePatternTests(unittest.TestCase):
                 persona_id="persona-fresh",
                 premise=RelationshipPremise(),
                 signals=self_reported,
+                context_baseline_fingerprint=_BASELINE_FINGERPRINT,
             ),
             (),
         )
@@ -387,6 +426,7 @@ class ContextualVoicePatternTests(unittest.TestCase):
                 persona_id="persona-fresh",
                 premise=RelationshipPremise(),
                 signals=unsupported_inference,
+                context_baseline_fingerprint=_BASELINE_FINGERPRINT,
             ),
             (),
         )
@@ -411,6 +451,7 @@ class ContextualVoicePatternTests(unittest.TestCase):
                 persona_id="persona-fresh",
                 premise=RelationshipPremise(),
                 signals=forged_scoped_inference,
+                context_baseline_fingerprint=_BASELINE_FINGERPRINT,
             ),
             (),
         )
@@ -423,6 +464,7 @@ class ContextualVoicePatternTests(unittest.TestCase):
                 persona_id="persona-other",
                 premise=RelationshipPremise(),
                 signals=fresh_signals,
+                context_baseline_fingerprint=_BASELINE_FINGERPRINT,
             )
 
     def test_interaction_context_evaluator_is_strict_and_current_turn_bounded(self):
@@ -520,7 +562,13 @@ class ContinuityEvaluationTests(unittest.TestCase):
             {"kind": "findings", "findings": list(values.values())}
         )
 
-    def _evaluate(self, decision, *, voice_pattern_activations=()):
+    def _evaluate(
+        self,
+        decision,
+        *,
+        voice_pattern_activations=(),
+        persona_context_refs=(_PERSONA_EVIDENCE_REF,),
+    ):
         class Evaluator:
             descriptor = ContinuityEvaluatorDescriptor(
                 evaluator_id="continuity-evaluator",
@@ -539,8 +587,9 @@ class ContinuityEvaluationTests(unittest.TestCase):
                 user_message="Hi",
                 proposed_reply="Hello",
                 persona_manifest_id="manifest-1",
-                persona_context_refs=("blueprint:claim-1",),
-                relationship_context_refs=("relationship:event-other",),
+                context_baseline_fingerprint=_BASELINE_FINGERPRINT,
+                persona_context_refs=persona_context_refs,
+                relationship_context_refs=(_RELATIONSHIP_EVIDENCE_REF,),
                 voice_pattern_activations=voice_pattern_activations,
             ),
             Evaluator(),
@@ -618,25 +667,146 @@ class ContinuityEvaluationTests(unittest.TestCase):
             signals=(
                 _inferred_emotion_signal("relationship-1", "turn-1"),
             ),
+            context_baseline_fingerprint=_BASELINE_FINGERPRINT,
         )
         self.assertEqual(len(activations), 1)
+        pattern_ref = _voice_pattern_evidence_ref(
+            manifest,
+            activations[0].pattern_id,
+        )
         voice_finding = _finding(
             ContinuityAxis.VOICE_STYLE.value,
             assessment=ContinuityFindingAssessment.SUPPORTED.value,
             reason_code=ContinuityReasonCode.SUPPORTED_CONTEXTUAL_VOICE.value,
             severity=ContinuityFindingSeverity.INFO.value,
         )
-        voice_finding["supporting_basis_refs"] = [activations[0].activation_id]
+        voice_finding["supporting_basis_refs"] = [pattern_ref.ref_id]
+        voice_finding["voice_activation_refs"] = [activations[0].activation_id]
         result = self._evaluate(
             self._decision(voice_finding),
             voice_pattern_activations=activations,
+            persona_context_refs=(_PERSONA_EVIDENCE_REF, pattern_ref),
         )
         self.assertEqual(result.assessment.verdict, ContinuityVerdict.ALIGNED)
         self.assertFalse(result.style_revision_advised)
-        self.assertEqual(result.voice_pattern_activations, activations)
+        self.assertEqual(len(result.voice_activation_traces), 1)
+        trace = result.voice_activation_traces[0]
+        self.assertEqual(trace.activation_id, activations[0].activation_id)
+        self.assertEqual(trace.pattern_ref_id, pattern_ref.ref_id)
+        self.assertEqual(
+            trace.context_baseline_fingerprint,
+            _BASELINE_FINGERPRINT,
+        )
+        self.assertEqual(trace.condition_matches[0].matched_value, "excited")
 
-        with self.assertRaises(ValueError):
-            self._evaluate(self._decision(voice_finding))
+        with self.assertRaisesRegex(ValueError, "unavailable voice activation"):
+            self._evaluate(
+                self._decision(voice_finding),
+                persona_context_refs=(_PERSONA_EVIDENCE_REF, pattern_ref),
+            )
+
+    def test_unreferenced_voice_activation_is_not_persisted_as_a_trace(self):
+        manifest = _approved_manifest(_manifest_candidate())
+        activations = VoicePatternMatcher.match(
+            manifest=manifest,
+            relationship_id="relationship-1",
+            source_turn_id="turn-1",
+            persona_id="persona-1",
+            premise=_canonical_premise(),
+            signals=(
+                _inferred_emotion_signal("relationship-1", "turn-1"),
+                InteractionContextSignal(
+                    signal_id="signal-modality",
+                    source=ContextSignalSource.HOST_OBSERVED,
+                    signal_type="communication_modality",
+                    value="handwriting",
+                ),
+            ),
+            context_baseline_fingerprint=_BASELINE_FINGERPRINT,
+        )
+        self.assertEqual(len(activations), 2)
+        cited = next(
+            item for item in activations if item.pattern_id == "pattern-playful"
+        )
+        pattern_ref = _voice_pattern_evidence_ref(manifest, cited.pattern_id)
+        voice_finding = _finding(
+            ContinuityAxis.VOICE_STYLE.value,
+            assessment=ContinuityFindingAssessment.SUPPORTED.value,
+            reason_code=ContinuityReasonCode.SUPPORTED_CONTEXTUAL_VOICE.value,
+            severity=ContinuityFindingSeverity.INFO.value,
+        )
+        voice_finding["supporting_basis_refs"] = [pattern_ref.ref_id]
+        voice_finding["voice_activation_refs"] = [cited.activation_id]
+
+        result = self._evaluate(
+            self._decision(voice_finding),
+            voice_pattern_activations=activations,
+            persona_context_refs=(_PERSONA_EVIDENCE_REF, pattern_ref),
+        )
+
+        self.assertEqual(
+            tuple(item.activation_id for item in result.voice_activation_traces),
+            (cited.activation_id,),
+        )
+        self.assertEqual(
+            result.review_binding.voice_pattern_activation_ids,
+            (cited.activation_id,),
+        )
+
+    def test_voice_activation_reference_requires_voice_axis_and_reason(self):
+        cases = (
+            (
+                "wrong axis",
+                "reason_code is incompatible with the finding axis",
+                _finding(
+                    ContinuityAxis.IDENTITY_VALUES.value,
+                    assessment=ContinuityFindingAssessment.SUPPORTED.value,
+                    reason_code=ContinuityReasonCode.SUPPORTED_CONTEXTUAL_VOICE.value,
+                ),
+            ),
+            (
+                "wrong reason",
+                "voice activation references are valid only",
+                _finding(ContinuityAxis.VOICE_STYLE.value),
+            ),
+        )
+        for name, expected_error, finding in cases:
+            with self.subTest(case=name):
+                finding["voice_activation_refs"] = ["activation-1"]
+                with self.assertRaisesRegex(ValueError, expected_error):
+                    continuity_evaluation_decision_from_value(
+                        {"kind": "findings", "findings": [finding]}
+                    )
+
+    def test_cited_activation_requires_matching_pattern_evidence(self):
+        manifest = _approved_manifest(_manifest_candidate())
+        activations = VoicePatternMatcher.match(
+            manifest=manifest,
+            relationship_id="relationship-1",
+            source_turn_id="turn-1",
+            persona_id="persona-1",
+            premise=RelationshipPremise(),
+            signals=(
+                _inferred_emotion_signal("relationship-1", "turn-1"),
+            ),
+            context_baseline_fingerprint=_BASELINE_FINGERPRINT,
+        )
+        voice_finding = _finding(
+            ContinuityAxis.VOICE_STYLE.value,
+            assessment=ContinuityFindingAssessment.SUPPORTED.value,
+            reason_code=ContinuityReasonCode.SUPPORTED_CONTEXTUAL_VOICE.value,
+            severity=ContinuityFindingSeverity.INFO.value,
+        )
+        voice_finding["voice_activation_refs"] = [activations[0].activation_id]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "exactly one matching contextual voice pattern reference",
+        ):
+            self._evaluate(
+                self._decision(voice_finding),
+                voice_pattern_activations=activations,
+            )
 
     def test_evaluator_cannot_supply_an_aggregate_verdict(self):
         value = {

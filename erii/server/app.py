@@ -5,7 +5,11 @@ Follows Google Python Style Guide.
 """
 
 import argparse
+import hashlib
+import ipaddress
 import logging
+import os
+import secrets
 import sys
 from typing import Optional
 
@@ -19,13 +23,14 @@ from erii.models.archival import (
     ArchivalSubmissionError,
 )
 from erii.core.persona_context import PersonaManifestRequiredError
+from erii.core.continuity import ContinuityEvaluationCapabilityError
 from erii.core.recall import RecallBudgetUnsatisfiedError
 from erii.engine import ERIIEngine
 from erii.models.adjudication import (
     CandidateConflictError,
     RelationshipEventCandidate as DomainRelationshipEventCandidate,
-    SourceTurn as DomainSourceTurn,
 )
+from erii.models.continuity import ContinuityEvaluationResult
 from erii.models.recall import RecallRequest as DomainRecallRequest
 from erii.models.relationship import RelationshipNotFoundError
 from erii.models.turn import (
@@ -41,6 +46,45 @@ from erii.core.temporal_history import TemporalHistoryConflictError
 logger = logging.getLogger("erii.server")
 
 _engine: Optional[ERIIEngine] = None
+_api_key_digest: Optional[bytes] = None
+_allow_unauthenticated_loopback = False
+MAX_REST_REQUEST_BODY_BYTES = 8 * 1024 * 1024
+MAX_REST_IMPORT_COLLECTION_ITEMS = 10_000
+MAX_REST_IMPORT_TOTAL_ITEMS = 25_000
+_MEMORY_PACK_COLLECTION_FIELDS = (
+    "nodes",
+    "timeline",
+    "timeline_entries",
+    "archival_ledger",
+    "relationship_events",
+    "relationship_direct_event_ids",
+    "relationship_adjudications",
+    "persona_growth_proposals",
+    "persona_compilation_proposals",
+    "persona_manifests",
+    "turn_records",
+    "relationship_processing_runs",
+    "persona_reflection_decisions",
+)
+
+
+def configure_server_access(
+    api_key: Optional[str],
+    *,
+    allow_unauthenticated_loopback: bool = False,
+) -> None:
+    """Configures the reference server's single-owner access boundary."""
+    global _api_key_digest, _allow_unauthenticated_loopback
+    if api_key is None:
+        _api_key_digest = None
+        _allow_unauthenticated_loopback = bool(
+            allow_unauthenticated_loopback
+        )
+        return
+    if not isinstance(api_key, str) or len(api_key.encode("utf-8")) < 32:
+        raise ValueError("ERII_API_KEY must contain at least 32 UTF-8 bytes")
+    _api_key_digest = hashlib.sha256(api_key.encode("utf-8")).digest()
+    _allow_unauthenticated_loopback = False
 
 
 def configure_engine(storage_dir: str = "./erii_memory") -> ERIIEngine:
@@ -68,14 +112,217 @@ def close_engine() -> None:
         _engine = None
 
 try:
-    from fastapi import FastAPI, HTTPException
-    from pydantic import BaseModel, Field
+    from fastapi import FastAPI, HTTPException, Query
+    from fastapi.openapi.utils import get_openapi
+    from fastapi.responses import JSONResponse
+    from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+    class _RequestBodyTooLarge(Exception):
+        """Internal signal raised before FastAPI parses an oversized body."""
+
+    class _RequestBodyLimitMiddleware:
+        """Rejects declared and streamed request bodies above a fixed byte cap."""
+
+        def __init__(self, asgi_app, max_bytes: int) -> None:
+            self.app = asgi_app
+            self.max_bytes = max_bytes
+
+        async def _reject(self, scope, receive, send) -> None:
+            response = JSONResponse(
+                status_code=413,
+                content={
+                    "detail": {
+                        "code": "request_too_large",
+                        "retryable": False,
+                        "safe_summary": "Request body exceeds the server limit.",
+                    }
+                },
+            )
+            await response(scope, receive, send)
+
+        async def __call__(self, scope, receive, send) -> None:
+            if scope.get("type") != "http":
+                await self.app(scope, receive, send)
+                return
+
+            headers = {
+                key.lower(): value
+                for key, value in scope.get("headers", ())
+            }
+            raw_length = headers.get(b"content-length")
+            if raw_length is not None:
+                try:
+                    declared_length = int(raw_length)
+                except (TypeError, ValueError):
+                    declared_length = 0
+                if declared_length > self.max_bytes:
+                    await self._reject(scope, receive, send)
+                    return
+
+            received_bytes = 0
+
+            async def limited_receive():
+                nonlocal received_bytes
+                message = await receive()
+                if message.get("type") == "http.request":
+                    received_bytes += len(message.get("body", b""))
+                    if received_bytes > self.max_bytes:
+                        raise _RequestBodyTooLarge
+                return message
+
+            try:
+                await self.app(scope, limited_receive, send)
+            except _RequestBodyTooLarge:
+                await self._reject(scope, receive, send)
+
+    class _ReferenceAccessMiddleware:
+        """Enforces one owner key or an explicit loopback-only development mode."""
+
+        def __init__(self, asgi_app) -> None:
+            self.app = asgi_app
+
+        @staticmethod
+        async def _reject(scope, receive, send, status_code: int, code: str) -> None:
+            summaries = {
+                "server_access_unconfigured": (
+                    "Reference-server access has not been configured."
+                ),
+                "authentication_required": "A valid service API key is required.",
+                "loopback_access_required": (
+                    "Unauthenticated development access is restricted to loopback."
+                ),
+            }
+            response = JSONResponse(
+                status_code=status_code,
+                content={
+                    "detail": {
+                        "code": code,
+                        "retryable": False,
+                        "safe_summary": summaries[code],
+                    }
+                },
+                headers=(
+                    {"WWW-Authenticate": "APIKey"}
+                    if status_code == 401
+                    else None
+                ),
+            )
+            await response(scope, receive, send)
+
+        async def __call__(self, scope, receive, send) -> None:
+            public_paths = {
+                "/api/v1/health",
+                "/docs",
+                "/docs/oauth2-redirect",
+                "/openapi.json",
+            }
+            if (
+                scope.get("type") != "http"
+                or scope.get("path") in public_paths
+            ):
+                await self.app(scope, receive, send)
+                return
+
+            expected_digest = _api_key_digest
+            if expected_digest is None:
+                if not _allow_unauthenticated_loopback:
+                    await self._reject(
+                        scope,
+                        receive,
+                        send,
+                        503,
+                        "server_access_unconfigured",
+                    )
+                    return
+                client = scope.get("client")
+                client_host = str(client[0]) if client else ""
+                if not _is_loopback_host(client_host):
+                    await self._reject(
+                        scope,
+                        receive,
+                        send,
+                        403,
+                        "loopback_access_required",
+                    )
+                    return
+                await self.app(scope, receive, send)
+                return
+
+            supplied_values = [
+                value
+                for key, value in scope.get("headers", ())
+                if key.lower() == b"x-api-key"
+            ]
+            supplied = supplied_values[0] if len(supplied_values) == 1 else b""
+            supplied_digest = hashlib.sha256(supplied).digest()
+            if not secrets.compare_digest(supplied_digest, expected_digest):
+                await self._reject(
+                    scope,
+                    receive,
+                    send,
+                    401,
+                    "authentication_required",
+                )
+                return
+            await self.app(scope, receive, send)
 
     app = FastAPI(
         title="E.R.I.I. Memory Engine REST API",
         description="Experiential Recall & Impression Integration Engine",
         version=__version__,
     )
+    app.add_middleware(
+        _RequestBodyLimitMiddleware,
+        max_bytes=MAX_REST_REQUEST_BODY_BYTES,
+    )
+    app.add_middleware(_ReferenceAccessMiddleware)
+
+    def _reference_openapi():
+        """Documents the owner API key used by the enforcement middleware."""
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        schema.setdefault("components", {}).setdefault(
+            "securitySchemes",
+            {},
+        )["OwnerApiKey"] = {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+            "description": (
+                "Single-owner reference-server key; not a tenant identity."
+            ),
+        }
+        schema["security"] = [{"OwnerApiKey": []}]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = _reference_openapi
+
+    def _internal_server_error(
+        operation: str,
+        exc: Exception,
+    ) -> HTTPException:
+        """Logs diagnostics server-side and returns a stable public error."""
+        logger.error(
+            "Unhandled REST error during %s (%s)",
+            operation,
+            type(exc).__name__,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        return HTTPException(
+            status_code=500,
+            detail={
+                "code": "internal_error",
+                "retryable": False,
+                "safe_summary": "The server could not complete the request.",
+            },
+        )
 
     class RememberRequest(BaseModel):
         agent_id: str = "default_agent"
@@ -87,17 +334,20 @@ try:
         agent_id: str = "default_agent"
         user_id: str
         query: str
-        top_k: int = 5
+        top_k: int = Field(default=5, ge=1, le=100)
 
     class StructuredRecallBody(DomainRecallRequest):
         """Renderer-neutral structured recall request body."""
 
     class RelationshipAdjudicationBody(BaseModel):
-        """Evidence-backed relationship candidates crossing the REST boundary."""
+        """Candidates bound to a canonical persisted Source Turn."""
+
+        model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
         agent_id: str = "default_agent"
         user_id: str
-        source_turn: DomainSourceTurn
+        source_turn_id: str = Field(min_length=1, max_length=256)
+        extractor_version: str = Field(min_length=1, max_length=128)
         candidates: list[DomainRelationshipEventCandidate] = Field(
             min_length=1,
             max_length=32,
@@ -132,6 +382,22 @@ try:
         user_id: Optional[str] = None
         overwrite: bool = False
 
+        @model_validator(mode="after")
+        def memory_pack_collections_are_bounded(self) -> "ImportRequest":
+            total_items = 0
+            for field_name in _MEMORY_PACK_COLLECTION_FIELDS:
+                value = self.pack_data.get(field_name, [])
+                if not isinstance(value, list):
+                    continue
+                if len(value) > MAX_REST_IMPORT_COLLECTION_ITEMS:
+                    raise ValueError(
+                        f"MemoryPack {field_name} exceeds the REST import limit"
+                    )
+                total_items += len(value)
+            if total_items > MAX_REST_IMPORT_TOTAL_ITEMS:
+                raise ValueError("MemoryPack exceeds the total REST import item limit")
+            return self
+
     class TurnOpeningBody(BaseModel):
         """Opens a durable turn before reply generation."""
 
@@ -144,12 +410,64 @@ try:
     class TurnCompletionBody(BaseModel):
         """Seals a visible reply into an existing open turn."""
 
+        model_config = ConfigDict(extra="forbid")
+
         agent_id: str = "default_agent"
         user_id: str
         agent_message: str
         continuity_assessment: Optional[dict] = None
-        delivery_disposition: DeliveryDisposition = DeliveryDisposition.SHOWN
+        continuity_result: Optional[dict] = None
+        delivery_disposition: DeliveryDisposition = (
+            DeliveryDisposition.SHOWN_UNREVIEWED
+        )
+        delivery_exception: Optional[dict] = None
         processing_channels: Optional[list[SourceProcessingChannel]] = None
+
+        @model_validator(mode="after")
+        def delivery_branch_is_explicit(self) -> "TurnCompletionBody":
+            if self.continuity_result is not None:
+                if self.continuity_assessment is not None:
+                    raise ValueError(
+                        "continuity_result and continuity_assessment are mutually exclusive"
+                    )
+                if self.delivery_disposition == DeliveryDisposition.SHOWN:
+                    if self.delivery_exception is not None:
+                        raise ValueError(
+                            "ordinary shown reviewed delivery cannot have an exception"
+                        )
+                    return self
+                if self.delivery_disposition == DeliveryDisposition.OVERRIDDEN:
+                    if self.delivery_exception is None:
+                        raise ValueError(
+                            "overridden reviewed delivery requires delivery_exception"
+                        )
+                    return self
+                raise ValueError(
+                    "reviewed REST completion must use shown or overridden"
+                )
+            if self.delivery_disposition != DeliveryDisposition.SHOWN_UNREVIEWED:
+                raise ValueError(
+                    "REST completion without a full continuity result must use "
+                    "shown_unreviewed"
+                )
+            if self.delivery_exception is None:
+                raise ValueError(
+                    "shown_unreviewed completion requires delivery_exception"
+                )
+            return self
+
+    class ContinuityEvaluationBody(BaseModel):
+        """Evaluates one unpersisted reply against an already-open Turn."""
+
+        model_config = ConfigDict(extra="forbid")
+
+        agent_id: str = "default_agent"
+        user_id: str
+        proposed_reply: str
+        persona_context_refs: list[dict[str, object]]
+        relationship_context_refs: list[dict[str, object]] = Field(
+            default_factory=list
+        )
 
     class TurnAbandonmentBody(BaseModel):
         """Explicitly terminates an unanswered turn."""
@@ -161,14 +479,24 @@ try:
     class TurnRecordBody(BaseModel):
         """Atomically records an already-visible complete exchange."""
 
+        model_config = ConfigDict(extra="forbid")
+
         agent_id: str = "default_agent"
         user_id: str
         user_message: str
         agent_message: str
         turn_id: Optional[str] = None
-        continuity_assessment: Optional[dict] = None
-        delivery_disposition: DeliveryDisposition = DeliveryDisposition.SHOWN
+        delivery_disposition: DeliveryDisposition = (
+            DeliveryDisposition.SHOWN_UNREVIEWED
+        )
+        delivery_exception: dict
         processing_channels: Optional[list[SourceProcessingChannel]] = None
+
+        @model_validator(mode="after")
+        def preexisting_delivery_is_explicit(self) -> "TurnRecordBody":
+            if self.delivery_disposition != DeliveryDisposition.SHOWN_UNREVIEWED:
+                raise ValueError("recorded exchanges must use shown_unreviewed")
+            return self
 
     class ReplyAttemptFailureBody(BaseModel):
         """Sanitized metadata for a failed, undisplayed reply attempt."""
@@ -216,7 +544,7 @@ try:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("remember", e) from e
 
     @app.post("/api/v1/recall")
     def api_recall(req: RecallRequest):
@@ -232,7 +560,7 @@ try:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("recall", e) from e
 
     @app.post("/api/v1/turns/open", status_code=201)
     def api_begin_turn(req: TurnOpeningBody):
@@ -263,7 +591,7 @@ try:
                 req.user_message,
                 req.agent_message,
                 turn_id=req.turn_id,
-                continuity_assessment=req.continuity_assessment,
+                delivery_exception=req.delivery_exception,
                 delivery_disposition=req.delivery_disposition,
                 processing_channels=req.processing_channels,
             )
@@ -305,6 +633,12 @@ try:
                 turn_id,
                 req.agent_message,
                 continuity_assessment=req.continuity_assessment,
+                continuity_result=(
+                    ContinuityEvaluationResult.from_dict(req.continuity_result)
+                    if req.continuity_result is not None
+                    else None
+                ),
+                delivery_exception=req.delivery_exception,
                 delivery_disposition=req.delivery_disposition,
                 processing_channels=req.processing_channels,
             )
@@ -313,6 +647,31 @@ try:
             raise HTTPException(status_code=404, detail="turn not found") from exc
         except TurnConflictError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/turns/{turn_id}/continuity/evaluate")
+    def api_evaluate_turn_continuity(
+        turn_id: str,
+        req: ContinuityEvaluationBody,
+    ):
+        """Returns a strict self-bound result without persisting the draft reply."""
+        try:
+            result = get_engine().evaluate_reply_continuity(
+                req.agent_id,
+                req.user_id,
+                turn_id,
+                req.proposed_reply,
+                persona_context_refs=req.persona_context_refs,
+                relationship_context_refs=req.relationship_context_refs,
+            )
+            return {"status": "success", "result": result.to_dict()}
+        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+            raise HTTPException(status_code=404, detail="turn not found") from exc
+        except TurnConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ContinuityEvaluationCapabilityError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -503,17 +862,18 @@ try:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("structured_recall", e) from e
 
     @app.post("/api/v1/relationship/adjudicate")
     def api_adjudicate_relationship(req: RelationshipAdjudicationBody):
-        """Adjudicates untrusted temporal and relationship candidates with evidence."""
+        """Adjudicates candidates against a persisted completed Source Turn."""
         try:
-            result = get_engine().adjudicate_relationship_candidates(
+            result = get_engine().adjudicate_turn_candidates(
                 req.agent_id,
                 req.user_id,
-                req.source_turn,
+                req.source_turn_id,
                 req.candidates,
+                extractor_version=req.extractor_version,
             )
             return {
                 "status": "success",
@@ -521,12 +881,12 @@ try:
             }
         except (CandidateConflictError, TemporalHistoryConflictError) as e:
             raise HTTPException(status_code=409, detail=str(e))
-        except RelationshipNotFoundError as e:
+        except (RelationshipNotFoundError, TurnNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("relationship_adjudication", e) from e
 
     @app.post("/api/v1/core_memory")
     def api_set_core_memory(req: CoreMemoryRequest):
@@ -537,7 +897,7 @@ try:
             )
             return {"status": "success", "message": "Core memory saved."}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("set_core_memory", e) from e
 
     @app.get("/api/v1/core_memory")
     def api_get_core_memory(agent_id: str, user_id: str):
@@ -546,13 +906,13 @@ try:
             content = get_engine().get_core_memory(agent_id=agent_id, user_id=user_id)
             return {"status": "success", "content": content}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("get_core_memory", e) from e
 
     @app.get("/api/v1/memory/monologue")
     def api_get_monologue(
         user_id: str,
         agent_id: str = "default_agent",
-        limit: int = 10,
+        limit: int = Query(default=10, ge=1, le=100),
         unresolved_only: bool = False,
         visibility: Optional[str] = "public_log",
         start_time: Optional[str] = None,
@@ -571,7 +931,7 @@ try:
             )
             return {"status": "success", "monologues": monologues}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("get_monologue", e) from e
 
     @app.post("/api/v1/memory/thought")
     def api_remember_thought(req: ThoughtRequest):
@@ -589,7 +949,7 @@ try:
             )
             return {"status": "success", "node": node.to_dict()}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("remember_thought", e) from e
 
     @app.patch("/api/v1/memory/thought/{node_id}/resolve")
     def api_resolve_thought(node_id: str, req: ResolveThoughtRequest):
@@ -606,7 +966,7 @@ try:
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("resolve_thought", e) from e
 
     @app.post("/api/v1/memory/export")
     def api_export_memory(req: ExportRequest):
@@ -615,7 +975,7 @@ try:
             pack = get_engine().export_memory(agent_id=req.agent_id, user_id=req.user_id)
             return {"status": "success", "pack": pack.to_dict()}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("export_memory", e) from e
 
     @app.post("/api/v1/memory/import")
     def api_import_memory(req: ImportRequest):
@@ -628,8 +988,17 @@ try:
                 overwrite=req.overwrite,
             )
             return {"status": "success", "message": "Memory imported successfully.", "pack": pack.to_dict()}
+        except ValueError as e:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_memory_pack",
+                    "retryable": False,
+                    "safe_summary": "MemoryPack failed validation.",
+                },
+            ) from e
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("import_memory", e) from e
 
     @app.get("/api/v1/tasks/status")
     def api_get_tasks_status():
@@ -638,7 +1007,7 @@ try:
             summary = get_engine().archiver_worker.task_queue.get_status_summary()
             return {"status": "success", "summary": summary}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("task_status", e) from e
 
     @app.post("/api/v1/tasks/retry-failed")
     def api_retry_failed_tasks():
@@ -647,7 +1016,7 @@ try:
             count = get_engine().archiver_worker.task_queue.retry_failed()
             return {"status": "success", "reset_count": count}
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise _internal_server_error("retry_failed_tasks", e) from e
 
     @app.on_event("shutdown")
     def api_shutdown() -> None:
@@ -658,13 +1027,40 @@ except ImportError:
     app = None  # FastAPI not installed
 
 
+def _is_loopback_host(host: str) -> bool:
+    """Returns whether a bind host is unambiguously local-only."""
+    normalized = host.strip().casefold()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 def cli_main():
     """CLI entrypoint for running `erii serve`."""
     parser = argparse.ArgumentParser(description="E.R.I.I. Engine Server CLI")
     parser.add_argument("command", choices=["serve"], help="Command to run")
-    parser.add_argument("--host", default="0.0.0.0", help="Host address")
+    parser.add_argument("--host", default="127.0.0.1", help="Host address")
     parser.add_argument("--port", type=int, default=8000, help="Port number")
     parser.add_argument("--storage-dir", default="./erii_memory", help="Memory storage directory")
+    parser.add_argument(
+        "--allow-unsafe-network",
+        action="store_true",
+        help=(
+            "Explicitly allow a non-loopback bind with an owner API key but "
+            "without built-in TLS or user-level authorization"
+        ),
+    )
+    parser.add_argument(
+        "--allow-unauthenticated-loopback",
+        action="store_true",
+        help=(
+            "Explicitly allow local-only development requests without "
+            "ERII_API_KEY"
+        ),
+    )
     args = parser.parse_args()
 
     if args.command == "serve":
@@ -672,6 +1068,45 @@ def cli_main():
             print("Error: FastAPI and Uvicorn are required for running REST API server.")
             print("Please install them via: pip install 'erii[server]' or pip install fastapi uvicorn")
             sys.exit(1)
+
+        is_loopback = _is_loopback_host(args.host)
+        if not is_loopback and not args.allow_unsafe_network:
+            parser.error(
+                "non-loopback binds require --allow-unsafe-network because "
+                "the reference server has no built-in TLS or user authorization"
+            )
+        if not is_loopback and args.allow_unauthenticated_loopback:
+            parser.error(
+                "--allow-unauthenticated-loopback cannot be used with a "
+                "non-loopback host"
+            )
+
+        api_key = os.environ.get("ERII_API_KEY") or None
+        if api_key is not None:
+            try:
+                configure_server_access(api_key)
+            except ValueError as exc:
+                parser.error(str(exc))
+        elif is_loopback and args.allow_unauthenticated_loopback:
+            configure_server_access(
+                None,
+                allow_unauthenticated_loopback=True,
+            )
+        else:
+            parser.error(
+                "set ERII_API_KEY to at least 32 bytes, or use "
+                "--allow-unauthenticated-loopback for explicit local-only "
+                "development"
+            )
+
+        if not is_loopback:
+            warning = (
+                "WARNING: the E.R.I.I. reference server uses one owner-level "
+                "API key and plain HTTP; terminate TLS and enforce user "
+                "authorization at a trusted proxy."
+            )
+            logger.warning(warning)
+            print(warning)
 
         import uvicorn
         configure_engine(storage_dir=args.storage_dir)

@@ -24,6 +24,18 @@ from tests.test_relationship_processing_public import (
 )
 
 
+def _preexisting_delivery_exception():
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests.relationship-processing-restart/v1",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-08-01T08:00:00+08:00",
+        "reply_attempt_number": None,
+    }
+
+
 class _BlockingExtractor(_RelationshipExtractor):
     """Holds the first extraction open so a competing Engine reaches the guard."""
 
@@ -62,6 +74,7 @@ class RelationshipProcessingRestartTests(unittest.TestCase):
             "The snow is beautiful.",
             "Yes. I want to remember this quiet moment.",
             turn_id="turn-snow",
+            delivery_exception=_preexisting_delivery_exception(),
         )
 
     def test_terminal_run_is_readable_after_restart_without_extractor(self):
@@ -177,6 +190,7 @@ class RelationshipProcessingCrossInstanceTests(unittest.TestCase):
                             "The snow is beautiful.",
                             "Yes. I want to remember this quiet moment.",
                             turn_id="turn-snow",
+                            delivery_exception=_preexisting_delivery_exception(),
                         )
                         barrier = threading.Barrier(2)
 

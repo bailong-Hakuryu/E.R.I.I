@@ -33,6 +33,18 @@ from erii.models.consolidation import (
 )
 
 
+def _preexisting_visible_exchange_delivery_exception():
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-07-29T00:00:00+00:00",
+        "reply_attempt_number": None,
+    }
+
+
 class FileRelationshipHistoryConcurrencyTest(unittest.TestCase):
     def test_two_file_storage_instances_do_not_lose_relationship_events(self):
         with tempfile.TemporaryDirectory() as root_dir:
@@ -93,6 +105,9 @@ class ConsolidationStorageContract(unittest.TestCase):
             "The snow is beautiful.",
             "Yes. I want to remember this quiet moment.",
             turn_id="turn-snow",
+            delivery_exception=(
+                _preexisting_visible_exchange_delivery_exception()
+            ),
         )
         turn = engine.get_turn("agent_lumi", "user_chen", "turn-snow")
         source_id = turn.transcript.user_message.message_id

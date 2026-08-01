@@ -45,6 +45,18 @@ class _NoStructuredTimelineStorage(FileStorage):
         raise NotImplementedError("structured timeline is unavailable")
 
 
+def _delivery_exception(reason_code="preexisting_visible_exchange"):
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests.pipeline-inspection/v1",
+        "reason_code": reason_code,
+        "decided_at": "2026-08-01T00:00:00+00:00",
+        "reply_attempt_number": None,
+    }
+
+
 class PipelineInspectionTests(unittest.TestCase):
     def test_missing_manifest_and_evaluator_are_reported_without_ids(self):
         with tempfile.TemporaryDirectory() as root:
@@ -92,6 +104,7 @@ class PipelineInspectionTests(unittest.TestCase):
                     "sensitive user message",
                     "sensitive agent reply",
                     turn_id="sensitive-turn-id",
+                    delivery_exception=_delivery_exception(),
                     processing_channels=(
                         SourceProcessingChannel.MEMORY_ARCHIVAL,
                         SourceProcessingChannel.RELATIONSHIP_ADJUDICATION,
@@ -126,15 +139,23 @@ class PipelineInspectionTests(unittest.TestCase):
                 continuity_evaluator=object(),
             ) as engine:
                 engine.initialize_relationship("agent", "user", "source")
-                engine.record_turn(
+                turn = engine.begin_turn(
                     "agent",
                     "user",
                     "private user message",
+                    turn_id="failed-continuity-turn",
+                )
+                engine.complete_turn(
+                    "agent",
+                    "user",
+                    turn.turn_id,
                     "private shown reply",
                     continuity_assessment=ReplyContinuityAssessment(
                         status="failed",
                         evaluator_version="tests.evaluator/1",
                     ),
+                    delivery_disposition="shown_unreviewed",
+                    delivery_exception=_delivery_exception("availability_fallback"),
                     processing_channels=(),
                 )
 
@@ -217,6 +238,7 @@ class PipelineInspectionTests(unittest.TestCase):
                         "private ordinary exchange",
                         "private ordinary reply",
                         turn_id=turn_id,
+                        delivery_exception=_delivery_exception(),
                     )
                     engine.process_relationship_turn(
                         "agent",

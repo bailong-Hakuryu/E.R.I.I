@@ -25,6 +25,18 @@ from erii import (
 from erii.models.provenance import ArtifactProvenanceState
 
 
+def _preexisting_delivery_exception():
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests.structured-recall-provenance/v1",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-08-01T08:00:00+08:00",
+        "reply_attempt_number": None,
+    }
+
+
 class _ArtifactExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="tests.provenance-extractor",
@@ -151,6 +163,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                         "Let us play one arcade game.",
                         "Okay.",
                         turn_id=f"turn-{name}",
+                        delivery_exception=_preexisting_delivery_exception(),
                     )
                     receipt = engine.archive_turn(
                         "agent-lumi",
@@ -288,6 +301,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                 "Let us play one arcade game.",
                 "Okay.",
                 turn_id="turn-shared-source",
+                delivery_exception=_preexisting_delivery_exception(),
             )
             engine.archive_turn(
                 "agent-lumi",
@@ -340,6 +354,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                     f"shared query user message {index}",
                     f"shared query reply {index}",
                     turn_id=f"turn-distinct-{index}",
+                    delivery_exception=_preexisting_delivery_exception(),
                 )
                 nodes.append(
                     MemoryNode(
@@ -393,6 +408,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                 "A source-linked question.",
                 "A source-linked answer.",
                 turn_id="turn-real",
+                delivery_exception=_preexisting_delivery_exception(),
             )
             engine.storage.save_nodes(
                 "agent-lumi",
@@ -462,6 +478,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                 "Let us play one arcade game.",
                 "Okay.",
                 turn_id="turn-real-manifest",
+                delivery_exception=_preexisting_delivery_exception(),
             )
             receipt = engine.archive_turn(
                 "agent-lumi",
@@ -539,6 +556,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                         "Let us play one arcade game.",
                         "Okay.",
                         turn_id=f"turn-mutated-{name}",
+                        delivery_exception=_preexisting_delivery_exception(),
                     )
                     receipt = engine.archive_turn(
                         "agent-lumi",
@@ -614,6 +632,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                         "Let us play one arcade game.",
                         "Okay.",
                         turn_id=f"turn-mutated-descriptor-{name}",
+                        delivery_exception=_preexisting_delivery_exception(),
                     )
                     receipt = engine.archive_turn(
                         "agent-lumi",
@@ -704,6 +723,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                             "Let us play one arcade game.",
                             "Okay.",
                             turn_id=f"turn-timeline-{name}-{mutation}",
+                            delivery_exception=_preexisting_delivery_exception(),
                         )
                         receipt = engine.archive_turn(
                             "agent-lumi",
@@ -766,6 +786,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                 "Let us play one arcade game.",
                 "Okay.",
                 turn_id="turn-receipt-only",
+                delivery_exception=_preexisting_delivery_exception(),
             )
             receipt = engine.archive_turn(
                 "agent-lumi",
@@ -834,6 +855,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                         "Let us play one arcade game.",
                         "Okay.",
                         turn_id=f"turn-compacted-{name}",
+                        delivery_exception=_preexisting_delivery_exception(),
                     )
                     receipt = engine.archive_turn(
                         "agent-lumi",
@@ -978,6 +1000,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                 "Let us play one arcade game.",
                 "Okay.",
                 turn_id="turn-bob",
+                delivery_exception=_preexisting_delivery_exception(),
             )
             engine.archive_turn(
                 "agent-lumi",

@@ -13,7 +13,7 @@ import os
 import sqlite3
 import time
 from contextlib import closing, contextmanager
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 import uuid
 
 from erii.models.adjudication import (
@@ -67,12 +67,30 @@ from erii.models.turn import (
     TurnStatus,
     TurnTerminalConflictError,
 )
+from erii.models.turn_context import TurnContextBaseline
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage, cross_process_file_lock
 from erii.storage.timeline_order import timeline_timestamp_sort_key
+from erii.storage.turn_context import (
+    TurnContextSourceSnapshot,
+    validate_turn_context_baseline_authority,
+)
 
 logger = logging.getLogger("erii")
+
+
+def _decode_json_object(value: object, field_name: str) -> Dict[str, Any]:
+    """Decodes one storage JSON object without accepting scalar containers."""
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be stored as JSON text")
+    try:
+        decoded = json.loads(value)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{field_name} is not valid JSON") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError(f"{field_name} must contain a JSON object")
+    return decoded
 
 
 class SQLiteStorage(BaseStorage):
@@ -117,6 +135,224 @@ class SQLiteStorage(BaseStorage):
             self._get_relationship_processing_lock_path(relationship_id)
         ):
             yield
+
+    def capture_turn_context_source(
+        self,
+        profile: RelationshipProfile,
+    ) -> TurnContextSourceSnapshot:
+        """Reads all Turn Context sources from one SQLite read snapshot."""
+        with closing(self._get_connection()) as conn:
+            try:
+                # A deferred read transaction fixes its WAL snapshot at the
+                # first SELECT without taking the write reservation used by
+                # BEGIN IMMEDIATE mutation paths.
+                conn.execute("BEGIN")
+                snapshot = self._capture_turn_context_source_with_connection(
+                    conn,
+                    profile,
+                )
+                conn.commit()
+                return snapshot
+            except Exception:
+                conn.rollback()
+                raise
+
+    def _capture_turn_context_source_with_connection(
+        self,
+        conn: sqlite3.Connection,
+        profile: RelationshipProfile,
+    ) -> TurnContextSourceSnapshot:
+        """Reads a Turn Context source through the caller's open transaction."""
+        relationship_row = conn.execute(
+            "SELECT * FROM relationships WHERE relationship_id = ?",
+            (profile.relationship_id,),
+        ).fetchone()
+        if relationship_row is None:
+            raise ValueError("Turn Context relationship does not exist")
+
+        context_row = conn.execute(
+            """
+            SELECT data FROM relationship_initial_context
+            WHERE relationship_id = ?
+            """,
+            (profile.relationship_id,),
+        ).fetchone()
+        _decode_json_object(
+            relationship_row["blueprint_data"],
+            "relationship blueprint_data",
+        )
+        context_data = None
+        if context_row is not None:
+            _decode_json_object(
+                context_row["data"],
+                "relationship initial context",
+            )
+            context_data = context_row["data"]
+        snapshot_profile = self._profile_from_row(
+            relationship_row,
+            context_data,
+        )
+        expected_profile = profile.to_dict()
+        actual_profile = snapshot_profile.to_dict()
+        # The Manifest binding is intentionally re-read inside the
+        # transaction; every other profile value is immutable.
+        expected_profile.pop("manifest_id", None)
+        actual_profile.pop("manifest_id", None)
+        if actual_profile != expected_profile:
+            raise ValueError(
+                "Turn Context profile differs from persisted relationship"
+            )
+
+        pinned_manifest = None
+        backing_proposal = None
+        if snapshot_profile.manifest_id is not None:
+            manifest_row = conn.execute(
+                """
+                SELECT manifest_id, blueprint_id, proposal_id,
+                       proposal_revision, content_fingerprint, data
+                FROM persona_manifests WHERE manifest_id = ?
+                """,
+                (snapshot_profile.manifest_id,),
+            ).fetchone()
+            if manifest_row is not None:
+                manifest_data = _decode_json_object(
+                    manifest_row["data"],
+                    "Persona Manifest data",
+                )
+                pinned_manifest = PersonaManifest.from_dict(manifest_data)
+                if (
+                    pinned_manifest.manifest_id != manifest_row["manifest_id"]
+                    or pinned_manifest.blueprint_id != manifest_row["blueprint_id"]
+                    or pinned_manifest.approved_proposal_id
+                    != manifest_row["proposal_id"]
+                    or pinned_manifest.approved_revision
+                    != manifest_row["proposal_revision"]
+                    or pinned_manifest.content_fingerprint
+                    != manifest_row["content_fingerprint"]
+                ):
+                    raise ValueError(
+                        "Persona Manifest columns differ from stored data"
+                    )
+
+                proposal_row = conn.execute(
+                    """
+                    SELECT proposal_id, revision, blueprint_id,
+                           content_fingerprint, status, data
+                    FROM persona_compilation_revisions
+                    WHERE proposal_id = ? AND revision = ?
+                    """,
+                    (
+                        pinned_manifest.approved_proposal_id,
+                        pinned_manifest.approved_revision,
+                    ),
+                ).fetchone()
+                if proposal_row is not None:
+                    proposal_data = _decode_json_object(
+                        proposal_row["data"],
+                        "Persona Compilation data",
+                    )
+                    backing_proposal = PersonaCompilationProposal.from_dict(
+                        proposal_data
+                    )
+                    if (
+                        backing_proposal.proposal_id != proposal_row["proposal_id"]
+                        or backing_proposal.revision != proposal_row["revision"]
+                        or backing_proposal.blueprint_id
+                        != proposal_row["blueprint_id"]
+                        or backing_proposal.content_fingerprint
+                        != proposal_row["content_fingerprint"]
+                        or backing_proposal.status.value != proposal_row["status"]
+                    ):
+                        raise ValueError(
+                            "Persona Compilation columns differ from stored data"
+                        )
+
+        growth_rows = conn.execute(
+            """
+            SELECT proposal_id, relationship_id, revision, status,
+                   created_at, data
+            FROM persona_growth_proposals
+            WHERE relationship_id = ? AND status = ?
+            ORDER BY created_at ASC, proposal_id ASC, revision ASC
+            """,
+            (
+                snapshot_profile.relationship_id,
+                PersonaGrowthStatus.APPROVED.value,
+            ),
+        ).fetchall()
+        approved_growth = []
+        for row in growth_rows:
+            growth_data = _decode_json_object(
+                row["data"],
+                "Persona Growth data",
+            )
+            proposal = PersonaGrowthProposal.from_dict(growth_data)
+            if (
+                proposal.proposal_id != row["proposal_id"]
+                or proposal.relationship_id != row["relationship_id"]
+                or proposal.revision != row["revision"]
+                or proposal.status.value != row["status"]
+                or proposal.created_at != row["created_at"]
+            ):
+                raise ValueError("Persona Growth columns differ from stored data")
+            approved_growth.append(proposal)
+
+        event_rows = conn.execute(
+            """
+            SELECT event_id, relationship_id, data
+            FROM relationship_events
+            WHERE relationship_id = ? ORDER BY sequence ASC
+            """,
+            (snapshot_profile.relationship_id,),
+        ).fetchall()
+        direct_events = []
+        for row in event_rows:
+            event_data = _decode_json_object(
+                row["data"],
+                "Relationship Event data",
+            )
+            event = RelationshipEvent.from_dict(event_data)
+            if (
+                event.event_id != row["event_id"]
+                or event.relationship_id != row["relationship_id"]
+            ):
+                raise ValueError(
+                    "Relationship Event columns differ from stored data"
+                )
+            direct_events.append(event)
+
+        adjudication_rows = conn.execute(
+            """
+            SELECT decision_id, relationship_id, data
+            FROM relationship_adjudications
+            WHERE relationship_id = ? ORDER BY sequence ASC
+            """,
+            (snapshot_profile.relationship_id,),
+        ).fetchall()
+        adjudications = []
+        for row in adjudication_rows:
+            adjudication_data = _decode_json_object(
+                row["data"],
+                "Relationship Adjudication data",
+            )
+            adjudication = AdjudicationRecord.from_dict(adjudication_data)
+            if (
+                adjudication.receipt.decision_id != row["decision_id"]
+                or adjudication.receipt.relationship_id != row["relationship_id"]
+            ):
+                raise ValueError(
+                    "Relationship Adjudication columns differ from stored data"
+                )
+            adjudications.append(adjudication)
+
+        return TurnContextSourceSnapshot(
+            profile=snapshot_profile,
+            pinned_manifest=pinned_manifest,
+            backing_compilation_proposal=backing_proposal,
+            approved_growth=tuple(approved_growth),
+            direct_events=tuple(direct_events),
+            adjudications=tuple(adjudications),
+        )
 
     def _init_db(self) -> None:
         """Initializes SQLite database tables."""
@@ -2032,6 +2268,90 @@ class SQLiteStorage(BaseStorage):
                     )
                 conn.commit()
                 return record
+
+    def transition_reviewed_turn_record(
+        self,
+        profile: RelationshipProfile,
+        record: TurnRecord,
+        context_baseline: TurnContextBaseline,
+        expected_status: TurnStatus,
+        expected_record_version: int,
+    ) -> TurnRecord:
+        """Revalidates authority and applies the Turn CAS in one transaction."""
+        if (
+            profile.relationship_id != record.relationship_id
+            or context_baseline.relationship_id != record.relationship_id
+            or record.context_baseline != context_baseline
+        ):
+            raise TurnTerminalConflictError(
+                "reviewed Turn transition has a different context baseline"
+            )
+        with self.lock_manager.lock("__turn_records__", record.relationship_id):
+            with closing(self._get_connection()) as conn:
+                try:
+                    # The write reservation serializes this authority read and
+                    # Turn update with every SQLite approval/revocation writer.
+                    conn.execute("BEGIN IMMEDIATE")
+                    row = conn.execute(
+                        """
+                        SELECT data FROM source_turns
+                        WHERE relationship_id = ? AND turn_id = ?
+                        """,
+                        (record.relationship_id, record.turn_id),
+                    ).fetchone()
+                    if row is None:
+                        raise TurnNotFoundError(
+                            f"turn {record.turn_id!r} was not found"
+                        )
+                    existing = TurnRecord.from_dict(json.loads(row["data"]))
+                    if existing == record:
+                        # A completed Turn remains an idempotent success even
+                        # when its opening authority is revoked afterwards.
+                        conn.commit()
+                        return existing
+                    if (
+                        existing.status != expected_status
+                        or existing.record_version != expected_record_version
+                        or existing.context_baseline != context_baseline
+                        or not record.is_terminal_transition_from(existing)
+                    ):
+                        raise TurnTerminalConflictError(
+                            f"turn {record.turn_id!r} transition violates its "
+                            "immutable opening"
+                        )
+
+                    snapshot = self._capture_turn_context_source_with_connection(
+                        conn,
+                        profile,
+                    )
+                    validate_turn_context_baseline_authority(
+                        snapshot,
+                        context_baseline,
+                    )
+                    cursor = conn.execute(
+                        """
+                        UPDATE source_turns
+                        SET status = ?, data = ?
+                        WHERE relationship_id = ? AND turn_id = ?
+                          AND status = ?
+                        """,
+                        (
+                            record.status.value,
+                            json.dumps(record.to_dict(), ensure_ascii=False),
+                            record.relationship_id,
+                            record.turn_id,
+                            expected_status.value,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise TurnTerminalConflictError(
+                            f"turn {record.turn_id!r} changed concurrently"
+                        )
+                    conn.commit()
+                    return record
+                except Exception:
+                    conn.rollback()
+                    raise
 
     def append_reply_attempt(self, attempt: ReplyAttemptRecord) -> ReplyAttemptRecord:
         """Appends safe failure metadata only while its turn remains open."""

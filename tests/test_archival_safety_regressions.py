@@ -30,6 +30,18 @@ AGENT_ID = "agent_erii"
 USER_ID = "user_one"
 
 
+def _visible_exchange_delivery_exception():
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests.archival-fixture-host",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-08-01T00:00:00+00:00",
+        "reply_attempt_number": None,
+    }
+
+
 def _artifact_decision():
     return ArchivalArtifactsDecision(
         memories=(
@@ -121,6 +133,7 @@ class ArchivalSafetyRegressionTests(unittest.TestCase):
             "Shall we go to the arcade again?",
             "Yes. I want to keep that promise.",
             turn_id=turn_id,
+            delivery_exception=_visible_exchange_delivery_exception(),
         )
 
     def test_expired_extraction_lease_cannot_bypass_attempt_budget(self):

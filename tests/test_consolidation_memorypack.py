@@ -44,6 +44,18 @@ from tests.test_structured_recall import (
 )
 
 
+def _preexisting_visible_exchange_delivery_exception():
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-07-29T00:00:00+00:00",
+        "reply_attempt_number": None,
+    }
+
+
 class _BlockingReflectionInterpreter(_ReflectionInterpreter):
     def __init__(self):
         super().__init__()
@@ -179,6 +191,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             run = source.process_relationship_turn(
                 "agent-lumi",
@@ -240,6 +255,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -378,6 +396,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -436,6 +457,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             export_started = threading.Event()
 
@@ -505,6 +529,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                     user_message,
                     "I want to remember this moment.",
                     turn_id=turn_id,
+                    delivery_exception=(
+                        _preexisting_visible_exchange_delivery_exception()
+                    ),
                 )
                 source.process_relationship_turn(
                     "agent-lumi",
@@ -582,6 +609,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                     user_message,
                     "I want to remember this moment.",
                     turn_id=turn_id,
+                    delivery_exception=(
+                        _preexisting_visible_exchange_delivery_exception()
+                    ),
                 )
                 runs.append(
                     source.process_relationship_turn(
@@ -633,6 +663,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -690,6 +723,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -778,6 +814,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -833,6 +872,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             run = source.process_relationship_turn(
                 "agent-lumi",
@@ -900,6 +942,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             run = source.process_relationship_turn(
                 "agent-lumi",
@@ -941,6 +986,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             run = source.process_relationship_turn(
                 "agent-lumi",
@@ -1001,6 +1049,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -1063,6 +1114,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -1130,6 +1184,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -1192,6 +1249,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                     user_message,
                     "I want to remember this moment.",
                     turn_id=turn_id,
+                    delivery_exception=(
+                        _preexisting_visible_exchange_delivery_exception()
+                    ),
                 )
                 runs.append(
                     source.process_relationship_turn(
@@ -1292,6 +1352,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                     user_message,
                     "I want to remember this moment.",
                     turn_id=turn_id,
+                    delivery_exception=(
+                        _preexisting_visible_exchange_delivery_exception()
+                    ),
                 )
                 source.process_relationship_turn(
                     "agent-lumi",
@@ -1406,6 +1469,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -1467,6 +1533,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -1545,6 +1614,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -1607,6 +1679,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -1678,6 +1753,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -1745,6 +1823,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -1813,6 +1894,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "The snow is beautiful.",
                 "Yes. I want to remember this quiet moment.",
                 turn_id="turn-snow",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",
@@ -1948,6 +2032,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                     user_message,
                     "I want to remember this moment.",
                     turn_id=turn_id,
+                    delivery_exception=(
+                        _preexisting_visible_exchange_delivery_exception()
+                    ),
                 )
                 source.process_relationship_turn(
                     "agent-lumi",
@@ -2028,6 +2115,9 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                 "Hello.",
                 "Hello.",
                 turn_id="turn-hello",
+                delivery_exception=(
+                    _preexisting_visible_exchange_delivery_exception()
+                ),
             )
             source.process_relationship_turn(
                 "agent-lumi",

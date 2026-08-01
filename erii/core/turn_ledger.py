@@ -4,6 +4,18 @@ from dataclasses import replace
 from typing import Iterable, List, Mapping, Optional, Union
 import uuid
 
+from erii.core.continuity_evidence import ContinuityEvidenceResolver
+from erii.core.continuity_review import build_continuity_review_receipt
+from erii.core.turn_context import (
+    capture_turn_context_baseline,
+)
+from erii.models.continuity import ContinuityEvaluationResult
+from erii.models.continuity_review import (
+    ContinuityFailureClassification,
+    ContinuityNotEvaluatedReason,
+    ContinuityReviewRecord,
+    DeliveryExceptionRecord,
+)
 from erii.models.relationship import RelationshipProfile
 from erii.models.relationship import utc_now
 from erii.models.turn import (
@@ -19,7 +31,9 @@ from erii.models.turn import (
     SourceProcessingPlan,
     SourceTurnReceipt,
     TurnMessage,
+    TurnNotFoundError,
     TurnRecord,
+    TURN_RECORD_FORMAT_VERSION,
     TurnRole,
     TurnStatus,
     TurnTerminalConflictError,
@@ -31,8 +45,15 @@ from erii.storage.base import BaseStorage
 class TurnLedger:
     """Keeps turn lifecycle rules behind one small Engine-facing interface."""
 
-    def __init__(self, storage: BaseStorage) -> None:
+    def __init__(
+        self,
+        storage: BaseStorage,
+        evidence_resolver: Optional[ContinuityEvidenceResolver] = None,
+    ) -> None:
         self._storage = storage
+        self._evidence_resolver = evidence_resolver or ContinuityEvidenceResolver(
+            storage
+        )
 
     def open(
         self,
@@ -62,6 +83,23 @@ class TurnLedger:
             raise ValueError(
                 "begin_turn() accepts only host_observed interaction context signals"
             )
+        try:
+            existing = self._storage.get_turn_record(
+                profile.relationship_id,
+                stable_turn_id,
+            )
+        except TurnNotFoundError:
+            existing = None
+        if existing is None:
+            context_baseline = capture_turn_context_baseline(
+                self._storage,
+                profile,
+                stable_turn_id,
+            )
+            turn_format_version = TURN_RECORD_FORMAT_VERSION
+        else:
+            context_baseline = existing.context_baseline
+            turn_format_version = existing.turn_format_version
         record = TurnRecord(
             turn_id=stable_turn_id,
             relationship_id=profile.relationship_id,
@@ -74,6 +112,8 @@ class TurnLedger:
                 )
             ),
             interaction_context=context_signals,
+            context_baseline=context_baseline,
+            turn_format_version=turn_format_version,
         )
         return self._storage.create_turn_record(record)
 
@@ -161,6 +201,10 @@ class TurnLedger:
         continuity_assessment: Optional[
             Union[ReplyContinuityAssessment, Mapping[str, object]]
         ] = None,
+        continuity_result: Optional[ContinuityEvaluationResult] = None,
+        delivery_exception: Optional[
+            Union[DeliveryExceptionRecord, Mapping[str, object]]
+        ] = None,
         delivery_disposition: Union[
             DeliveryDisposition,
             str,
@@ -169,15 +213,6 @@ class TurnLedger:
     ) -> SourceTurnReceipt:
         """Atomically seals an open turn around the reply actually shown."""
         existing = self.get(profile, turn_id)
-        assessment = (
-            ReplyContinuityAssessment()
-            if continuity_assessment is None
-            else (
-                continuity_assessment
-                if isinstance(continuity_assessment, ReplyContinuityAssessment)
-                else ReplyContinuityAssessment.from_dict(continuity_assessment)
-            )
-        )
         disposition = (
             delivery_disposition
             if isinstance(delivery_disposition, DeliveryDisposition)
@@ -191,12 +226,76 @@ class TurnLedger:
                 else ()
             )
         )
+        exception_record = (
+            None
+            if delivery_exception is None
+            else (
+                delivery_exception
+                if isinstance(delivery_exception, DeliveryExceptionRecord)
+                else DeliveryExceptionRecord.from_dict(delivery_exception)
+            )
+        )
+        if continuity_result is not None:
+            if continuity_assessment is not None:
+                raise ValueError(
+                    "complete_turn() cannot accept both continuity_result and "
+                    "continuity_assessment"
+                )
+            binding = continuity_result.review_binding
+            baseline = existing.context_baseline
+            if baseline is None or baseline.manifest is None:
+                raise ValueError(
+                    "a successful continuity review requires the Turn Opening "
+                    "context baseline"
+                )
+            if (
+                binding.relationship_id != profile.relationship_id
+                or binding.turn_id != existing.turn_id
+                or binding.persona_id != profile.persona_id
+                or binding.persona_manifest_id != baseline.manifest.manifest_id
+                or binding.context_baseline_fingerprint
+                != baseline.baseline_fingerprint
+            ):
+                raise ValueError(
+                    "continuity result belongs to a different relationship, Turn, "
+                    "or frozen Manifest"
+                )
+            binding.verify_user_message(existing.transcript.user_message.content)
+            if existing.status != TurnStatus.COMPLETED:
+                self._evidence_resolver.validate_binding(
+                    profile,
+                    baseline,
+                    persona_refs=binding.persona_context_refs,
+                    relationship_refs=binding.relationship_context_refs,
+                    voice_activation_traces=(
+                        continuity_result.voice_activation_traces
+                    ),
+                )
+            review_record = ContinuityReviewRecord.reviewed(
+                build_continuity_review_receipt(
+                    continuity_result,
+                    agent_message,
+                    disposition,
+                )
+            )
+        else:
+            assessment = (
+                ReplyContinuityAssessment()
+                if continuity_assessment is None
+                else (
+                    continuity_assessment
+                    if isinstance(continuity_assessment, ReplyContinuityAssessment)
+                    else ReplyContinuityAssessment.from_dict(continuity_assessment)
+                )
+            )
+            review_record = self._review_record_from_assessment(assessment)
         if existing.status == TurnStatus.COMPLETED:
             if self._same_completion(
                 existing,
                 agent_message,
-                assessment,
+                review_record,
                 disposition,
+                exception_record,
                 channels,
             ):
                 return SourceTurnReceipt.from_record(existing)
@@ -222,8 +321,9 @@ class TurnLedger:
                 agent_message=completed_at,
             ),
             record_version=existing.record_version + 1,
-            continuity_assessment=assessment,
+            review_record=review_record,
             delivery_disposition=disposition,
+            delivery_exception=exception_record,
             processing_plan=plan,
             processing_outcomes=tuple(
                 SourceProcessingOutcome(
@@ -235,18 +335,28 @@ class TurnLedger:
             completed_at=completed_at.recorded_at,
         )
         try:
-            stored = self._storage.transition_turn_record(
-                completed,
-                TurnStatus.OPEN,
-                existing.record_version,
-            )
+            if continuity_result is not None:
+                stored = self._storage.transition_reviewed_turn_record(
+                    profile,
+                    completed,
+                    existing.context_baseline,
+                    TurnStatus.OPEN,
+                    existing.record_version,
+                )
+            else:
+                stored = self._storage.transition_turn_record(
+                    completed,
+                    TurnStatus.OPEN,
+                    existing.record_version,
+                )
         except TurnTerminalConflictError:
             winner = self.get(profile, turn_id)
             if winner.status == TurnStatus.COMPLETED and self._same_completion(
                 winner,
                 agent_message,
-                assessment,
+                review_record,
                 disposition,
+                exception_record,
                 channels,
             ):
                 stored = winner
@@ -306,10 +416,13 @@ class TurnLedger:
         continuity_assessment: Optional[
             Union[ReplyContinuityAssessment, Mapping[str, object]]
         ] = None,
+        delivery_exception: Optional[
+            Union[DeliveryExceptionRecord, Mapping[str, object]]
+        ] = None,
         delivery_disposition: Union[
             DeliveryDisposition,
             str,
-        ] = DeliveryDisposition.SHOWN,
+        ] = DeliveryDisposition.SHOWN_UNREVIEWED,
         processing_channels: Optional[Iterable[Union[SourceProcessingChannel, str]]] = None,
     ) -> SourceTurnReceipt:
         """Atomically inserts an already-complete visible exchange."""
@@ -317,20 +430,37 @@ class TurnLedger:
             turn_id or str(uuid.uuid4()),
             "turn_id",
         )
-        assessment = (
-            ReplyContinuityAssessment()
-            if continuity_assessment is None
-            else (
-                continuity_assessment
-                if isinstance(continuity_assessment, ReplyContinuityAssessment)
-                else ReplyContinuityAssessment.from_dict(continuity_assessment)
+        if continuity_assessment is not None:
+            raise ValueError(
+                "record_turn() cannot establish a continuity assessment after delivery"
             )
+        review_record = ContinuityReviewRecord.not_evaluated(
+            ContinuityNotEvaluatedReason.PREEXISTING_VISIBLE_EXCHANGE
         )
         disposition = (
             delivery_disposition
             if isinstance(delivery_disposition, DeliveryDisposition)
             else DeliveryDisposition(delivery_disposition)
         )
+        if disposition != DeliveryDisposition.SHOWN_UNREVIEWED:
+            raise ValueError("record_turn() always uses shown_unreviewed")
+        if delivery_exception is None:
+            raise ValueError(
+                "record_turn() requires a DeliveryExceptionRecord declared by the host"
+            )
+        exception_record = (
+            delivery_exception
+            if isinstance(delivery_exception, DeliveryExceptionRecord)
+            else DeliveryExceptionRecord.from_dict(delivery_exception)
+        )
+        if (
+            exception_record.disposition != disposition
+            or exception_record.reason_code.value != "preexisting_visible_exchange"
+        ):
+            raise ValueError(
+                "record_turn() requires a shown_unreviewed "
+                "preexisting_visible_exchange exception"
+            )
         channels = tuple(
             item if isinstance(item, SourceProcessingChannel) else SourceProcessingChannel(item)
             for item in (
@@ -359,8 +489,9 @@ class TurnLedger:
                 agent_message=visible_agent,
             ),
             opened_at=visible_user.recorded_at,
-            continuity_assessment=assessment,
+            review_record=review_record,
             delivery_disposition=disposition,
+            delivery_exception=exception_record,
             processing_plan=plan,
             processing_outcomes=tuple(
                 SourceProcessingOutcome(
@@ -378,16 +509,39 @@ class TurnLedger:
     def _same_completion(
         record: TurnRecord,
         agent_message: str,
-        assessment: ReplyContinuityAssessment,
+        review_record: ContinuityReviewRecord,
         disposition: DeliveryDisposition,
+        delivery_exception: Optional[DeliveryExceptionRecord],
         channels: tuple[SourceProcessingChannel, ...],
     ) -> bool:
         return (
             record.transcript.agent_message is not None
             and record.transcript.agent_message.content == agent_message
-            and record.continuity_assessment == assessment
+            and record.review_record == review_record
             and record.delivery_disposition == disposition
+            and record.delivery_exception == delivery_exception
             and record.processing_plan is not None
             and record.processing_plan.channels == channels
         )
-    InteractionContextSignal,
+
+    @staticmethod
+    def _review_record_from_assessment(
+        assessment: ReplyContinuityAssessment,
+        *,
+        preexisting_visible_exchange: bool = False,
+    ) -> ContinuityReviewRecord:
+        """Migrates only explicit non-success compatibility summaries."""
+        if assessment.status.value == "completed":
+            raise ValueError(
+                "a successful continuity review requires a self-bound "
+                "ContinuityEvaluationResult"
+            )
+        if assessment.status.value == "failed":
+            return ContinuityReviewRecord.failed(
+                ContinuityFailureClassification.EVALUATOR_FAILED,
+            )
+        return ContinuityReviewRecord.not_evaluated(
+            ContinuityNotEvaluatedReason.PREEXISTING_VISIBLE_EXCHANGE
+            if preexisting_visible_exchange
+            else ContinuityNotEvaluatedReason.EVALUATION_NOT_REQUESTED
+        )

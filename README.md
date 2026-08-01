@@ -174,6 +174,11 @@ with ERIIEngine(storage_dir="./erii_memory", llm=extract_memory) as engine:
 关系必须先通过 `initialize_relationship()` 初始化。生成回复前先保存 User 消息，展示回复后再封存同一轮：
 
 ```python
+from datetime import datetime, timezone
+
+from erii import DeliveryExceptionRecord
+
+
 opened = engine.begin_turn(
     "agent_lumi",
     "user_chen",
@@ -191,12 +196,21 @@ opened = engine.begin_turn(
 
 # reply 由宿主自己的聊天模型生成并实际展示给用户。
 reply = "好，我们一起去。"
+delivery_exception = DeliveryExceptionRecord(
+    disposition="shown_unreviewed",
+    actor_kind="host_policy",
+    actor_id="my-app.delivery-policy/v1",
+    reason_code="availability_fallback",
+    decided_at=datetime.now(timezone.utc).isoformat(),
+)
 
 receipt = engine.complete_turn(
     "agent_lumi",
     "user_chen",
     opened.turn_id,
     reply,
+    delivery_disposition="shown_unreviewed",
+    delivery_exception=delivery_exception,
     # 只声明当前确实要承担的派生处理通道。
     processing_channels=(),
 )
@@ -205,12 +219,20 @@ receipt = engine.complete_turn(
 如果宿主已经同时持有双方可见消息，可以一次性原子记录：
 
 ```python
+preexisting_exception = DeliveryExceptionRecord(
+    disposition="shown_unreviewed",
+    actor_kind="host_policy",
+    actor_id="my-app.import-policy/v1",
+    reason_code="preexisting_visible_exchange",
+    decided_at=datetime.now(timezone.utc).isoformat(),
+)
 receipt = engine.record_turn(
     "agent_lumi",
     "user_chen",
     "雪已经开始下了。",
     "那这就是我们一起看的第一场雪。",
     turn_id="turn-first-snow-002",
+    delivery_exception=preexisting_exception,
     processing_channels=(),
 )
 
@@ -218,7 +240,7 @@ turn = engine.get_turn("agent_lumi", "user_chen", receipt.source_turn_id)
 completed = engine.list_turns("agent_lumi", "user_chen", status="completed")
 ```
 
-`SourceTurnReceipt` 只报告 `source_turn_id`、relationship、revision、接受时间、固定处理计划与各通道状态，不回显 User/Agent 原文；需要查看原文时必须在同一 `Agent × User` 范围内调用 `get_turn()`。相同 `turn_id` 和相同载荷可安全重试；复用 ID 却改变消息或终态会抛出冲突。
+`SourceTurnReceipt` 只报告 `source_turn_id`、relationship、revision、接受时间、固定处理计划与各通道状态，不回显 User/Agent 原文；需要查看原文时必须在同一 `Agent × User` 范围内调用 `get_turn()`。上面的基础例子明确承认没有成功连续性审查，因此使用 `shown_unreviewed`；普通 `shown` 必须携带绑定当前 Turn 与最终回复的完整 `ContinuityEvaluationResult`。`record_turn()` 只能记录 `preexisting_visible_exchange`。宿主应持久并复用同一个 Delivery Exception，才能让相同 `turn_id` 与相同载荷安全重试；复用 ID 却改变消息或终态会抛出冲突。
 
 `interaction_context` 只接受宿主实际观察到的临时情境，不能冒充由内核或评估器推导的关系状态。内核产生的关系安全与评估器提出的情绪信号都绑定当前 `relationship_id + turn_id + producer_version`，仅用于本轮表达选择；旧版未绑定的派生标签可读但不能激活语气。可重试的生成或评估失败应让 Turn 保持 `open`，并且只记录脱敏后的失败元数据，不保存未展示草稿：
 
@@ -252,8 +274,11 @@ engine.abandon_turn(
 `0.4.0a6` 可以把一条已完成的 Source Turn 可靠地派生为可召回 MemoryNode 与结构化 Timeline。归档器必须由宿主显式提供，并以不含密钥、Prompt 或用户正文的 `ExtractorDescriptor` 声明版本：
 
 ```python
+from datetime import datetime, timezone
+
 from erii import (
     ArchivalArtifactsDecision,
+    DeliveryExceptionRecord,
     ERIIConfig,
     ERIIEngine,
     ExtractorDescriptor,
@@ -302,6 +327,13 @@ with ERIIEngine(config=config, memory_extractor=MyMemoryExtractor()) as engine:
         "我们去游戏厅吧。",
         "好，我还想再玩一局。",
         turn_id="turn-arcade-001",
+        delivery_exception=DeliveryExceptionRecord(
+            disposition="shown_unreviewed",
+            actor_kind="host_policy",
+            actor_id="my-app.import-policy/v1",
+            reason_code="preexisting_visible_exchange",
+            decided_at=datetime.now(timezone.utc).isoformat(),
+        ),
     )
     receipt = engine.archive_turn(
         "agent_lumi",
@@ -649,9 +681,17 @@ engine = ERIIEngine(
 
 ## REST 服务
 
+默认使用单一服务所有者 API Key 启动参考服务：
+
+```powershell
+$env:ERII_API_KEY = python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
 ```bash
 erii serve --host 127.0.0.1 --port 8000 --storage-dir ./erii_memory
 ```
+
+所有业务请求都要携带 `X-API-Key`；`/api/v1/health`、Swagger UI 与 OpenAPI 文档可直接访问，在 Swagger 的 **Authorize** 中填入同一个 Key 即可调试。若只做本机临时开发，也可以显式使用 `--allow-unauthenticated-loopback`，该模式不能绑定非回环地址，也绝不能放在反向代理后面——代理可能让远程请求在应用看来来自回环地址。
 
 导入 `erii.server.app` 不会立即创建 Engine、数据库或后台线程。CLI 启动或首次 API 请求时才会初始化服务 Engine。
 
@@ -661,6 +701,7 @@ erii serve --host 127.0.0.1 --port 8000 --storage-dir ./erii_memory
 - `POST /api/v1/turns/open`
 - `POST /api/v1/turns`
 - `POST /api/v1/turns/{turn_id}/complete`
+- `POST /api/v1/turns/{turn_id}/continuity/evaluate`
 - `POST /api/v1/turns/{turn_id}/abandon`
 - `GET /api/v1/turns/{turn_id}`
 - `GET /api/v1/turns`
@@ -679,7 +720,7 @@ erii serve --host 127.0.0.1 --port 8000 --storage-dir ./erii_memory
 
 Turn 的 open、abandon、get 与 list 响应会按关系范围返回 Turn Record；complete 与一次性 record 返回不含对话原文的 `SourceTurnReceipt`。这些路由要求目标关系已经初始化，且所有查询都必须同时提供匹配的 `agent_id` 与 `user_id`。关系范围不是授权机制，宿主仍需自行鉴权。
 
-该服务是参考适配层，不包含认证、租户权限、限流或完整的数据加密方案，不应未经加固直接暴露到公网。
+该 Key 只代表“服务所有者”，可以访问服务中的全部 Agent × User 范围，不是多租户身份或用户授权。参考服务仍不包含租户权限、限流、TLS 或完整的数据加密方案，不应未经加固直接暴露到公网。
 
 ## 安全与隐私边界
 
@@ -758,7 +799,39 @@ python -m compileall -q erii examples tests
 - 只用显式分组证据的 Episode / Relationship Chapter，以及诚实保留的未巩固事件；
 - SQLite Schema v6 与 MemoryPack 关系处理/反思携带。
 
-后续 alpha/beta 将继续处理迁移、长期评测和产品安全边界。
+以下版本均为公开规划，尚未实现；实际发布必须满足 [ROADMAP.md](ROADMAP.md) 中的退出条件。
+
+### v0.4.0a8 — 连续性审计与发布收口（计划）
+
+- 每个现代最终可见回复与 `ContinuityReviewRecord` 原子绑定，只有 `reviewed` 分支包含五轴 `ContinuityReviewReceipt`；
+- 类型化、可解析且严格保持 `Agent × User` 范围的连续性依据；
+- `shown / overridden / shown_unreviewed` 与现代、失败、未评估、Legacy 审查状态保持可区分；
+- 旧版连续性摘要仍可查看和携带，但兼容属性不会把 Legacy 的 `COMPLETED/ALIGNED` 冒充为现代成功 Receipt；
+- 被最终语气判断采用的情境表达激活留下不可重放、非干扰 Trace，帮助离线诊断但永不回灌 Prompt 或强化口癖；
+- 异常 Agent 发言保留真实历史但不能静默塑造人格，同轮 User 证据不被整轮丢弃；
+- 关系候选引用异常 Agent 发言时以带稳定原因码的 `rejected` 正常终结；这是 a8 的最小隔离，不是技术失败或永久否认后果；
+- 隔离依据是 `overridden | shown_unreviewed`，不是语气正负；最终文本经过重新审查并以 `shown` 通过后，即使角色拒绝、生气、疏远或伤人，也作为正常角色选择处理；
+- 现代 Timeline/Memory 候选携带消息级精确证据，异常 Agent 证据不能混入普通归档；
+- `MemoryExtractorV1` 调用接口保持兼容，a8 新归档提交通过显式 `extraction_schema_version="2"` 启用证据感知结果；schema `"1"` 只保留为 Legacy 身份；
+- 升级时未提取的 schema `"1"` 工作显式失败并由宿主以新幂等键重提，已冻结的 Commit 继续原子完成但仍标记为 Legacy，不会自动换模型重采样；
+- 旧记忆不会因升级被删除：真正 pre-a8 数据以带前端标签的低权威 `legacy_context` 维持兼容召回且不再强化；可证明来自现代异常交付、却缺少消息角色证据的旧产物只保留检查与携带能力，不进入默认生成 Prompt；
+- 召回预算随现代记忆积累渐进过渡：现代不足时 Legacy 填充上下文，现代充足后最多保留一个相关 Legacy 槽位；两类记忆分区显示、精确重复由现代版本胜出；
+- 连续性判定保持情感效价中立，不把温柔当正确或把拒绝、生气当 OOC；
+- FileStorage、SQLiteStorage、MemoryPack、旧数据、并发幂等、干净安装与 prerelease 构建收口；
+- 这是最后一个承诺支持 Python 3.9 的版本。
+
+### v0.5.0a1 — 关系后果与角色内在审视（计划）
+
+- 使用新的 `historical_reprocessing` 身份读取 a8 冻结候选与拒绝回执，追加处置而不修改旧 Turn 或把旧 `rejected` 改成 `accepted`；
+- 追加式双轨连续性例外处置，不重写原 Turn；
+- 角色造成的真实后果以追加式关系记录保留，但系统不强制道歉、撤回、原谅或复合；
+- 对正常通过审查的伤害性选择直接延续后果；对 a8 隔离发言则以新历史处理身份分别判断人格权威与关系后果，两条判断互不洗白；
+- User Stance、Persona Stance 与共同 Relationship Outcome 分离取证；
+- Narrative Tension 区分未回应、尝试处理、共同和解、边界稳定、关系终结与替代；
+- 重大事件触发角色审视但允许 `stance_unformed`，不制造标准化悔意；
+- 角色敏感性同时覆盖威胁、愿望实现、主体性、关系意义与价值张力，所有条目保留人设依据且不虚构平衡。
+
+版本顺序保持为：`0.4.0a8 → 0.4.0b1 →（必要时 b2）→ 0.4.0rc1 → 0.4.0 → 0.5.0a1`。v0.4 Beta/RC 将处理迁移、删除与确定性重建、长期评测、性能基线、兼容和发布验证，不再增加领域功能；v0.5 后续 Alpha 继续推进 Portability 深 Module、窄 Storage Interface、Belief Lineage、Memory Relation 与 Continuity Map。完整认证、授权、加密与多租户安全仍属于 v0.6。
 
 Web UI、多 Agent 共享图、托管平台和主动消息发送不属于 `v0.4.0` 范围。
 

@@ -375,10 +375,7 @@ class RelationshipAdjudicator:
         intent: PersonaGrowthIntentCandidate,
     ) -> PersonaGrowthProposal:
         """Persists a pending proposal after an independent, history-based review."""
-        with self._storage.lock_manager.lock(
-            "__persona_growth__",
-            profile.relationship_id,
-        ):
+        with self._storage.relationship_processing_guard(profile.relationship_id):
             events = {
                 event.event_id: event
                 for event in list_complete_relationship_events(
@@ -477,10 +474,7 @@ class RelationshipAdjudicator:
         if isinstance(decision, str):
             decision = PersonaGrowthDecision(decision)
 
-        with self._storage.lock_manager.lock(
-            "__persona_growth__",
-            profile.relationship_id,
-        ):
+        with self._storage.relationship_processing_guard(profile.relationship_id):
             current = self._proposal_by_id(profile.relationship_id, clean_proposal_id)
             if current is None:
                 raise LookupError("persona growth proposal was not found")

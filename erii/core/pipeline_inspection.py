@@ -113,7 +113,11 @@ def inspect_relationship_pipeline(
         item
         for item in completed
         if item.delivery_disposition
-        in (DeliveryDisposition.SHOWN, DeliveryDisposition.OVERRIDDEN)
+        in (
+            DeliveryDisposition.SHOWN,
+            DeliveryDisposition.SHOWN_UNREVIEWED,
+            DeliveryDisposition.OVERRIDDEN,
+        )
     )
     not_evaluated = tuple(
         item

@@ -42,16 +42,8 @@ class TestServerLifecycle(unittest.TestCase):
             try:
                 request = server_app.RelationshipAdjudicationBody(
                     user_id="missing-user",
-                    source_turn={
-                        "turn_id": "missing-relationship-turn",
-                        "messages": [
-                            {
-                                "source_id": "message-1",
-                                "role": "user",
-                                "content": "Hello.",
-                            }
-                        ],
-                    },
+                    source_turn_id="missing-relationship-turn",
+                    extractor_version="tests.relationship-extractor/1",
                     candidates=[
                         {
                             "candidate_key": "observation-1",

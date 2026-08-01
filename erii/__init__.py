@@ -137,6 +137,8 @@ from erii.models.consolidation import (
     relationship_extraction_decision_from_value,
 )
 from erii.models.continuity import (
+    CONTINUITY_EVALUATION_RESULT_VERSION,
+    CONTINUITY_REVIEW_BINDING_VERSION,
     ContinuityAxis,
     ContinuityEvaluationDecision,
     ContinuityEvaluationRequest,
@@ -147,6 +149,7 @@ from erii.models.continuity import (
     ContinuityFindingAssessment,
     ContinuityFindingSeverity,
     ContinuityReasonCode,
+    ContinuityReviewBinding,
     EvaluatorInferredEmotionCandidate,
     InteractionContextEvaluationDecision,
     InteractionContextEvaluationRequest,
@@ -158,6 +161,28 @@ from erii.models.continuity import (
     VoicePatternActivation,
     continuity_evaluation_decision_from_value,
     interaction_context_evaluation_decision_from_value,
+)
+from erii.models.continuity_evidence import (
+    CONTINUITY_EVIDENCE_REF_VERSION,
+    ContinuityEvidenceKind,
+    ContinuityEvidenceRef,
+    continuity_evidence_ref_id,
+)
+from erii.models.continuity_review import (
+    ContinuityFailureClassification,
+    ContinuityNotEvaluatedReason,
+    ContinuityReviewKind,
+    ContinuityReviewReceipt,
+    ContinuityReviewRecord,
+    DeliveryExceptionActorKind,
+    DeliveryExceptionReasonCode,
+    DeliveryExceptionRecord,
+)
+from erii.models.voice_trace import (
+    VOICE_ACTIVATION_TRACE_VERSION,
+    VoiceActivationTrace,
+    VoiceConditionMatchTrace,
+    voice_activation_trace_fingerprint,
 )
 from erii.models.node import MemoryNode, MemoryState, MemoryType, MemoryVisibility
 from erii.models.pack import MemoryPack
@@ -276,6 +301,13 @@ from erii.models.turn import (
     TurnStatus,
     TurnTerminalConflictError,
 )
+from erii.models.turn_context import (
+    TurnApprovedGrowthReference,
+    TurnBlueprintReference,
+    TurnContextBaseline,
+    TurnManifestReference,
+    TurnPremiseReference,
+)
 from erii.security.sanitizer import SecuritySanitizer
 from erii.renderers import (
     MarkdownRecallRenderer,
@@ -296,6 +328,10 @@ from erii.vector.in_memory_vector import (
 from erii._version import __version__
 
 __all__ = [
+    "CONTINUITY_EVALUATION_RESULT_VERSION",
+    "CONTINUITY_EVIDENCE_REF_VERSION",
+    "VOICE_ACTIVATION_TRACE_VERSION",
+    "CONTINUITY_REVIEW_BINDING_VERSION",
     "__version__",
     "ArchivalArtifactKind",
     "ArchivalArtifactReference",
@@ -463,6 +499,9 @@ __all__ = [
     "ContinuityVerdict",
     "ContextSignalSource",
     "DeliveryDisposition",
+    "DeliveryExceptionActorKind",
+    "DeliveryExceptionReasonCode",
+    "DeliveryExceptionRecord",
     "InteractionContextSignal",
     "ReplyAttemptConflictError",
     "ReplyAttemptRecord",
@@ -474,10 +513,15 @@ __all__ = [
     "SourceProcessingState",
     "SourceTurnReceipt",
     "TurnConflictError",
+    "TurnApprovedGrowthReference",
+    "TurnBlueprintReference",
+    "TurnContextBaseline",
+    "TurnManifestReference",
     "TurnMessage",
     "TurnNotFoundError",
     "TurnRecord",
     "TurnRole",
+    "TurnPremiseReference",
     "TurnStatus",
     "TurnTerminalConflictError",
     "BaseLLMAdapter",
@@ -503,12 +547,20 @@ __all__ = [
     "ContinuityEvaluationDecision",
     "ContinuityEvaluationRequest",
     "ContinuityEvaluationResult",
+    "ContinuityEvidenceKind",
+    "ContinuityEvidenceRef",
     "ContinuityEvaluatorDescriptor",
     "ContinuityEvaluatorV1",
     "ContinuityFinding",
     "ContinuityFindingAssessment",
     "ContinuityFindingSeverity",
     "ContinuityReasonCode",
+    "ContinuityReviewBinding",
+    "ContinuityFailureClassification",
+    "ContinuityNotEvaluatedReason",
+    "ContinuityReviewKind",
+    "ContinuityReviewReceipt",
+    "ContinuityReviewRecord",
     "EvaluatorInferredEmotionCandidate",
     "InteractionContextEvaluationCoordinator",
     "InteractionContextEvaluationDecision",
@@ -548,11 +600,15 @@ __all__ = [
     "RelationshipProcessingSubmissionError",
     "RelationshipSafetySignalProjector",
     "VoicePatternActivation",
+    "VoiceActivationTrace",
+    "VoiceConditionMatchTrace",
     "VoicePatternCondition",
     "VoicePatternConditionType",
     "VoicePatternMatcher",
     "continuity_evaluation_decision_from_value",
+    "continuity_evidence_ref_id",
     "interaction_context_evaluation_decision_from_value",
+    "voice_activation_trace_fingerprint",
     "persona_reflection_decision_from_value",
     "relationship_extraction_decision_from_value",
     "inspect_relationship_pipeline",

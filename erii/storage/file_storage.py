@@ -9,6 +9,7 @@ Follows Google Python Style Guide.
 from dataclasses import replace
 from datetime import datetime
 from contextlib import contextmanager
+from functools import wraps
 import hashlib
 import json
 import logging
@@ -72,8 +73,24 @@ from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage, cross_process_file_lock
 from erii.storage.timeline_order import timeline_entry_order_key
+from erii.storage.turn_context import (
+    TurnContextSourceSnapshot,
+    validate_turn_context_baseline_authority,
+)
+from erii.models.turn_context import TurnContextBaseline
 
 logger = logging.getLogger("erii")
+
+
+def _turn_context_snapshot_writer(method):
+    """Runs a FileStorage writer outside every finer-grained storage lock."""
+
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._turn_context_snapshot_guard():
+            return method(self, *args, **kwargs)
+
+    return wrapped
 
 
 class FileStorage(BaseStorage):
@@ -180,6 +197,9 @@ class FileStorage(BaseStorage):
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.lock")
 
+    def _get_turn_context_snapshot_lock_path(self) -> str:
+        return os.path.join(self.root_dir, "_turn_context_snapshot.lock")
+
     def _get_relationship_processing_lock_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
         directory = os.path.join(self.root_dir, "_relationship_processing_locks")
@@ -192,6 +212,12 @@ class FileStorage(BaseStorage):
         with cross_process_file_lock(
             self._get_relationship_processing_lock_path(relationship_id)
         ):
+            yield
+
+    @contextmanager
+    def _turn_context_snapshot_guard(self):
+        """Serializes coherent Turn Context reads with every contributing writer."""
+        with cross_process_file_lock(self._get_turn_context_snapshot_lock_path()):
             yield
 
     @contextmanager
@@ -288,6 +314,7 @@ class FileStorage(BaseStorage):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
+    @_turn_context_snapshot_writer
     def _recover_persona_approval_transactions(self) -> None:
         """Rolls prepared cross-file approvals forward after an interrupted write."""
         directory = self._get_persona_approval_journal_dir()
@@ -1083,6 +1110,7 @@ class FileStorage(BaseStorage):
             self._write_json_atomic(self._get_identity_registry_path(), registry)
             return identity_id
 
+    @_turn_context_snapshot_writer
     def create_relationship(self, profile: RelationshipProfile) -> RelationshipProfile:
         """Creates a profile once while preserving imported stable IDs."""
         clean_agent = SecuritySanitizer.validate_key(profile.agent_id, "agent_id")
@@ -1143,6 +1171,108 @@ class FileStorage(BaseStorage):
                 return None
             with open(profile_path, "r", encoding="utf-8") as file_obj:
                 return RelationshipProfile.from_dict(json.load(file_obj))
+
+    def capture_turn_context_source(
+        self,
+        profile: RelationshipProfile,
+    ) -> TurnContextSourceSnapshot:
+        """Reads all Turn-opening authority and history under one root lock."""
+        with self._turn_context_snapshot_guard():
+            profile_path = self._get_relationship_path(
+                profile.agent_id,
+                profile.user_id,
+            )
+            if not os.path.exists(profile_path):
+                raise ValueError("relationship profile does not exist")
+            with open(profile_path, "r", encoding="utf-8") as file_obj:
+                current_profile = RelationshipProfile.from_dict(json.load(file_obj))
+            if (
+                current_profile.relationship_id != profile.relationship_id
+                or current_profile.persona_id != profile.persona_id
+                or current_profile.blueprint.blueprint_id
+                != profile.blueprint.blueprint_id
+            ):
+                raise PersonaConflictError(
+                    "relationship profile identity changed before Turn Context capture"
+                )
+
+            pinned_manifest = None
+            backing_proposal = None
+            compilation_path = self._get_persona_compilation_path(
+                current_profile.blueprint.blueprint_id
+            )
+            compilation_aggregate: Dict[str, Any] = {
+                "proposals": [],
+                "manifests": [],
+            }
+            if os.path.exists(compilation_path):
+                with open(compilation_path, "r", encoding="utf-8") as file_obj:
+                    compilation_aggregate.update(json.load(file_obj))
+            if current_profile.manifest_id is not None:
+                pinned_manifest = next(
+                    (
+                        PersonaManifest.from_dict(item)
+                        for item in compilation_aggregate.get("manifests", [])
+                        if item.get("manifest_id") == current_profile.manifest_id
+                    ),
+                    None,
+                )
+            if pinned_manifest is not None:
+                backing_proposal = next(
+                    (
+                        PersonaCompilationProposal.from_dict(item)
+                        for item in compilation_aggregate.get("proposals", [])
+                        if item.get("proposal_id")
+                        == pinned_manifest.approved_proposal_id
+                        and int(item.get("revision", 0))
+                        == pinned_manifest.approved_revision
+                    ),
+                    None,
+                )
+
+            growth_path = self._get_persona_growth_path(
+                current_profile.relationship_id
+            )
+            raw_growth: List[Dict[str, Any]] = []
+            if os.path.exists(growth_path):
+                with open(growth_path, "r", encoding="utf-8") as file_obj:
+                    raw_growth = json.load(file_obj)
+            approved_growth = tuple(
+                proposal
+                for proposal in (
+                    PersonaGrowthProposal.from_dict(item) for item in raw_growth
+                )
+                if proposal.status == PersonaGrowthStatus.APPROVED
+            )
+
+            event_path = self._get_relationship_events_path(
+                current_profile.relationship_id
+            )
+            direct_events = ()
+            if os.path.exists(event_path):
+                with open(event_path, "r", encoding="utf-8") as file_obj:
+                    direct_events = tuple(
+                        RelationshipEvent.from_dict(item) for item in json.load(file_obj)
+                    )
+
+            adjudication_path = self._get_relationship_adjudications_path(
+                current_profile.relationship_id
+            )
+            adjudications = ()
+            if os.path.exists(adjudication_path):
+                with open(adjudication_path, "r", encoding="utf-8") as file_obj:
+                    adjudications = tuple(
+                        AdjudicationRecord.from_dict(item)
+                        for item in json.load(file_obj)
+                    )
+            return TurnContextSourceSnapshot(
+                profile=current_profile,
+                pinned_manifest=pinned_manifest,
+                backing_compilation_proposal=backing_proposal,
+                approved_growth=approved_growth,
+                direct_events=direct_events,
+                adjudications=adjudications,
+            )
 
     def create_turn_record(self, record: TurnRecord) -> TurnRecord:
         """Creates one exact turn identity without overwriting prior content."""
@@ -1248,6 +1378,30 @@ class FileStorage(BaseStorage):
                 return record
         raise TurnNotFoundError(f"turn {record.turn_id!r} was not found")
 
+    def transition_reviewed_turn_record(
+        self,
+        profile: RelationshipProfile,
+        record: TurnRecord,
+        context_baseline: TurnContextBaseline,
+        expected_status: TurnStatus,
+        expected_record_version: int,
+    ) -> TurnRecord:
+        """Revalidates context authority and seals the Turn under one root lock."""
+        if (
+            record.relationship_id != profile.relationship_id
+            or record.context_baseline != context_baseline
+            or context_baseline.turn_id != record.turn_id
+        ):
+            raise ValueError("reviewed Turn does not match its context baseline")
+        with self._turn_context_snapshot_guard():
+            snapshot = self.capture_turn_context_source(profile)
+            validate_turn_context_baseline_authority(snapshot, context_baseline)
+            return self.transition_turn_record(
+                record,
+                expected_status,
+                expected_record_version,
+            )
+
     def append_reply_attempt(self, attempt: ReplyAttemptRecord) -> ReplyAttemptRecord:
         """Appends safe failure metadata only while its turn remains open."""
         with self._turn_guard(attempt.relationship_id):
@@ -1309,6 +1463,7 @@ class FileStorage(BaseStorage):
                 ]
             return sorted(attempts, key=lambda item: item.attempt_number)
 
+    @_turn_context_snapshot_writer
     def append_relationship_event(self, event: RelationshipEvent) -> RelationshipEvent:
         """Appends an event once, rejecting conflicting reuse of an event ID."""
         with self._relationship_history_guard(event.relationship_id):
@@ -1357,6 +1512,7 @@ class FileStorage(BaseStorage):
             with open(file_path, "r", encoding="utf-8") as file_obj:
                 return [RelationshipEvent.from_dict(item) for item in json.load(file_obj)]
 
+    @_turn_context_snapshot_writer
     def commit_relationship_adjudication(
         self,
         record: AdjudicationRecord,
@@ -1751,6 +1907,7 @@ class FileStorage(BaseStorage):
                 for item in state["reflections"]
             ]
 
+    @_turn_context_snapshot_writer
     def save_persona_growth_proposal(
         self,
         proposal: PersonaGrowthProposal,
@@ -1823,6 +1980,7 @@ class FileStorage(BaseStorage):
                     return proposal
         return None
 
+    @_turn_context_snapshot_writer
     def save_persona_compilation_proposal(
         self,
         proposal: PersonaCompilationProposal,
@@ -1904,6 +2062,7 @@ class FileStorage(BaseStorage):
                 for item in aggregate.get("proposals", [])
             ]
 
+    @_turn_context_snapshot_writer
     def approve_persona_manifest(
         self,
         proposal: PersonaCompilationProposal,
@@ -1955,6 +2114,7 @@ class FileStorage(BaseStorage):
             self._write_json_atomic(file_path, aggregate)
             return manifest
 
+    @_turn_context_snapshot_writer
     def approve_and_bind_persona_manifest(
         self,
         profile: RelationshipProfile,
@@ -2112,6 +2272,7 @@ class FileStorage(BaseStorage):
                 for item in aggregate.get("manifests", [])
             ]
 
+    @_turn_context_snapshot_writer
     def bind_relationship_manifest(
         self,
         profile: RelationshipProfile,

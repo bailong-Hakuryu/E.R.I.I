@@ -10,12 +10,12 @@
 | `0.4.0b1` | 迁移、删除、重建与长期验证 | 真实旧数据可恢复迁移，长轨迹无关系泄漏或无依据权威写入 |
 | `0.4.0rc1` | Interface、Schema 与 Artifact 冻结 | 干净安装、文档示例、迁移与可携带性全部通过 |
 | `0.4.0` / `0.4.x` | 稳定内核与兼容维护 | 数据格式和关系语义可被认真维护，但不承诺产品 SLA |
-| `0.5.x` | 记忆与认知修订谱系 | 当前认知、支持、冲突、替代与撤回均可解释和重建 |
+| `0.5.x` | 关系后果、角色内在审视与认知修订谱系 | 异常交付、双方立场、关系张力、角色反思与认知修订均有来源且可重建 |
 | `0.6.x` | 授权、加密、密钥与多租户安全 | 可信部署的正向与负向安全验证完成 |
 | `0.7.x` | 用户产品体验与外部验证 | 非维护者用户能够理解、使用、迁移和纠正长期数据 |
 | `1.0` | 正式产品准入 | 数据、评测、安全、支持、发布与法律门槛同时满足 |
 
-依赖顺序固定为：先让 v0.4 的长期数据可验证、可迁移，再改变 v0.5 的认知模型；先完成 v0.6 的安全 Seam，再把 v0.7 产品体验暴露给真实用户。后续版本不得通过跳过前置门槛来换取功能数量。
+依赖顺序固定为：先让 v0.4 的长期数据可验证、可迁移，再在 v0.5 先建立关系后果与角色内在审视的权威边界、随后扩展认知修订谱系；先完成 v0.6 的安全 Seam，再把 v0.7 产品体验暴露给真实用户。后续版本不得通过跳过前置门槛来换取功能数量。
 
 ## v0.3.1：稳定化
 
@@ -146,26 +146,48 @@
 - 每次巩固保存 History Fingerprint 与策略版本；Episode/Chapter 可从权威事件历史重建，不进入 MemoryPack，也不成为关系等级或关系状态写入来源；
 - 五轴 `ContinuityEvaluatorV1`、确定性汇总策略与来源支持的 Contextual Voice Pattern 在本阶段随公开契约落地，情境表达不会继承另一段关系的称呼、亲密或共同经历。
 
-### alpha.8：连续性审计与发布收口（下一阶段：`0.4.0a8`）
+### alpha.8：连续性审计与发布收口（当前开发阶段：`0.4.0a8`）
 
-`0.4.0a8` 是 v0.4 最后一个允许补充领域契约的 Alpha。它只补齐已经公开承诺、但尚未完整持久化的连续性审计证据；不再扩展关系算法、记忆类型或人格变化能力。
+`0.4.0a8` 是 v0.4 最后一个允许补充领域契约的 Alpha。它只补齐已经公开承诺、但尚未完整持久化的连续性审计证据，以及使这些审计状态真正生效所必需的最小来源权威过滤；该过滤不引入新的关系算法或记忆类型，a8 也不扩展人格变化能力。
 
 #### 连续性回执
 
-- 为最终被宿主交付的回复生成持久 `ContinuityReviewReceipt`；
+- 每个现代最终可见回复都原子绑定一个必需的 `ContinuityReviewRecord`；只有 `reviewed` 分支包含持久五轴 `ContinuityReviewReceipt`，`not_evaluated | failed` 分支如实保存有限状态而不伪造 Receipt；
+- 每个 `overridden | shown_unreviewed` 都携带版本化 `DeliveryExceptionRecord`：决策主体只允许 `host_policy | human_operator | data_owner`，交付理由只允许 `availability_fallback | configured_delivery_policy | out_of_band_judgment | preexisting_visible_exchange | legacy_turn_completion`；处置与主体的非法组合在写入前拒绝，技术评估失败分类继续只属于 Review Record；
 - 回执绑定 `relationship_id`、`turn_id`、最终回复指纹、交付处置、评估器描述符与确定性汇总策略版本；
 - 回执保存五轴 `ContinuityFinding` 的判定、严重度、原因代码、回复范围及精确依据引用；
+- 只有最终 `voice_style` Finding 实际使用的运行时表达激活才投影为不可重放 `VoiceActivationTrace`；Trace 不进入任何 Prompt、记忆或关系投影，并满足开关序列化不改变判定、交付与未来召回的观测非干扰不变量；
 - 评估草稿 A 的结果不得附着到最终回复 B；未展示草稿、完整 Prompt、模型内部推理与不可见工具输出不得持久化为回执；
 - Finding 必须保持 `Agent × User` 关系范围，跨关系依据引用在进入持久层前被拒绝；
 - 旧 Turn 缺少回执时显式表示 `legacy_unavailable`，不得根据当前模型或当前规则补造历史判断；
+- `legacy_unavailable` 可原样保留并展示旧 summary-only assessment，但废弃的 `continuity_assessment` 兼容属性对它返回 `None`；只有显式读取 `ContinuityReviewRecord.legacy_summary` 才能看到旧结论，避免旧 `COMPLETED/ALIGNED` 被误认成 a8 Receipt；
 - 回执只解释“当时为什么这样判定”，不能自动成为 MemoryNode、Relationship Event、Persona Reflection、Persona Growth 或关系数值变化的写入依据；
 - 回执随 Turn Record 原子保存，通过现有 Turn 查询 Interface 读取，不为每个 Finding 继续扩张 `ERIIEngine` 的顶层 Interface；
 - FileStorage、SQLiteStorage 与 MemoryPack 往返后必须保留相同的回执、版本、依据引用与关系隔离语义。
+- TDD 只通过四个已确认公开 seam 验证行为：Engine 生命周期与处理、Turn/MemoryPack wire、Structured/Legacy Recall、REST 翻译；两个 Storage Adapter 运行同一契约，不以私有调用或物理表结构作为正确性依据。
+
+#### 最小连续性例外隔离与情感中立
+
+- `shown`、`overridden` 与 `shown_unreviewed` 都保留 User 真正看到的完整 Source Transcript；未展示草稿仍不进入关系历史；
+- `overridden | shown_unreviewed` 中的 Agent 发言保留“当时确实说过”的事实地位及逐消息来源，但在没有后续正式处置能力的 a8 中保持权威隔离，不得静默进入普通 Persona、知识、承诺、反思、成长或自动关系跃迁依据；
+- 同轮 User 消息仍按普通来源规则处理，不能因为 Agent 回复异常而丢弃整轮，也不能把 User 自述自动提升为客观事实；
+- 现代 Timeline 与 Memory 候选必须以 `TurnMessage.message_id + TurnRecord.source_revision` 提供可由当前关系 Source Transcript 核验的消息级精确证据；schema `"2"` 强制显式 Unicode code-point `start/end`，不通过搜索 quote 猜测重复片段；持久产物只保留确定性 Evidence ID、消息身份、Source Turn revision、内核解析角色、哈希与范围，不复制引文正文；
+- 保留现有 `MemoryExtractorV1` 的 `descriptor + extract(request)` 调用接口，以 `ExtractorDescriptor.extraction_schema_version` 版本化返回语义：`"1"` 是只供 Legacy 识别与读取的无引用格式，`"2"` 是 a8 新归档提交必须显式声明的证据感知格式；不增加与 schema 重复的能力布尔值；
+- 升级时按持久阶段处理已有 schema `"1"` 工作：终态记录不变，未形成批次的 `EXTRACTION` 记录以不可重试 `extractor_schema_upgrade_required` 终结并要求 schema `"2"` 加新幂等键显式重提；只有完整绑定的 `COMMIT` 批次继续原子提交，结果保持 schema `"1"` 与 `legacy_unavailable` 消息依据；
+- 异常交付中只依赖 User 消息且通过普通事实规则的归档候选仍可提交；任何候选引用受隔离 Agent 消息时，整项 Archival Extraction Decision 在 Prepared Batch 形成前失败，不能静默裁剪，提取器只能重试或返回合法 `no_memory`；
+- 关系通道按候选独立隔离：引用异常 Agent 消息的候选以 `rejected + continuity_exception_agent_evidence_quarantined` 正常终结且不产生事件或状态副作用，合法 User-only 候选继续裁决；全部被拒时 Run 为 `completed + no_accepted_events`，不新增 pending 状态，也不伪装为技术失败；
+- 上述隔离只由 `overridden | shown_unreviewed` 交付事实触发，不检查发言情感极性；经过回滚或重生成后重新绑定最终文本、并以 `aligned | supported_new_choice + shown` 通过的拒绝、愤怒、疏远或伤害性选择属于普通 Source Turn，可按现有规则进入关系与记忆处理；
+- 召回按权威层级兼容旧数据：可证明绑定现代异常 Turn、却没有消息角色证据的产物标记为 `quarantined_history` 并从默认生成召回隔离；其他无法恢复现代证据链的旧产物作为显式 `legacy_context` 保留在 Agent-private 低权威分区，避免升级即失忆，但不参与强化、连续性依据、人格反思/成长或关系跃迁；
+- `legacy_context` 与 `quarantined_history` 都保持可检查、可标记、可导出和可删除；完整现代证据在权威使用与 Prompt 分区中优先，任何旧摘要都不能被内容猜测升级为普通权威；
+- 默认 `top_k` 是现代与 Legacy 的总上限：现代不足时 Legacy 按普通相关性填充，现代已占满且 `top_k >= 2` 时最多保留一个相关 Legacy 槽位，`top_k = 1` 时现代优先；精确内容重复只保留现代投影，并分别渲染 `Verified Memories` 与 `Legacy Context — provenance incomplete`；硬成本预算与必要 Persona/Relationship Context 始终优先；
+- 连续性汇总与交付回执保持情感效价中立：温柔、顺从和亲密不获得通过优待，拒绝、生气、疏远和造成伤害不构成 OOC 原因；
+- 契约测试同时覆盖“有充分依据的拒绝/冲突”和“无关系依据的甜蜜/承诺”，证明判定依赖人格与经历因果而非情绪正负；
+- a8 不实现例外解除、双轨回溯复核、双方立场、叙事张力解决、反思敏感性或成长联动，也不发布这些能力的空壳 API；完整纵向能力进入 `0.5.0a1`。
 
 #### 模块与发布收口
 
 - 从本阶段开始，不再向 `ERIIEngine` 增加新的顶层领域方法；新 Implementation 必须位于职责明确的深 Module 内，Engine 只作为组合入口和兼容门面；
-- 不在 v0.4 进行一次性“大拆 Engine”；只为连续性回执建立必要的内部 Seam，大规模 Portability 与 Storage Interface 重构留到 v0.5；
+- 不在 v0.4 进行一次性“大拆 Engine”；只为连续性回执与最小来源权威过滤建立必要的内部 Seam，大规模 Portability 与 Storage Interface 重构留到 v0.5；
 - `.[dev]` 的干净安装必须能够运行完整测试，包括 REST 合约测试；
 - 构建 wheel 与 sdist，检查包元数据，并分别在干净环境中执行 import、版本、CLI 与参考 REST 最小冒烟；
 - Git tag 去掉 `v` 后必须与包版本一致；Changelog、包版本和 GitHub Release 使用同一个发布身份；
@@ -175,9 +197,20 @@
 
 #### 退出条件
 
-- 最终回复与 Continuity Review Receipt 原子绑定，重试不会产生第二份互相矛盾的回执；
+- 最终回复与 Continuity Review Record 原子绑定；`reviewed` 分支中的 Receipt 与精确回复一致，重试不会产生第二份互相矛盾的审查记录；
 - 五轴 Finding、依据集合、评估器版本和汇总策略经过 File/SQLite/MemoryPack 往返保持一致；
 - 草稿错绑、跨关系引用、非法范围、未知未来版本和旧数据降级测试全部通过；
+- Legacy Turn 的旧 `COMPLETED/ALIGNED` 摘要经过 File/SQLite/MemoryPack 往返仍存在于 `legacy_summary`，但兼容属性始终为 `None`，且不能进入任何现代权威判断；
+- 新 Archival Submission 使用 schema `"1"`、未显式声明 schema `"2"` 或返回缺少消息级依据的现代候选时，在创建新的归档身份或队列任务前失败；
+- schema `"1"` 的终态、提取阶段、完整提交阶段及损坏提交阶段迁移测试证明旧身份不会搭载新提取结果、冻结批次不会被重采样、Legacy 产物不会获得现代证据身份；
+- 召回测试证明 pre-a8 Legacy 仍以 `legacy_context` 出现在 Agent-private 兼容分区且不被强化，已知现代异常来源的无角色产物不进入默认生成召回，两类内容都仍可检查、导出与删除；
+- `top_k=1`、现代不足、现代占满、无相关 Legacy、精确重复及硬成本不足测试分别证明现代优先、Legacy 渐进填充、最多一个预留槽、现代去重胜出和预算不被绕过；
+- 异常 Agent 发言无法未经显式处置获得普通记忆或关系权威，而同轮 User 证据仍可按原规则处理；
+- 混合候选批次、全隔离批次、依赖被拒候选及重复处理测试证明候选级拒绝不会污染独立 User-only 结果，并经 File/SQLite/MemoryPack 保留冻结候选、精确证据、稳定 reason code 与正常 Run 终局；
+- Timeline/Memory 候选的消息 ID、修订、角色、哈希与范围经过正常、悬空、错位、跨 Turn、异常 Agent 证据及 MemoryPack 往返测试；非法批次整体失败且不留下部分产物；
+- 重复 quote、缺失范围、UTF-8 多字节字符与 Unicode code-point 偏移测试证明 schema `"2"` 不依赖模糊文本搜索，也不会把字节偏移误当字符偏移；
+- 情感极性对照测试证明支持充分的拒绝可以通过、无依据的亲密可以被拒绝，连续性判定不退化为迎合度评分；
+- Voice Activation Trace 开关对同一冻结输入产生字节一致的 Finding、汇总结论与交付结果，并且后续召回输入不包含 Trace；离线诊断可读取它但不能反向修改运行时状态；
 - CI 从声明的开发依赖干净安装后通过全部测试、静态检查、编译和包安装冒烟；
 - `CONTEXT.md`、领域模型、ADR、README 与代码对“临时评估结果”和“持久审计回执”使用一致定义；
 - v0.4 功能冻结清单与非目标公开，并建立第一个可靠的不可移动 prerelease tag。
@@ -289,40 +322,86 @@
 - 安全或确定性数据损坏问题可以加速停用，但必须单独公告并提供可执行迁移措施；
 - 该维护线仍是“长期认真维护但不背 SLA”的开源内核；只有明确声明的兼容范围属于维护承诺。
 
-## v0.5.0：可解释的记忆与认知修订谱系
+## v0.5.0：关系后果、角色内在审视与可解释认知谱系
 
-v0.5 的目标不是增加更多“记忆类型”，而是回答：
+v0.5 先回答“角色真正经历了一件事以后如何继续活下去”，再回答“当前为什么相信这件事”。它不是增加更多孤立标签，而是建立以下可追溯链条：
 
-- 当前为什么相信这件事；
-- 它来自观察、用户自述还是推断；
-- 哪些证据支持或质疑它；
-- 旧理解何时被修正、替代或撤回；
-- 当前召回为什么采用新理解，而旧记录为什么仍可审计。
+- 一条未经审查或被显式覆盖但确实展示过的回复，如何保留事实而隔离人格权威；
+- 角色造成伤害、作出拒绝或坚持边界后，真实关系后果如何留下而不强制道歉、撤回或和好；
+- User Stance、Persona Stance 与共同 Relationship Outcome 如何分别取证，任何一方都不能替另一方填写内心；
+- 重大事件为什么触发角色审视，以及角色如何合法保持未知、矛盾或暂未形成结论；
+- 角色会对哪些威胁、愿望实现、主体性里程碑、关系意义与价值张力产生内在反应；
+- 当前认知来自观察、用户自述还是推断，哪些证据支持、质疑、替代或撤回它；
+- 当前召回为什么采用新理解，而旧事件、旧反思与旧判断为什么仍可审计。
 
-v0.5 是第一个有计划的兼容性变更版本，必须继续读取稳定 v0.4 数据并提供显式迁移路径。
+v0.5 是第一个有计划的兼容性变更版本，必须继续读取稳定 v0.4 数据并提供显式迁移路径。a8 只建立最小隔离；完整解除、关系后果和角色审视从 `0.5.0a1` 开始实现。后续认知谱系能力必须复用同一套追加历史与来源边界，不能另建互相冲突的“角色真值”账本。
 
-### alpha.1：提取 Portability 深 Module
+a8 与 v0.5a1 的桥接是显式追加而非状态升级：a8 的 `continuity_exception_agent_evidence_quarantined` 永久回答“当时为什么没有自动写入关系”；v0.5 由具备相应宿主能力的调用者创建新的 `historical_reprocessing` 身份，读取原 Turn、冻结候选、精确证据和 a8 Decision Receipt，再分别追加 Continuity Authority 与 Relationship Consequence 结论。没有显式新处理就保持隔离；任何 v0.5 结论都不得把 a8 的 `rejected` 改成 `accepted`。
+
+### alpha.1：关系后果与角色内在审视
+
+#### 连续性例外处置
+
+- 对 `overridden | shown_unreviewed` 建立追加式 `ContinuityExceptionResolution`，永不修改原 Turn、原交付处置、原审查状态或完整原文；
+- v0.5 以新的 `historical_reprocessing` 身份消费 a8 冻结的异常候选及 `rejected` Decision Receipt；新 Run、Resolution 与可能形成的 Relationship Event 都引用原身份，但不覆盖旧 Run、reason code 或批次指纹，也不在迁移时自动执行；
+- Continuity Authority 与 Relationship Consequence 两条复核轨道彼此独立：承认真实关系后果不能反证发言符合人设，后来的连续性认可也不能伪装成交付前已经审查；
+- Relationship Consequence 轨可引用后来发生且可解析的 User 反应来承认伤害、安慰、期待或误解；这些后见证据不能进入 Continuity Authority 轨，也不能使原异常发言自动成为 Persona 依据；
+- 对原本就通过交付前连续性审查的伤害性选择，v0.5 不需要例外“洗白”，而是在普通已接受历史上继续形成 Relationship Consequence、双方独立 Stance、Narrative Tension 与角色 Reflection Opportunity；角色可以道歉、解释、坚持边界、保持矛盾或结束关系，系统只保证记忆与后果连续，不指定修复方向；
+- 只有拥有现代 Turn Context Baseline 的技术性未评估回复与 `review_required` 回复可以普通回溯复核；`unsupported_drift`、有效权威撤销、无原始基线及 Legacy 数据只允许严格纠错或关系后果复核；
+- Historical Continuity Correction 必须证明旧评估器、汇总策略或权威决定存在缺陷，并只使用原 Turn 冻结依据；未来事件、后来成长与 Blueprint 新版本不得反向洗白旧回复；
+- 可信本地宿主以 `continuity_review_requester`、`persona_reviewer`、`relationship_reviewer` 与 `continuity_correction_authority` 能力声明约束操作；actor 声明只提供领域审计，不能冒充 v0.6 才完成的认证、授权与租户安全；
+- Agent、LLM、Evaluator 与聊天自然语言永远不能签发能力或批准自身结论。
+
+#### 关系后果、双方立场与张力
+
+- 连续性判断保持情感效价中立；有依据的拒绝、愤怒、疏远与关系结束按普通 Source Turn 处理，无依据的甜蜜、亲密与承诺同样可能被判定为漂移；
+- 已接受的伤害、安慰、拒绝、边界、期待与冲突进入追加式关系历史、有限状态投影与 Narrative Tension；连续性成立不免除后果，User 受伤也不强制角色道歉、撤回、原谅或复合；
+- 分别重建 User Stance Projection、Persona Stance Projection 与 Relationship Outcome Projection；User 只能表达自己的感受和期待，角色立场只来自正式反思及后续通过连续性审查的 Agent 选择；
+- Narrative Tension 通过显式引用后续事件投影为 `unaddressed | addressed_unresolved | mutually_reconciled | boundary_stabilized | relationship_ended | superseded`，不用单一可写 `resolved` 布尔值；
+- 道歉只证明角色尝试回应，User 原谅只证明 User 立场；共同和解需要双方证据，合法边界与关系终结不要求另一方同意，也不会删除其受伤或反对；
+- 关闭或转化张力不恢复冲突前数值、不删除原事件，也不能由时间流逝、一次无关温柔互动或 Reviewer 偏好自动完成。
+
+#### 角色审视与敏感性
+
+- Persona Reflection Decision 扩展为严格 `reflection | stance_unformed | no_reflection`，技术失败继续独立；未知内心不得伪装成无意义或标准化悔意；
+- Reflection Trigger Policy 组合全局结构性底线与获准 Reflection Sensitivity Profile，只保证重大事件获得一次审视机会，不规定反思结论；
+- 全局底线覆盖关系建立/终结、重要承诺、重大边界、核心价值冲突、持续关系后果与有证据的重大选择变化；
+- 角色敏感性必须逐项引用 Blueprint、Formative Experience、获准 Manifest 或已批准 Growth，并同时检查 `threat_or_violation | fulfillment | agency_milestone | relationship_meaning | value_tension` 五类来源；
+- Sensitivity Coverage Report 只报告支持、歧义与缺口，不是人格完整度评分，也不能为了平衡而自动补积极或创伤标签；
+- `stance_unformed` 只在后续真实事件支持 Reinterpretation 时变化，不运行隐藏定时器，也不重复采样同一冻结事件来刷出方便结论；
+- 异常关系后果可以进入角色后续面对与修复的因果链，但异常发言本身不能直接定义 Persona 或触发 Growth；重要成长仍需角色后续通过审查的主动选择与现有审批边界。
+
+#### Implementation、携带与退出条件
+
+- 新能力进入职责单一的深 Module，并拥有自己的窄内部 Store Interface；不恢复向 `ERIIEngine` 逐项增加顶层方法的做法；
+- FileStorage、SQLiteStorage 与 MemoryPack 保留原 Turn、完整有序 Resolution 链、逐消息例外来源、双方立场来源、张力引用、反思三态、敏感性版本与精确 Persona 依据；
+- v0.4 数据保持可读；缺少现代基线、逐消息来源或角色反思依据时显式 `legacy_unavailable` 或未知，不按当前内容猜测；
+- 导入在首次写入前拒绝悬空、跨关系、冲突或未知版本引用，删除 Relationship 时清除对应处置、张力、立场来源与敏感性关系数据；
+- 集成测试至少覆盖：支持充分的伤害性回复、无依据的讨好回复、异常发言造成真实伤害、User 单方原谅但角色坚持边界、角色私下后悔但尚未公开修复、共同和解、合法关系终结、未形成立场及正向主体性里程碑；
+- alpha.1 完成不表示公开服务安全；在 v0.6 前，处置能力只能位于可信宿主边界之后。
+
+### alpha.2：提取 Portability 深 Module
 
 - 将导出、导入、重映射、格式验证、身份冲突检查和合并裁决从 `ERIIEngine` 移入独立 Portability Module；
 - 对外 Interface 只保留少量高杠杆操作，例如 `export()`、`inspect_import()` 与 `import_pack()`；
 - Engine 的旧方法暂时委托新 Module，调用方不需要理解导入流程中的全部 Implementation；
 - Portability 的测试通过其 Interface 覆盖 FileStorage、SQLiteStorage 与内存测试 Adapter，不继续依赖 Engine 内部方法。
 
-### alpha.2：建立 Module 自有的窄 Storage Interface
+### alpha.3：建立 Module 自有的窄 Storage Interface
 
 - 以真实变化点建立 `TurnStore`、`RelationshipJournalStore`、`MemoryRelationStore` 等窄 Interface；
 - FileStorage 与 SQLiteStorage 作为两个真实 Adapter 共同验证 Seam，测试使用最小内存 Adapter；
 - 停止为每项新能力继续扩张通用 BaseStorage；
 - 新 Module 的测试以 Interface 可观察结果为准，不穿透 Interface 绑定内部表结构。
 
-### alpha.3：Belief Lineage 只读投影
+### alpha.4：Belief Lineage 只读投影
 
 - 从不可变 Relationship Event 中的 Belief Update 重建每个 key 的 SET、RETRACT、来源事件、有效版本与当前值；
 - Current Belief 保持可重建投影，不升级成第二本可冲突的权威账本；
 - 初始版本不新增数据库表，先证明历史投影与 v0.4 Current Belief 逐事件等价；
 - 前端可查询“当前认知”和“完整修订链”，但标签不反向改变关系状态。
 
-### alpha.4：追加式 Memory Relation 账本
+### alpha.5：追加式 Memory Relation 账本
 
 - 新关系记录引用既有 MemoryNode，而不是原地改写旧 Node；
 - 初始关系类型至少包括 `supports`、`contradicts` 与 `supersedes`；
@@ -330,7 +409,7 @@ v0.5 是第一个有计划的兼容性变更版本，必须继续读取稳定 v0
 - 现有 `is_latest` 与 `superseded_by` 作为旧快照兼容字段，不得被宣传为已经具有追加式谱系；
 - 旧数据迁移保留 `legacy_unavailable`，不能根据当前相似度伪造过去的支持或冲突关系。
 
-### alpha.5：拆分来源、支持与生命周期语义
+### alpha.6：拆分来源、支持与生命周期语义
 
 - 来源性质：`observed | reported | inferred`；
 - 支持状态：`single_source | corroborated | contested`；
@@ -339,7 +418,7 @@ v0.5 是第一个有计划的兼容性变更版本，必须继续读取稳定 v0
 - 模型置信度只描述提取输出，不直接授予事实、记忆、关系或人格写入权；
 - 支持、质疑、替代和撤回均保留精确来源引用与可重放规则。
 
-### alpha.6：Continuity / Uncertainty Map
+### alpha.7：Continuity / Uncertainty Map
 
 - 建立独立、可重建、只读的 `ContinuityMapProjector`，不把长期地图塞进负责单轮回复评估的 Continuity Module；
 - 地图聚合：
@@ -355,14 +434,19 @@ v0.5 是第一个有计划的兼容性变更版本，必须继续读取稳定 v0
 ### v0.5 兼容变更与退出条件
 
 - 删除已经在 v0.4 完整弃用的 `remember()` 等旧入口；
-- Portability、Belief Lineage、Memory Relation 与 Continuity Map 不需要继续向 `ERIIEngine` 增加顶层方法；
+- Continuity Exception Resolution、关系后果、双方立场、张力、反思敏感性、Portability、Belief Lineage、Memory Relation 与 Continuity Map 均不需要继续向 `ERIIEngine` 增加顶层方法；
+- 原 Turn 的审查与交付事实在任何例外处置后仍保持不可变，Resolution 链经过 File/SQLite/MemoryPack 往返可确定性重建；
+- User Stance 与 Persona Stance 的来源严格分离；User 文本、Reviewer 偏好与关系结果不能写入角色内心，角色私下反思也不能冒充已向 User 作出的修复；
+- Narrative Tension 的和解、边界稳定与关系终结保留不同语义，关闭张力不删除原伤害、不恢复旧数值；
+- `reflection | stance_unformed | no_reflection | failure` 经存储、迁移与携带保持可区分，未形成立场不会因时间经过自动变化；
+- Reflection Sensitivity Profile 的每项触发都可解析到获准 Persona 依据，Coverage 缺口不会触发自动补全；
 - Belief 当前投影与旧实现逐事件等价，旧事件仍完整可审计；
 - Memory supersession 不修改原 MemoryNode；
 - contradiction、supersession 与 retraction 具有彼此独立的语义和测试；
 - Source Nature、Support State 与 Lifecycle State 不合并为一个含混状态字段；
 - Continuity Map 可由 v0.5 MemoryPack 确定性重建，并且无法反向修改关系状态；
 - v0.4 的迁移、关系隔离、回放、删除和长期评测硬门槛继续通过；
-- 真实模型评测将 Continuity Evaluator 与裁判分离，并分别报告五轴指标、无依据记忆、纠正恢复、关系泄漏与人工自然度，不发布单一含混的“OOC 总分”。
+- 真实模型评测将 Continuity Evaluator、Persona Reflection Interpreter 与裁判分离，并分别报告五轴指标、情感效价偏置、无依据记忆、纠正恢复、双方立场串写、关系泄漏、反思强制度与人工自然度，不发布单一含混的“OOC 总分”。
 
 ## v0.6.0：可信部署与完整安全边界
 
@@ -390,7 +474,7 @@ v0.6 处理“可信宿主如何把内核部署成服务”，而不是把角色
 - 认证、授权、密钥操作、导入、导出、删除和管理员动作进入不含聊天正文的安全审计日志；
 - 永久删除覆盖主存储、派生投影、队列副本、缓存、备份生命周期与外部处理方清单；
 - 备份恢复不得绕过租户隔离，也不得把已删除数据无提示地重新带回在线系统；
-- 参考服务增加限流、请求大小限制、超时、资源配额、依赖更新与安全响应流程；
+- 在 v0.4 已有的基础请求/导入上限与服务所有者 Key 之上，增加按身份限流、可配置超时、资源配额、依赖更新与安全响应流程；
 - 建立正式威胁模型，并在宣称可公开部署前完成独立安全复核。
 
 ### v0.6 退出条件
@@ -453,6 +537,9 @@ v1.0 不是“功能足够多”，而是项目已经能够可靠承担真实用
 - 每个 `Agent × User` 关系独立，原作关系与当前用户关系默认分离；
 - Source Transcript 证明“双方实际说过什么”，不自动证明内容为事实或人格变化；
 - Relationship Event 是关系状态的权威追加历史；Current Belief、Relationship State、Episode、Chapter 与 Continuity Map 是可重建投影；
+- 连续性判断与情感效价、User 满意度和产品安全策略相互独立；有依据的拒绝可以成立，无依据的温柔也可以漂移；
+- User 只能提供自身立场与经历的证据，角色内心只来自获准人格、正式反思及通过连续性审查的角色选择；共同关系结果不能由任一方单独填写；
+- 角色必须记住自己行为造成的已接受后果，但内核不强制道歉、原谅、撤回边界、复合或维持关系；
 - 普通关系状态可以自动、渐进更新；核心人格变化或巨大跃迁只形成提案，由宿主在对话外显式决定；
 - 模型输出、用户可见标签、多模型投票和置信度都不能单独授权权威写入；
 - 完整聊天默认长期保留，但用户必须拥有可验证的导出和永久删除能力。

@@ -37,9 +37,12 @@ from erii.core.continuity import (
     RelationshipSafetySignalProjector,
     VoicePatternMatcher,
 )
+from erii.core.continuity_evidence import (
+    ContinuityEvidenceRefValue,
+    ContinuityEvidenceResolver,
+)
 from erii.core.persona_context import (
     PersonaManifestRequiredError,
-    active_persona_manifest,
     validate_persona_premise_binding,
 )
 from erii.core.relationship_processing import RelationshipProcessingCoordinator
@@ -48,6 +51,10 @@ from erii.core.persona_compilation import PersonaCompiler
 from erii.core.recall import RecallAssembler
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.core.turn_ledger import TurnLedger
+from erii.core.turn_context import (
+    resolve_turn_context_authorities,
+    resolve_turn_context_history,
+)
 from erii.core.queue.base import BaseTaskQueue
 from erii.core.queue.persistent_queue import PersistentTaskQueue
 from erii.models.config import ERIIConfig
@@ -97,6 +104,7 @@ from erii.models.continuity import (
     InteractionContextEvaluatorV1,
     VoicePatternActivation,
 )
+from erii.models.continuity_review import DeliveryExceptionRecord
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
 from erii.models.pack import MemoryPack
 from erii.models.persona import (
@@ -250,7 +258,11 @@ class ERIIEngine:
             dynamic_budget=self.config.dynamic_budget,
         )
         self.relationship_adjudicator = RelationshipAdjudicator(self.storage)
-        self.turn_ledger = TurnLedger(self.storage)
+        self.continuity_evidence_resolver = ContinuityEvidenceResolver(self.storage)
+        self.turn_ledger = TurnLedger(
+            self.storage,
+            evidence_resolver=self.continuity_evidence_resolver,
+        )
         self.memory_extractor = memory_extractor
         self.relationship_event_extractor = relationship_event_extractor
         self.persona_reflection_interpreter = persona_reflection_interpreter
@@ -397,7 +409,11 @@ class ERIIEngine:
         if self.config.enable_security_sanitizer:
             query = SecuritySanitizer.sanitize_text(query)
 
-        nodes = self.storage.load_nodes(clean_agent, clean_user)
+        nodes = [
+            node
+            for node in self.storage.load_nodes(clean_agent, clean_user)
+            if node.node_type != MemoryType.INSTRUCTION
+        ]
         nodes = self.decay_evaluator.sweep_nodes(nodes)
         selected_nodes = self.retriever.retrieve_relevant_nodes(
             query=query,
@@ -673,6 +689,10 @@ class ERIIEngine:
         continuity_assessment: Optional[
             Union[ReplyContinuityAssessment, Mapping[str, object]]
         ] = None,
+        continuity_result: Optional[ContinuityEvaluationResult] = None,
+        delivery_exception: Optional[
+            Union[DeliveryExceptionRecord, Mapping[str, object]]
+        ] = None,
         delivery_disposition: Union[
             DeliveryDisposition,
             str,
@@ -688,6 +708,8 @@ class ERIIEngine:
             turn_id,
             agent_message,
             continuity_assessment=continuity_assessment,
+            continuity_result=continuity_result,
+            delivery_exception=delivery_exception,
             delivery_disposition=delivery_disposition,
             processing_channels=(
                 processing_channels
@@ -729,10 +751,13 @@ class ERIIEngine:
         continuity_assessment: Optional[
             Union[ReplyContinuityAssessment, Mapping[str, object]]
         ] = None,
+        delivery_exception: Optional[
+            Union[DeliveryExceptionRecord, Mapping[str, object]]
+        ] = None,
         delivery_disposition: Union[
             DeliveryDisposition,
             str,
-        ] = DeliveryDisposition.SHOWN,
+        ] = DeliveryDisposition.SHOWN_UNREVIEWED,
         processing_channels: Optional[
             Sequence[Union[SourceProcessingChannel, str]]
         ] = None,
@@ -745,6 +770,7 @@ class ERIIEngine:
             agent_message,
             turn_id=turn_id,
             continuity_assessment=continuity_assessment,
+            delivery_exception=delivery_exception,
             delivery_disposition=delivery_disposition,
             processing_channels=(
                 processing_channels
@@ -1149,11 +1175,12 @@ class ERIIEngine:
         manifest: PersonaManifest,
         host_signals: Sequence[InteractionContextSignal],
     ) -> Tuple[InteractionContextSignal, ...]:
-        events = tuple(
-            list_complete_relationship_events(
-                self.storage,
-                profile.relationship_id,
-            )
+        if turn.context_baseline is None:
+            raise ValueError("voice context requires a Turn Context Baseline")
+        events = resolve_turn_context_history(
+            self.storage,
+            profile,
+            turn.context_baseline,
         )
         snapshot = RelationshipProjector.project(profile, events)
         derived = []
@@ -1166,6 +1193,9 @@ class ERIIEngine:
                 RelationshipSafetySignalProjector.project(
                     snapshot,
                     source_turn_id=turn.turn_id,
+                    history_prefix_fingerprint=(
+                        turn.context_baseline.history_prefix_fingerprint
+                    ),
                 )
             )
 
@@ -1215,21 +1245,31 @@ class ERIIEngine:
             raise TurnConflictError(
                 "contextual voice activation is only valid before turn delivery"
             )
-        manifest = active_persona_manifest(self.storage, profile)
-        if manifest is None:
+        baseline = turn.context_baseline
+        if baseline is None or baseline.manifest is None:
             raise PersonaManifestRequiredError(
-                "contextual voice activation requires an approved Manifest "
-                "pinned to this relationship"
+                "contextual voice activation requires a Manifest frozen at "
+                "Turn Opening"
             )
+        try:
+            manifest, _ = resolve_turn_context_authorities(
+                self.storage,
+                profile,
+                baseline,
+            )
+        except ValueError as exc:
+            raise PersonaManifestRequiredError(str(exc)) from exc
         turn_signals = tuple(
             signal
             for signal in turn.interaction_context
             if signal.source == ContextSignalSource.HOST_OBSERVED
         )
         extra_signals = self._host_observed_context(interaction_context)
-        host_signals = self._deduplicate_context_signals(
-            (*turn_signals, *extra_signals)
-        )
+        if extra_signals:
+            raise ValueError(
+                "host interaction context must be persisted by begin_turn()"
+            )
+        host_signals = self._deduplicate_context_signals(turn_signals)
         derived_signals = self._derive_voice_context_signals(
             profile,
             turn,
@@ -1243,6 +1283,7 @@ class ERIIEngine:
             persona_id=profile.persona_id,
             premise=profile.premise,
             signals=(*host_signals, *derived_signals),
+            context_baseline_fingerprint=baseline.baseline_fingerprint,
         )
 
     def evaluate_reply_continuity(
@@ -1252,8 +1293,8 @@ class ERIIEngine:
         source_turn_id: str,
         proposed_reply: str,
         *,
-        persona_context_refs: Sequence[str],
-        relationship_context_refs: Sequence[str] = (),
+        persona_context_refs: Sequence[ContinuityEvidenceRefValue],
+        relationship_context_refs: Sequence[ContinuityEvidenceRefValue] = (),
         interaction_context: Sequence[
             Union[InteractionContextSignal, Mapping[str, Any]]
         ] = (),
@@ -1274,12 +1315,34 @@ class ERIIEngine:
             raise TurnConflictError(
                 "reply continuity evaluation is only valid before turn delivery"
             )
-        manifest = active_persona_manifest(self.storage, profile)
-        if manifest is None:
+        baseline = turn.context_baseline
+        if baseline is None or baseline.manifest is None:
             raise PersonaManifestRequiredError(
-                "reply continuity evaluation requires an approved Manifest "
-                "pinned to this relationship"
+                "reply continuity evaluation requires a Manifest frozen at "
+                "Turn Opening"
             )
+        try:
+            manifest, _ = resolve_turn_context_authorities(
+                self.storage,
+                profile,
+                baseline,
+            )
+        except ValueError as exc:
+            raise PersonaManifestRequiredError(str(exc)) from exc
+        resolved_persona_refs = (
+            self.continuity_evidence_resolver.resolve_persona_refs(
+                profile,
+                baseline,
+                persona_context_refs,
+            )
+        )
+        resolved_relationship_refs = (
+            self.continuity_evidence_resolver.resolve_relationship_refs(
+                profile,
+                baseline,
+                relationship_context_refs,
+            )
+        )
         activations = self.activate_contextual_voice_patterns(
             agent_id,
             user_id,
@@ -1293,8 +1356,9 @@ class ERIIEngine:
             user_message=turn.transcript.user_message.content,
             proposed_reply=proposed_reply,
             persona_manifest_id=manifest.manifest_id,
-            persona_context_refs=tuple(persona_context_refs),
-            relationship_context_refs=tuple(relationship_context_refs),
+            context_baseline_fingerprint=baseline.baseline_fingerprint,
+            persona_context_refs=resolved_persona_refs,
+            relationship_context_refs=resolved_relationship_refs,
             voice_pattern_activations=tuple(activations),
         )
         return ContinuityEvaluationCoordinator.evaluate(request, evaluator)
@@ -2375,6 +2439,8 @@ class ERIIEngine:
         else:
             pack = pack_or_path
 
+        self._validate_memory_pack_node_types(pack)
+
         target_agent = agent_id or pack.agent_id
         target_user = user_id or pack.user_id
         clean_agent = SecuritySanitizer.validate_key(target_agent, "agent_id")
@@ -2457,6 +2523,7 @@ class ERIIEngine:
         else:
             pack = pack_or_path
 
+        self._validate_memory_pack_node_types(pack)
         self._validate_temporal_pack(pack)
         self._validate_persona_growth_pack(pack)
 
@@ -3069,6 +3136,14 @@ class ERIIEngine:
                 references.append(payload.superseding_open_loop_event_id)
             return tuple(references)
         return ()
+
+    @staticmethod
+    def _validate_memory_pack_node_types(pack: MemoryPack) -> None:
+        """Rejects non-persistable command directives before import writes."""
+        if any(node.node_type == MemoryType.INSTRUCTION for node in pack.nodes):
+            raise ValueError(
+                "MemoryPack instruction nodes cannot be imported into long-term memory"
+            )
 
     @classmethod
     def _validate_temporal_pack(cls, pack: MemoryPack) -> None:

@@ -15,6 +15,19 @@ from erii import (
 )
 
 server_module = importlib.import_module("erii.server.app")
+TEST_API_KEY = "test-archival-rest-key-1234567890"
+
+
+def _visible_exchange_delivery_exception():
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests.archival-fixture-host",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-08-01T00:00:00+00:00",
+        "reply_attempt_number": None,
+    }
 
 
 class NoMemoryExtractor:
@@ -46,13 +59,19 @@ class ArchivalRestPublicTests(unittest.TestCase):
             "Thank you.",
             "You are welcome.",
             turn_id="turn-rest-archive",
+            delivery_exception=_visible_exchange_delivery_exception(),
         )
         server_module._engine = self.engine
-        self.client = TestClient(server_module.app)
+        server_module.configure_server_access(TEST_API_KEY)
+        self.client = TestClient(
+            server_module.app,
+            headers={"X-API-Key": TEST_API_KEY},
+        )
 
     def tearDown(self):
         self.client.close()
         server_module._engine = None
+        server_module.configure_server_access(None)
         self.engine.close()
 
     def test_submit_query_and_process_archival_without_exposing_transcript(self):

@@ -27,6 +27,7 @@ from erii.models.relationship import (
     RelationshipProfile,
 )
 from erii.models.turn import ReplyAttemptRecord, TurnRecord, TurnStatus
+from erii.models.turn_context import TurnContextBaseline
 from erii.models.archival import ArchivalTombstone, TimelineEntry
 from erii.models.consolidation import (
     PersonaReflectionDecisionRecord,
@@ -34,6 +35,7 @@ from erii.models.consolidation import (
     RelationshipProcessingRun,
 )
 from erii.storage.archival import AtomicArchivalStoreV1
+from erii.storage.turn_context import TurnContextSourceSnapshot
 
 
 class KeyLockManager:
@@ -166,6 +168,21 @@ class BaseStorage(ABC):
             relationship_id,
         ):
             yield
+
+    def capture_turn_context_source(
+        self,
+        profile: RelationshipProfile,
+    ) -> TurnContextSourceSnapshot:
+        """Reads every authority and history source from one coherent snapshot.
+
+        Modern Turn opening must fail closed when an adapter cannot provide
+        snapshot isolation.  A compatibility composition of the legacy
+        ``get``/``list`` methods would allow a baseline that never existed in
+        storage, so this interface deliberately has no such fallback.
+        """
+        raise NotImplementedError(
+            "storage adapter does not support coherent Turn Context snapshots"
+        )
 
     @abstractmethod
     def save_nodes(
@@ -401,6 +418,25 @@ class BaseStorage(ABC):
     ) -> TurnRecord:
         """Atomically applies one first-writer-wins turn lifecycle transition."""
         raise NotImplementedError("storage adapter does not support turn recording")
+
+    def transition_reviewed_turn_record(
+        self,
+        profile: RelationshipProfile,
+        record: TurnRecord,
+        context_baseline: TurnContextBaseline,
+        expected_status: TurnStatus,
+        expected_record_version: int,
+    ) -> TurnRecord:
+        """Atomically revalidates opening authority and seals a reviewed Turn.
+
+        This has no compatibility composition from point reads followed by
+        ``transition_turn_record``: such a fallback would reopen a revocation
+        race. Modern reviewed delivery therefore fails closed for adapters
+        that have not implemented this capability.
+        """
+        raise NotImplementedError(
+            "storage adapter does not support atomic reviewed Turn transitions"
+        )
 
     def append_reply_attempt(self, attempt: ReplyAttemptRecord) -> ReplyAttemptRecord:
         """Appends sanitized metadata for one failed reply attempt."""

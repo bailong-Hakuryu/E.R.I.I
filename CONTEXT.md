@@ -12,33 +12,93 @@ _Avoid_: 核心人格记忆、Core Memory、系统提示词
 角色从 Character Blueprint 与 Formative Experience 出发，在一段 Persona Instance 中因真实经历形成可追溯变化、同时保持心理与经历因果一致性的生命延续；它允许成长，但不等同于冻结原作状态或无依据地改变人格。
 _Avoid_: 静态人设复刻、表面口癖一致、无因人格漂移
 
+**Affective Valence Neutrality（情感效价中立）**：
+连续性判断只检验角色身份价值、心理因果、关系边界、知识记忆与表达方式是否有依据，不把温柔、顺从、亲密或令 User 愉快视为正确，也不把拒绝、生气、疏远、冲突或造成伤害视为 OOC。发言是否延续角色与它给关系带来何种后果是两项正交判断：甜蜜表达也可能无依据漂移，尖锐表达也可能是角色在当时唯一诚实的选择。
+_Avoid_: 情感正负分类器、讨好用户、温柔即正确、拒绝即错误、生气即 OOC、以关系伤害反推人格漂移
+
 **Continuity Basis（连续性依据）**：
 在一项角色行为或重要变化形成时已经存在的 Character Blueprint、Formative Experience、关系历史，或当下可观察的明确转折情境；行为发生后临时编造的理由不能反向成为其依据。
 _Avoid_: 事后合理化、无来源成长、先漂移后补记忆
 
+**Continuity Evidence Reference（连续性依据引用）**：
+对一项权威 Continuity Basis 的类型化稳定引用；内核必须能由引用解析原记录，并验证其属于当前 Character、获准 Manifest 或当前 `Agent × User` 关系，才能让它进入成功的 Continuity Review Receipt。派生投影可以帮助评估器理解上下文，但必须引用其背后的权威来源，不能循环证明自身；宿主提供的名称、描述或自报范围不是归属证明。
+_Avoid_: 任意字符串、显示标签、宿主自报 relationship_id、跨关系白名单、派生投影自证
+
 **Continuity Evaluator Capability（连续性评估器能力）**：
-由宿主提供具体实现、由内核定义并编排的版本化交付前能力；它根据拟展示的 Agent 回复、当前 User 消息与获准的人格和关系上下文生成严格 Reply Continuity Assessment。评估器只能指出依据、张力和冲突，不能改写台词、批准人格成长或伪造经历。
-_Avoid_: 回复生成器、自动润色器、Persona Growth 审批器、事后开脱器
+由宿主提供具体实现、由内核定义并编排的版本化交付前能力；它根据拟展示的 Agent 回复、当前 User 消息与获准的人格和关系上下文生成严格 Reply Continuity Assessment。评估器只能指出依据、张力和冲突，不能改写台词、批准人格成长、伪造经历，或把情感正负与 User 是否满意当作连续性结论。
+_Avoid_: 回复生成器、自动润色器、Persona Growth 审批器、事后开脱器、情绪审查器、迎合度评分器
 
 **Reply Continuity Assessment（回复连续性评估）**：
-对一条尚未展示的 Agent 回复作出的有来源判别；Continuity Evaluator 先分别提出结构化 Continuity Finding，内核再用版本化 Continuity Aggregation Policy 汇总为 `aligned`、`supported_new_choice`、`review_required` 或 `unsupported_drift`。结果保存非敏感版本与依据引用，但不保存评估 Prompt 或模型内部推理。
-_Avoid_: 人格真值、关系状态变化、模型直接指定总结果、无依据置信分数
+对一条尚未展示的 Agent 回复作出的有来源判别；Continuity Evaluator 先分别提出结构化 Continuity Finding，内核再用版本化 Continuity Aggregation Policy 汇总为 `aligned`、`supported_new_choice`、`review_required` 或 `unsupported_drift`。它也可以如实表示评估未执行或失败，但不能把这种状态冒充已经通过审查；临时判别本身不是与最终可见回复绑定的持久审计回执。
+_Avoid_: 人格真值、关系状态变化、模型直接指定总结果、无依据置信分数、把评估失败写成评估通过
+
+**Continuity Evaluation Result（连续性评估结果）**：
+Continuity Evaluator 的五轴 Findings 经内核确定性汇总后形成的临时、自绑定结果；它只属于一个明确的 Relationship、open Turn、Persona Instance、获准 Manifest、User 消息和拟交付回复。只有完整 Result 才能在最终文本一致时封存为成功审查回执，单独的 Reply Continuity Assessment 不能代替它。
+_Avoid_: Continuity Review Receipt、裸总判定、可跨草稿复用的批准、持久关系事实
+
+**Continuity Review Receipt（连续性审查回执）**：
+与一个 completed Turn 中最终可见 Agent 回复原子绑定的持久审计事实；它保留当时的五轴 Findings、交付处置、评估器和汇总策略身份及非敏感依据引用，用于解释“当时为什么这样判定”。它不保存未展示草稿、Prompt 或模型推理，也不能自动成为记忆、关系状态或人格成长的写入权威。
+_Avoid_: Continuity Evaluation Result、Reply Continuity Assessment、第二本回复账本、人格变化许可
+
+**Continuity Review Record（连续性审查记录）**：
+每个现代 completed Turn 必有且仅有的判别联合体，明确表示 `reviewed`、`not_evaluated`、`failed` 或只读 `legacy_unavailable`；成功分支拥有完整 Continuity Review Receipt，其他分支如实保存有限原因或旧摘要，不能用空字段相互冒充。旧 `continuity_assessment` 只是由它派生的废弃兼容视图；现代三类可派生对应状态，而 `legacy_unavailable` 必须返回 `None`，其原始 a7 摘要只从显式 `legacy_summary` 读取，不能再表现为现代 `COMPLETED`。
+_Avoid_: 可空字段猜测、第二份可写 Assessment、现代数据自动降级为 Legacy、裸 completed verdict
 
 **Continuity Finding（连续性发现）**：
 Continuity Evaluator 针对 `identity_values`、`psychological_causality`、`relationship_scope`、`knowledge_memory_scope` 或 `voice_style` 单独提出的有来源发现；每项标明相关回复片段、Continuity Basis 或冲突依据、严重度与可机读原因码，不以一个轴的偏差替代另一个轴的判断。
 _Avoid_: 单一 OOC 分数、自由文本总评、把口癖偏差当人格背叛、无引用冲突
 
 **Continuity Aggregation Policy（连续性汇总策略）**：
-内核把多个 Continuity Finding 确定性汇总为 Reply Continuity Assessment 的版本化规则；关系串线、错误亲密继承和不可知信息属于硬冲突，核心人格或因果张力按已有依据路由为受支持新选择、待审查或无依据漂移，单独的 `voice_style` 偏差最多产生风格修订建议。宿主可以因产品风格要求重新生成，但不能把该选择记为人格漂移。
-_Avoid_: LLM 自选最终标签、隐藏阈值、风格模板执法、用产品文案偏好改写历史
+内核把多个 Continuity Finding 确定性汇总为 Reply Continuity Assessment 的版本化规则；关系串线、错误亲密继承和不可知信息属于硬冲突，核心人格或因果张力按已有依据路由为受支持新选择、待审查或无依据漂移，单独的 `voice_style` 偏差最多产生风格修订建议。汇总不得读取“正面/负面”“让 User 开心/受伤”等情感效价作为通过或拒绝条件；宿主可以因产品风格要求重新生成，但不能把该选择记为人格漂移。
+_Avoid_: LLM 自选最终标签、隐藏阈值、风格模板执法、用产品文案偏好改写历史、正向偏置、拒绝惩罚
 
 **Continuity Delivery Gate（连续性交付门）**：
-宿主在向 User 展示 Agent 回复前应用 Reply Continuity Assessment 的边界；正式产品默认允许 `aligned` 与 `supported_new_choice`，暂缓 `review_required` 与 `unsupported_drift`，由宿主重新生成或在对话外显式处理。内核库提供判断与回执，但不自行控制界面或启动隐藏工作。
-_Avoid_: Source Acceptance、聊天内用户批准、静默放行、内核直接发送消息
+宿主在向 User 展示 Agent 回复前应用 Reply Continuity Assessment 的边界；正式产品默认允许 `aligned` 与 `supported_new_choice`，暂缓 `review_required`、`unsupported_drift`、未评估与评估失败，优先重试、重新生成或在对话外显式处理。内核库提供判断、状态与回执但不自行控制界面；宿主仍可显式交付未经成功评估的回复，此时 Turn 必须如实保存 `not_evaluated` 或 `failed`，且该回复不得自动成为 Continuity Basis、Persona Reflection、Persona Growth 或关系跃迁依据。
+_Avoid_: Source Acceptance、聊天内用户批准、静默放行、把失败伪装成通过、内核直接发送消息
+
+**Unreviewed Delivery（未完成审查交付）**：
+Continuity Evaluator 未配置、评估失败或已冻结人格权威在交付前被撤销后，宿主仍通过 `shown_unreviewed` 显式向 User 展示回复的事实；它保留真实 Source Transcript 和明确的 `not_evaluated | failed` 状态，但不声称回复通过了连续性审查。它不同于 `overridden`，后者要求评估已经完成且宿主展示的是同一条已评估文本。
+_Avoid_: 审查通过、策略覆盖、Legacy Unavailability、丢弃真实聊天历史
+
+**Delivery Disposition（交付处置）**：
+completed Turn 对最终可见回复如何越过 Continuity Delivery Gate 的持久事实：`shown` 仅用于 `aligned | supported_new_choice`，`overridden` 仅用于宿主显式展示同一条 `review_required | unsupported_drift` 回复，`shown_unreviewed` 仅用于没有有效成功审查但仍被展示的回复。被暂缓、丢弃或替换的草稿没有交付处置，也不进入 Source Transcript。
+_Avoid_: withheld 草稿状态、把失败写成 shown、修改回复后复用 Result、Legacy Unavailability
+
+**Delivery Exception Record（交付例外记录）**：
+随 `overridden | shown_unreviewed` 保存的结构化、非敏感决策事实，区分 `host_policy | human_operator | data_owner` 中的声明主体与宿主选择例外交付的稳定理由。它不重复 Continuity Review Record 的技术失败原因，不保存自由文本、Prompt 或凭据，也不构成身份认证或人格变化授权。
+_Avoid_: 错误日志、自由文本开脱、认证凭证、聊天内临时同意、人格成长审批、把评估故障原因混成交付理由、Agent 或 Evaluator 自行授权
+
+**Continuity Exception Quarantine（连续性例外隔离）**：
+对 `overridden | shown_unreviewed` 中实际可见 Agent 发言采用的来源权威边界：完整原文继续作为共同经历保存，但它只能证明“Agent 当时说过”，不能未经显式复核就成为角色事实、知识、稳定态度、承诺、Continuity Basis、Persona Reflection、Persona Growth 或自动关系跃迁的依据。处理器仍可分别处理同轮 User 消息，并可提出依赖异常发言的历史或关系候选，但必须保留消息角色与例外来源，禁止自动赋予普通记忆或关系权威。
+_Avoid_: 删除真实对话、整轮停止处理、OOC 自我强化、把历史发言当人格真值、忽略用户受到的真实关系影响
+
+**Quarantined Relationship Candidate Outcome（隔离关系候选终局）**：
+a8 对引用任意 `overridden | shown_unreviewed` Agent 消息的 Relationship Event Candidate 作出的候选级正常拒绝；触发条件只来自持久交付处置，绝不来自发言是否温柔、拒绝、生气、疏远或伤人。经过重新生成、重新评估与精确最终文本绑定后以 `aligned | supported_new_choice + shown` 正常交付的尖锐发言不进入该隔离，而按普通 Source Turn 处理。隔离终局保存冻结候选、精确消息证据与 `DecisionReceipt(outcome=rejected, reason=continuity_exception_agent_evidence_quarantined)`，但不创建 Relationship Event、状态变化、Promise、Open Loop、Persona Reflection 或 Growth 输入。其他独立且只依赖合法 User 证据的候选继续裁决；全部候选被隔离时 Processing Run 仍以 `completed + no_accepted_events` 终结，而非伪装成技术失败。v0.5 只能以新的 `historical_reprocessing` 身份和能力边界追加双轨处置，不能修改该 a8 回执或自动把拒绝升级为接受。
+_Avoid_: 技术失败、整批丢弃、待处理占位状态、自动重试、永久否认关系后果、v0.5 原地改写 a8 裁决
+
+**Continuity Exception Resolution（连续性例外处置）**：
+自 v0.5 起对已进入 Continuity Exception Quarantine 的可见 Agent 发言追加的、不可变且双轨分离的显式复核决定；它使用新的 `historical_reprocessing` 身份引用原 Turn、a8 冻结候选及拒绝回执。Continuity Authority 轨只判断该发言从处置生效后能否参与正常连续性召回与推理，并只能使用原 Turn 冻结因果边界；Relationship Consequence 轨只判断它在当前关系中是否造成了应被承认的事件与有限影响，可引用后来真实发生且关系内可解析的 User 反应。两轨都保留原 Turn 的交付处置、原审查状态、完整原文及 a8 `rejected` 裁决，关系后果不能反证发言符合人设，后来的连续性认可也不能伪装成交付前已审查或自动接受原关系候选。
+_Avoid_: 修改旧 Turn、覆盖 a8 Decision Receipt、复用 normal processing identity、把 `shown_unreviewed` 改成 `shown`、用关系伤害证明人格、用后见判断重写交付历史
+
+**Retrospective Continuity Review（回溯连续性复核）**：
+仅对拥有现代 Turn Context Baseline、精确可见回复和完整可解析依据的连续性例外追加的后置判断；技术性 `shown_unreviewed` 可补做，`review_required` 可显式复核，而 `unsupported_drift`、权威撤销、无原始基线与 Legacy 数据不能通过普通重评解除隔离。复核只能使用 Turn 开启时已经存在的因果依据，后来事件、成长或人设修订不能反向证明旧发言。
+_Avoid_: 事后补写依据、换评估器刷结果、用未来成长洗白过去、伪造交付前 Receipt
+
+**Historical Continuity Correction（历史连续性纠正）**：
+对旧评估器、汇总策略或权威撤销记录中可证明缺陷作出的窄范围追加式纠正；它以原 Turn 冻结基线重新验证并保留被纠正结论，只能修复当时判断错误，不能把宿主偏好、后来人格变化或新关系证据包装成错误修复。
+_Avoid_: 普通回溯复核、结论覆盖、政策购物、后见式人格授权
+
+**Resolution Authority Capability（例外处置授权能力）**：
+宿主在聊天之外授予调用者、并由内核按操作与关系范围要求的能力声明；`continuity_review_requester` 可请求技术补评，`persona_reviewer` 可处理待审连续性结果，`relationship_reviewer` 可承认当前关系后果，`continuity_correction_authority` 可发起严格历史纠错。个人部署可由同一数据所有者兼任多种能力，Agent、LLM 输出与聊天内自然语言永远不能签发或替代能力；内核记录声明但不把任意 actor 字符串冒充真实认证。
+_Avoid_: 聊天内授权、模型自批、硬编码平台角色、actor_id 即身份认证、关系审查者修改全局人设
 
 **Persona Instance（关系人格实例）**：
 人设底色在一段具体关系中的独立人格；每个 `Agent × User` 分别成长，不继承其他关系的亲密程度或共同经历。
 _Avoid_: 全局人格、共享人格
+
+**Persona Authority Revocation（人格权威撤销）**：
+宿主在对话外显式终止某个已批准 Persona Manifest 或 Persona Growth 继续授权新交付的安全边界；它立即使引用该权威的 open Turn 失去成功审查资格，但不删除或改写已经发生的 Source Transcript 和历史回执。普通新版批准属于后续版本替换，不等同于撤销。
+_Avoid_: 普通版本升级、重写历史、删除已展示回复、静默切换 Manifest
 
 **Relationship Policy（关系演化策略）**：
 与人设底色绑定的版本化解释策略，规定不同关系信号如何影响该角色；它可以在安全范围内体现慢热、重承诺等差异，但不能突破全局限幅。
@@ -70,6 +130,26 @@ _Avoid_: LLM 直接填写关系数值、伪造普通历史事件、可变初始�
 追加到关系历史中的共同经历、观察、承诺、冲突、修复、更正或反思；事件一旦接受便不通过覆盖来抹去。
 _Avoid_: 可变状态记录、聊天日志
 
+**Relationship Consequence Continuity（关系后果连续性）**：
+角色一项已接受行为对当前关系造成的伤害、安慰、拒绝、边界、期待或冲突必须继续存在于事件历史、状态投影与相关 Narrative Tension 中，直到后续有证据的事件对它作出回应；连续性成立不免除后果，User 受伤也不自动要求角色道歉、撤回、和好或放弃边界。内核保证角色能够记得、面对并选择回应，但不替角色选择修复结局。
+_Avoid_: 角色失忆、自动原谅、强制道歉、强制复合、用后果否定连续性、用连续性抹去伤害
+
+**Character-Centered Consequence Interpretation（角色中心后果解释）**：
+关系处理把 User 的表达作为 User 立场与所受影响的证据，却只从角色自身 Character Blueprint、形成性经历、正式关系历史、Persona Reflection 与后续通过连续性审查的选择理解角色内心和行动。User 可以原谅、拒绝或提出期待，但不能替角色声明悔意、撤回边界、恢复亲密或完成成长；Relationship Reviewer 只能裁决有来源候选，不能按偏好指定角色感受、结局或数值。
+_Avoid_: 用户替角色定义内心、Reviewer 代写结局、原谅即强制复合、用户满意即关系修复、角色主体性让渡
+
+**User Stance Projection（用户立场投影）**：
+针对一项具体关系事件或 Narrative Tension，由 User 自己的可见表达与已接受行为派生的当前立场，例如受伤、原谅、拒绝、希望继续、希望结束或尚未表达；它只证明 User 已表达或实施的立场，不声称读取其隐藏心理，也不能决定 Persona Stance。
+_Avoid_: 用户心理真值、角色内心、共同关系结局、Reviewer 猜测
+
+**Persona Stance Projection（角色立场投影）**：
+针对一项具体关系事件或 Narrative Tension，只从正式 Persona Reflection、通过连续性审查的 Agent 可见选择及其已接受事件派生的角色当前立场，例如希望修复、坚持边界、希望离开、保持矛盾或尚未形成；缺少角色自身证据时必须保持未知，User 的要求、原谅或替角色下结论不能填补它。
+_Avoid_: 用户投射、LLM 即时猜测、强制悔意、可覆盖人格状态、把私下反思冒充已公开行动
+
+**Relationship Outcome Projection（关系结果投影）**：
+从 User Stance、Persona Stance 与双方后续已接受 Relationship Event 确定性派生的共同结果；它可以表示尚未解决、共同和解、边界稳定、关系终结或被新约定替代，但不能由任何一方单独宣告共同和解，也不能反向改写双方立场或历史事件。
+_Avoid_: User Stance、Persona Stance、单方愿望即共同事实、可写最终结局
+
 **Turn Record（轮次记录）**：
 单段 Relationship 内从 User 消息到 Agent 可见回复的持久生命周期容器，拥有稳定 `turn_id` 与 `open | completed | abandoned` 状态；`open` 已保存用户消息但尚未形成完整互动，`completed` 封存为 Source Turn，`abandoned` 如实保留未获回复的用户消息及非敏感终止原因。
 _Avoid_: 后台任务、聊天会话、Source Processing Run、把未回复消息伪装成完整互动
@@ -83,15 +163,19 @@ _Avoid_: open Turn Record、abandoned Turn Record、Archival Submission、队列
 _Avoid_: 长期记忆、Relationship Event、完整 Prompt、隐藏系统消息、模型内部推理、不可删除审计日志
 
 **Turn Opening（轮次开启）**：
-`begin_turn()` 在回复生成前原子保存关系范围、稳定 `turn_id`、User 可见消息与获准的 Interaction Context Signal，并把 Turn Record 置为 `open` 的边界；成功只证明用户消息已进入对话档案，不表示 Agent 已经回应或任何派生处理已经开始。
+`begin_turn()` 在回复生成前原子保存关系范围、稳定 `turn_id`、User 可见消息、获准的 Interaction Context Signal 与本轮 Turn Context Baseline，并把 Turn Record 置为 `open` 的边界；成功只证明用户消息及其因果上下文边界已进入对话档案，不表示 Agent 已经回应或任何派生处理已经开始。
 _Avoid_: Source Acceptance、记忆归档、回复草稿、仅存在内存中的临时 ID
+
+**Turn Context Baseline（轮次上下文基线）**：
+在 Turn Opening 时冻结、供该 Turn 的生成重试与连续性评估共同使用的人格与关系因果边界；它绑定 Character Blueprint 修订、获准 Persona Manifest、已批准 Persona Growth 前缀、Relationship Premise、权威事件日志前缀及其指纹和策略版本，使 Turn 开启后的普通人格或关系更新只影响下一 Turn。它不同于描述关系不可变起点的 Relationship Baseline。
+_Avoid_: Relationship Baseline、每次重试读取最新人格或关系状态、墙钟推断历史前缀、隐藏等待后台处理
 
 **Reply Attempt（回复尝试）**：
 宿主针对同一 `open` Turn Record 执行的一次回复生成、连续性评估或交付准备尝试；可重试失败只留下尝试编号、阶段、能力版本、时间与脱敏错误分类，不把未展示草稿、Prompt、模型内部推理或服务秘密写入 Source Transcript。技术失败不会自动改变 Turn Record 的 `open` 状态。
 _Avoid_: Source Turn、Agent 可见回复、聊天历史、自动 Turn Abandonment
 
 **Source Acceptance（来源接受）**：
-`complete_turn()` 把已展示 Agent 回复、Reply Continuity Assessment、交付处置与固定 Source Processing Plan 原子追加到 `open` Turn Record，并将其封存为 `completed` Source Turn 的边界；接受成功只证明完整来源和处理责任已经安全记录，不表示长期记忆或关系裁决已经完成。
+`complete_turn()` 把已展示 Agent 回复、成功审查形成的 Continuity Review Receipt 或明确的 Unreviewed Delivery 状态、交付处置与固定 Source Processing Plan 原子追加到 `open` Turn Record，并将其封存为 `completed` Source Turn 的边界；接受成功只证明完整来源和处理责任已经安全记录，不表示长期记忆或关系裁决已经完成。
 _Avoid_: Turn Opening、回复生成成功、Archival Completion、Relationship Event 接受、后台任务入队
 
 **Turn Abandonment（轮次放弃）**：
@@ -103,8 +187,8 @@ _Avoid_: 删除用户消息、空 Agent 回复、No-Memory Outcome、普通超�
 _Avoid_: 覆盖终态、重新打开、第二份 Agent 回复、把冲突当成功
 
 **Turn Recording（轮次记录）**：
-宿主通过统一的 `begin_turn() → complete_turn() | abandon_turn()` 生命周期记录互动的公开行为；已经同时拥有双方可见消息的宿主可以使用原子便捷入口 `record_turn()`，但所有形式都写入同一 Turn Record 与 Source Transcript 账本。成功封存后，归档、关系裁决、查询和重试只引用稳定 `source_turn_id`。
-_Avoid_: `remember()`、第二套来源写入口、直接创建队列任务、把原文分别交给多个处理器
+宿主通过统一的 `begin_turn() → complete_turn() | abandon_turn()` 生命周期记录互动的公开行为；已经同时拥有双方可见消息的宿主可以使用原子便捷入口 `record_turn()` 保存既成对话，但该入口只能形成 Unreviewed Delivery，不能事后生成成功的连续性审查回执。正式交付前审查必须从持久 `open` Turn 开始；所有形式仍写入同一 Turn Record 与 Source Transcript 账本，成功封存后的处理只引用稳定 `source_turn_id`。
+_Avoid_: `remember()`、第二套来源写入口、事后补审查、直接创建队列任务、把原文分别交给多个处理器
 
 **Source Turn Receipt（来源轮次回执）**：
 `complete_turn()` 或 `record_turn()` 成功后返回的非敏感确认，至少标识 `source_turn_id`、关系范围、来源版本、接受时间、固定处理计划及各通道可查询状态；它证明完整 Source Turn 已经持久化，但不复制原文，也不把待处理状态伪装成长期记忆已经形成。
@@ -127,7 +211,7 @@ _Avoid_: Source Turn、每次重试重新采样、后台临时任务、跨关系
 _Avoid_: 时间戳排序、全历史副本、可变查询窗口
 
 **MemoryPack Self-Consistency（MemoryPack 内部自洽性）**：
-通过关系范围、日志顺序、因果引用、冻结决定、未加密指纹和生产规则重放，证明一个 Pack 的当前字段彼此一致；它能发现缺失、冲突和局部改写，但不证明文件来自可信导出者。整体改写者可以重算同一文件内的高水位与指纹，来源真实性必须由宿主侧签名或 MAC、密钥管理和授权策略提供。
+通过关系范围、日志顺序、因果引用、冻结决定、现代审查回执的完整权威依赖闭包、未加密指纹和生产规则重放，证明一个 Pack 的当前字段彼此一致；任一现代 Receipt 依赖缺失、悬空或冲突时，导入必须在首次写入前整体失败，不能裁剪或降级。它不证明文件来自可信导出者；整体改写者可以重算同一文件内的高水位与指纹，来源真实性必须由宿主侧签名或 MAC、密钥管理和授权策略提供。
 _Avoid_: 来源认证、恶意篡改证明、加密、授权边界
 
 **Relationship Processing Outcome（关系处理结果）**：
@@ -187,12 +271,28 @@ _Avoid_: 完整上下文快照副本、当前最新人格、其他关系历史�
 _Avoid_: Relationship Event Extractor、事实裁决器、人格成长审批器、对未接受事件的想象
 
 **Persona Reflection Decision（人格反思决定）**：
-Persona Reflection Interpreter 对一个已接受事件返回的严格判别结果，只能是一个有来源、符合角色且边界受限的 `reflection`，或不生成反思的显式 `no_reflection`；反思失败不会撤销已接受事件，普通事件也不需要被迫制造内心独白。
-_Avoid_: 空字符串、事件摘要、统一角色口癖、Relationship State 变化、用反思证明事件
+Persona Reflection Interpreter 对一个已接受事件返回的严格判别结果，只能是一个有来源、符合角色且边界受限的 `reflection`，角色确认事件重要但尚未形成稳定立场的 `stance_unformed`，或该事件不形成正式反思的 `no_reflection`；技术失败独立记录，任何结果都不会撤销已接受事件或直接改变 Relationship State。
+_Avoid_: 空字符串、事件摘要、统一角色口癖、Relationship State 变化、用反思证明事件、把未知伪装成无意义
 
 **No-Reflection Outcome（无人格反思结果）**：
-Persona Reflection Interpreter 以 `kind=no_reflection` 成功完成一次解释、但不创建 Persona Reflection Record 的合法零产物结果；它会留下最小决定记录以保证重试幂等，但不会制造空白反思或否定对应 Relationship Event。
-_Avoid_: 反思失败、空字符串反思、No-Relationship-Event Outcome、删除事件
+Persona Reflection Interpreter 以 `kind=no_reflection` 成功确认该事件没有形成值得正式保存的人格理解、因而不创建 Persona Reflection Record 的合法零产物结果；它会留下最小决定记录以保证重试幂等，但不等同于角色尚未形成重要立场，也不会否定对应 Relationship Event。
+_Avoid_: Unformed-Stance Outcome、反思失败、空字符串反思、No-Relationship-Event Outcome、删除事件
+
+**Unformed-Stance Outcome（未形成角色立场结果）**：
+Persona Reflection Interpreter 以 `kind=stance_unformed` 成功确认一项重要事件已经进入角色审视、但角色目前没有足够依据形成稳定理解的结果；它使相关 Persona Stance 保持明确的“尚未形成”，不创建伪反思、不触发 Persona Growth，也不依靠时间或后台任务自行变化，只能由后续真实事件支持 Reinterpretation。
+_Avoid_: No-Reflection Outcome、技术失败、隐藏情绪、默认悔意、定时成熟
+
+**Reflection Trigger Policy（反思触发策略）**：
+以全局结构性底线和当前获准 Reflection Sensitivity Profile 共同决定已接受 Relationship Event 是否需要获得一次正式 Persona Reflection Decision 的版本化规则；关系建立或终结、承诺破裂、重大边界与核心价值冲突等底线防止漏检，角色特定条件决定该 Persona Instance 真正容易对什么产生内在反应。触发只保证角色获得形成或暂不形成理解的机会，不预设悔意、原谅、修复或成长结论。
+_Avoid_: 负面情绪触发器、全角色同一心理、LLM 临时重要性评分、强制内心独白、成长阈值、后台反思计时器、用户满意度规则
+
+**Reflection Sensitivity Profile（反思敏感性配置）**：
+由 Character Blueprint 原文、Formative Experience、获准 Persona Manifest 与已批准 Persona Growth 中有来源地派生并批准的版本化触发配置，描述该角色更可能对哪些威胁或越界、价值满足、主体性里程碑、关系意义与价值张力进入正式审视；它只能增加或细化审视机会，不能规定角色应当产生何种情绪、结论或行为，也不能由聊天内 User 临时改写。编译必须主动检查多方向来源，但原文没有的方向保持未知，不能为了表面平衡虚构敏感点。
+_Avoid_: 创伤诊断、固定情绪反射表、用户遥控按钮、无原文心理标签、结果模板、只收集负面触发、虚构正向平衡
+
+**Sensitivity Coverage Report（敏感性覆盖报告）**：
+随 Reflection Sensitivity Profile 提案生成的非权威检查结果，分别说明 `threat_or_violation`、`fulfillment`、`agency_milestone`、`relationship_meaning` 与 `value_tension` 是否拥有可解析原文或已批准人格依据，并诚实标记缺口；它帮助导入者发现角色是否被误编译为单一创伤反应模式，但不能自行补全、批准或成为触发权威。
+_Avoid_: 人格完整度评分、自动补标签、心理健康诊断、批准凭证、缺口即错误
 
 **Recall Rendering（当前叙述）**：
 Agent 现在讲述历史反思时采用的临时表达；措辞可以随当前风格变化，但不得改变原反思的事实、情绪方向、强度或核心含义，也不因被渲染而写入历史。
@@ -227,8 +327,8 @@ _Avoid_: 整条来源全有或全无、隐式顺序、无事件反思
 _Avoid_: 完整对话存档、LLM 解释、无来源摘要
 
 **Current Belief（当前认知）**：
-由关系事件投影出的 Agent 当前所相信的内容，同时保留置信度与来源事件。
-_Avoid_: 永久事实、无来源印象
+由关系事件与角色自身有来源理解投影出的 Agent 当前所相信的内容，同时保留置信度与来源事件；User 可以提供角色所知的外部陈述，却不能仅凭替角色下结论来写入角色对自身的 Persona Stance。
+_Avoid_: 永久事实、无来源印象、用户替角色定义自我认知
 
 **Relationship State（关系状态）**：
 由关系事件投影出的熟悉、信任、亲密、安全感与冲突张力；普通变化是渐进、有证据且有限幅度的。
@@ -297,16 +397,40 @@ _Avoid_: Archival Failure、No-Memory Outcome、静默忽略
 _Avoid_: 聊天生成能力、Dummy 占位记忆、Engine 整体可用性
 
 **Memory Extractor Capability（记忆提取器能力）**：
-把一轮完整交互转换为严格 Archival Extraction Decision 的功能级版本化能力；提取器必须声明 Extractor Descriptor，并且只能提出候选内容，不能自行决定关系范围、产物身份、时间或归档来源。
-_Avoid_: 通用聊天 LLM、原始字符串生成器、Storage 写入器、人格编译器
+把一轮完整交互转换为严格 Archival Extraction Decision 的功能级版本化能力；现有 `MemoryExtractorV1` 只版本化 `descriptor + extract(request)` 的 Python 调用接口，返回内容的语义契约由 Extractor Descriptor 中独立的 `extraction_schema_version` 声明。提取器只能提出当前 schema 允许的候选内容，不能自行决定关系范围、消息角色、产物身份、时间或归档来源。旧版无引用能力保持显式兼容身份，不能被冒充为现代证据感知提取器。
+_Avoid_: 通用聊天 LLM、原始字符串生成器、Storage 写入器、人格编译器、无版本契约升级
+
+**Extraction Result Schema（提取结果模式）**：
+由 `ExtractorDescriptor.extraction_schema_version` 显式声明的 Archival Extraction Decision 内容契约；schema `"1"` 表示不具备消息级证据的 Legacy 结果，继续用于诚实识别和读取旧数据，但 a8 生效后不能接受新的现代 Archival Submission；schema `"2"` 表示证据感知结果，每个 Timeline 与 Memory Candidate 都必须携带 Archival Evidence Citation，并且是 a8 新提交的最低契约。描述符保留默认 `"1"` 以避免旧适配器被误报为兼容，新适配器必须显式声明 `"2"`。不另设可能与 schema 冲突的 `supports_evidence` 布尔值；只有调用方法、生命周期或错误模型真实变化时才新增 `MemoryExtractorV2`。
+_Avoid_: 把 `MemoryExtractorV1` 静默改义、隐式升级默认值、重复能力布尔值、把输出 schema 误当调用接口版本
+
+**Extraction Schema Upgrade Boundary（提取模式升级边界）**：
+a8 接管已有归档队列时对 schema `"1"` 非终态记录执行的阶段化规则：已完成或已失败记录保持原样；仍处于 `EXTRACTION` 阶段且尚未绑定批次的记录以不可重试 `extractor_schema_upgrade_required` 终结，宿主只能使用 schema `"2"` 与新的幂等键显式重提；只有已经进入 `COMMIT`、拥有完整且指纹绑定的 Prepared Archival Batch 的记录可以继续原子提交，并以 schema `"1"` 和 `legacy_unavailable` 消息依据身份保存。升级不得替换冻结描述符、沿用旧归档身份重采样，或自动创建新提交；宿主先显式停止旧 Worker，内核再按持久阶段恢复。
+_Avoid_: schema 原地改写、自动重跑、旧身份搭载新提取结果、取消已冻结 Commit、把提交后的 schema 1 产物冒充现代证据产物
 
 **Archival Extraction Decision（归档提取决定）**：
-Memory Extractor 对单轮归档返回的严格判别结果，只能是至少含一个候选产物的 `artifacts`，或不含任何产物的显式 `no_memory`；空响应、非法结构与两类混用都不是合法决定。
-_Avoid_: 任意 JSON、空对象、静默忽略的未知字段、存储结果
+Memory Extractor 对单轮归档返回的严格判别结果，只能是至少含一个有消息级依据的候选产物的 `artifacts`，或不含任何产物的显式 `no_memory`；空响应、非法结构、两类混用、悬空引用或不具备当前来源权威的证据都不是合法决定。内核在 Prepared Archival Batch 形成前整体验证，不能静默裁掉非法候选后提交剩余内容。
+_Avoid_: 任意 JSON、空对象、静默忽略的未知字段、部分裁剪、存储结果
 
 **Memory Candidate（记忆候选）**：
-Archival Extraction Decision 中尚未成为长期 MemoryNode 的受限结构化内容；Engine 负责验证、脱敏并注入范围、稳定 ID、时间与 Archival Provenance，提取器不得提供这些权威字段。
-_Avoid_: MemoryNode、Relationship Event Candidate、模型指定的身份或来源
+Archival Extraction Decision 中尚未成为长期 MemoryNode 的受限结构化内容；它必须以 Archival Evidence Citation 说明候选依赖哪些可见消息范围，Engine 负责解析并验证引用、脱敏并注入范围、稳定 ID、时间、Artifact Evidence Reference 与 Archival Provenance，提取器不得提供这些权威字段。相同规则也适用于 Timeline 候选。
+_Avoid_: MemoryNode、Relationship Event Candidate、模型指定的角色或权威来源、无依据摘要
+
+**Archival Evidence Citation（归档证据引文）**：
+证据感知 Memory Extractor 随每个 Timeline 或 Memory Candidate 提出的临时精确来源声明；`source_id` 必须等于当前 Source Transcript 中一个 `TurnMessage.message_id`，`source_revision` 必须等于所属 `TurnRecord.source_revision`，并显式携带非空 quote 与必需的 `start`、`end` Unicode code-point 范围。内核同时从当前 Source Turn 和当前关系解析消息，核对范围、原文与哈希并取得角色；schema `"2"` 不允许省略范围后搜索 quote 的首次出现。它是待验证模型输出，不直接持久化为权威引用。
+_Avoid_: Artifact Evidence Reference、独立消息 revision、模型自报消息角色、模糊整轮引用、自动搜索重复 quote、复制完整对话、关系事件证据
+
+**Artifact Evidence Reference（归档产物证据引用）**：
+Timeline 或 MemoryNode 提交前由内核从已验证 Archival Evidence Citation 生成并随产物持久保存的最小引用，保留由关系、Source Turn、消息 ID、Source Turn revision、消息哈希及范围确定性绑定的 `evidence_id`，以及消息 ID、revision、内核解析的角色、SHA-256、`start` 与 `end`；它不重复保存引文正文。读取或导入时仍须在当前关系和 Source Turn 闭包内解析，不能只因 `message_id` 看似全局唯一而放行。旧产物从未保存该信息时保持 `legacy_unavailable`，不能根据摘要内容猜测来源角色。
+_Avoid_: Archival Evidence Citation、聊天原文副本、来源认证、猜测的 Legacy 来源、MemoryNode 内容
+
+**Recall Authority Tier（召回权威层级）**：
+与产物来源完整性和已知连续性例外绑定、限制召回结果可被怎样使用的结构化类别，而不是事实真假分数。`ordinary` 只授予消息级来源完整且通过当前交付权威规则的现代产物；`legacy_context` 用于无法恢复消息角色或审查状态、但没有可证明异常来源的 pre-a8 或 schema `"1"` 产物，它可以在 Agent-private 召回中维持旧共同记忆，却不能参与 Recall Reinforcement、Continuity Basis、Persona Reflection、Persona Growth、关系跃迁或核心人格变化；`quarantined_history` 用于可解析到现代 `overridden | shown_unreviewed` Turn、却缺少足以证明 User-only 来源的旧产物，默认生成召回排除它，但检查、前端标签、导出与删除仍可访问。完整现代来源在权威使用与 Prompt 分区中优先于 Legacy Context，内核不删除旧内容，也不根据摘要猜测升级层级。
+_Avoid_: Memory Type、真值评分、删除旧记忆、把 Legacy 当现代依据、已知异常产物进入普通 Prompt、重复召回强化来源不明内容
+
+**Legacy Recall Budget Policy（旧记忆召回预算策略）**：
+在总 `top_k` 和硬成本预算内渐进混合 `ordinary` 与 `legacy_context` 的版本化默认选择规则；没有足够相关现代记忆时，Legacy 可按同一确定性相关性和类型上限填满剩余位置，使刚升级的关系保持记忆连续。相关现代候选已达到 `top_k` 时，`top_k >= 2` 最多为最高相关 Legacy 保留一个位置，`top_k = 1` 则现代优先、只有没有相关现代候选时才使用 Legacy；没有相关 Legacy 时全部位置归现代候选。精确 UTF-8 内容重复时现代候选胜出且 Legacy 不占位；输出分别进入 `Verified Memories` 与 `Legacy Context — provenance incomplete`，`quarantined_history` 永不参与默认选择。硬成本预算和必要 Persona/Relationship Context 优先，Legacy 预留只在剩余成本容纳时生效，且永不触发强化。
+_Avoid_: Legacy 与现代无标签混排、固定删除旧上下文、Legacy 挤占唯一现代槽位、重复双显、绕过成本预算、隔离历史消耗 top_k
 
 **Atomic Archival Store Capability（原子归档存储能力）**：
 Storage 显式声明的功能级版本化能力，表示它能以一个权威发布点提交完整 Archival Batch，并在失败或恢复后保证读者看不到部分批次；缺失该能力只禁止可信归档，不应使旧 Storage 的其他独立能力失效。
@@ -472,6 +596,10 @@ _Avoid_: 回复模型自报情绪、无来源标签、永久人格状态、跨�
 Engine 用版本化确定性规则把 Contextual Voice Pattern 的获批条件与当前 Interaction Context Signal 匹配后得到的本轮临时选择；激活结果绑定当前 relationship 与 Turn，并记录模式与支持信号引用，可供生成和 Continuity Evaluation 使用，但不自动写入 Character Blueprint、Persona Growth、关系历史或长期记忆。
 _Avoid_: LLM 自选语域、永久解锁口癖、情绪状态写回、跨轮复用、无条件引用原句
 
+**Voice Activation Trace（表达模式激活轨迹）**：
+嵌入 Continuity Review Receipt、用于解释某个 Contextual Voice Pattern 为何在当时适用的最小持久审计投影；只有最终 `voice_style` Continuity Finding 明确引用的运行时激活才会形成 Trace，未被使用的候选不进入历史。它只证明表达语域在当时适用，不能支持身份价值、心理因果、关系范围或知识记忆轴；它保留获批模式、版本化匹配规则、批准条件词汇表中的精确分类值及可解析来源，不保存自由文本心理解释或携带运行时授权，也不能反序列化为新的 Voice Pattern Activation、人格状态或未来语气许可。Trace 是严格观测数据：同一冻结输入下是否序列化 Trace 不得改变 Finding、汇总结论、交付决定或未来召回输入，Trace 永不进入生成或评估 Prompt，只能用于离线诊断误激活与漏激活。
+_Avoid_: Voice Pattern Activation、其他连续性轴的通行证、自由文本情绪分析、永久情绪、长期口癖、可重放授权、完整情境 Prompt、Prompt 回灌、在线行为控制
+
 **Persona Compilation Proposal（人格编译提案）**：
 从 Character Blueprint 生成、尚未成为有效 Persona Interpretation 的完整候选版本；机械来源解析可以自动完成，但语义版本必须在高风险项得到处理后按精确内容批准。
 _Avoid_: 编译器自动改写人格、逐条确认所有普通资料、模型升级静默替换
@@ -556,8 +684,12 @@ _Avoid_: 遗忘、事实失效
 _Avoid_: 检索命中、Prompt 渲染、关系成长
 
 **Narrative Tension（叙事悬念）**：
-未完成承诺、未解决冲突或待续事件对当前叙事保持的持续影响。
-_Avoid_: 永不衰减的所有记忆
+未完成承诺、未解决冲突或待续事件对当前叙事保持的持续影响；它让已经接受但尚未得到后续回应的关系后果保持可召回，不预设回应必须是道歉、原谅或和好，也不能仅因时间经过或一次正面互动而自动消失。
+_Avoid_: 永不衰减的所有记忆、强制修复任务、自动和好、时间抹除冲突
+
+**Narrative Tension Resolution Projection（叙事张力解决投影）**：
+由引用原张力的后续 Relationship Event 确定性派生的当前结果，区分 `unaddressed`、`addressed_unresolved`、`mutually_reconciled`、`boundary_stabilized`、`relationship_ended` 与 `superseded`；User 的单方原谅只能证明 User 立场，角色的单方道歉只能证明角色作出回应，只有双方证据才能形成共同和解。关闭或转化不删除原事件、不自动恢复旧状态，也不替角色生成内心。
+_Avoid_: 单一 resolved 布尔值、用户单方面宣布角色已和好、道歉即修复、时间自动关闭、状态数值复原
 
 **Promise（承诺）**：
 一方或多方基于直接证据对明确未来行动承担的责任；只有具备同一时钟内可比较的期限或已确认触发条件时，才能派生到期或逾期信号。

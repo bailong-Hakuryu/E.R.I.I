@@ -19,6 +19,18 @@ from erii.core.relationship_processing import (
 )
 
 
+def _preexisting_delivery_exception():
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests.relationship-processing/v1",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-08-01T08:00:00+08:00",
+        "reply_attempt_number": None,
+    }
+
+
 class _RelationshipExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="tests.relationship-extractor",
@@ -133,6 +145,7 @@ class RelationshipProcessingPublicTests(unittest.TestCase):
             "The snow is beautiful.",
             "Yes. I want to remember this quiet moment.",
             turn_id=turn_id,
+            delivery_exception=_preexisting_delivery_exception(),
         )
 
     def test_event_then_reflection_is_durable_and_retry_does_not_resample(self):
@@ -523,6 +536,7 @@ class RelationshipProcessingPublicTests(unittest.TestCase):
                     "Nothing special.",
                     "All right.",
                     turn_id="turn-unplanned",
+                    delivery_exception=_preexisting_delivery_exception(),
                     processing_channels=(),
                 )
                 with self.assertRaises(RelationshipProcessingSubmissionError):

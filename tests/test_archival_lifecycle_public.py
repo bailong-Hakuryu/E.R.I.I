@@ -28,6 +28,18 @@ from erii import (
 )
 
 
+def _visible_exchange_delivery_exception():
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests.archival-fixture-host",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-08-01T00:00:00+00:00",
+        "reply_attempt_number": None,
+    }
+
+
 class ScriptedMemoryExtractor:
     """Small host-provided test capability; the kernel and stores stay real."""
 
@@ -94,6 +106,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
             "Let us go to the arcade.",
             "Okay. I want to play one more round.",
             turn_id=turn_id,
+            delivery_exception=_visible_exchange_delivery_exception(),
         )
 
     def test_inline_archival_atomically_publishes_artifacts_with_provenance(self):

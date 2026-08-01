@@ -1,5 +1,6 @@
 """Append-only integrity rules for typed temporal relationship events."""
 
+from heapq import heappop, heappush
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 from erii.models.relationship import RelationshipEvent, RelationshipEventType
@@ -47,7 +48,6 @@ class TemporalHistoryValidator:
             unique.append(event)
 
         all_ids = set(by_id)
-        prerequisites = cls.causal_prerequisites(unique)
         for event in unique:
             missing = set(cls._reference_ids(event)).difference(all_ids)
             if missing:
@@ -56,22 +56,221 @@ class TemporalHistoryValidator:
                     + ", ".join(sorted(missing))
                 )
 
-        accepted: List[RelationshipEvent] = []
-        accepted_ids: Set[str] = set()
-        pending = list(unique)
-        while pending:
-            for index, event in enumerate(pending):
-                if not prerequisites[event.event_id].issubset(accepted_ids):
-                    continue
-                cls.validate_append(accepted, event)
-                accepted.append(event)
-                accepted_ids.add(event.event_id)
-                del pending[index]
-                break
-            else:
-                raise TemporalHistoryConflictError(
-                    "temporal history has unresolved causal ordering"
+        relationship_ids = {event.relationship_id for event in unique}
+        if len(relationship_ids) > 1:
+            raise TemporalHistoryConflictError(
+                "temporal history contains events from another relationship"
+            )
+
+        cls._reject_duplicate_lifecycle_events(unique)
+        prerequisites = cls.causal_prerequisites(unique)
+        ordered = cls._causal_order(unique, prerequisites)
+        cls._validate_complete_ordered_history(ordered, by_id)
+
+    @staticmethod
+    def _reject_duplicate_lifecycle_events(
+        events: Sequence[RelationshipEvent],
+    ) -> None:
+        """Rejects invalid multiplicity before building fan-out dependencies."""
+        confirmed_conditions: Set[tuple[str, str]] = set()
+        promise_resolutions: Set[str] = set()
+        open_loop_resolutions: Set[str] = set()
+        for event in events:
+            payload = event.temporal_payload
+            if isinstance(payload, PromiseConditionConfirmation):
+                confirmation_key = (
+                    payload.promise_event_id,
+                    payload.condition_id,
                 )
+                if confirmation_key in confirmed_conditions:
+                    raise TemporalHistoryConflictError(
+                        "this Promise condition has already been confirmed"
+                    )
+                confirmed_conditions.add(confirmation_key)
+            elif isinstance(payload, PromiseResolution):
+                if payload.promise_event_id in promise_resolutions:
+                    raise TemporalHistoryConflictError(
+                        "this Promise is already resolved"
+                    )
+                promise_resolutions.add(payload.promise_event_id)
+            elif isinstance(payload, OpenLoopResolution):
+                if payload.open_loop_event_id in open_loop_resolutions:
+                    raise TemporalHistoryConflictError(
+                        "this Open Loop is already resolved"
+                    )
+                open_loop_resolutions.add(payload.open_loop_event_id)
+
+    @staticmethod
+    def _causal_order(
+        events: Sequence[RelationshipEvent],
+        prerequisites: Mapping[str, Set[str]],
+    ) -> List[RelationshipEvent]:
+        """Topologically orders a complete history without prefix rescans."""
+        index_by_id = {
+            event.event_id: index for index, event in enumerate(events)
+        }
+        remaining = {
+            event_id: len(required)
+            for event_id, required in prerequisites.items()
+        }
+        dependents: Dict[str, List[str]] = {
+            event.event_id: [] for event in events
+        }
+        for event_id, required_ids in prerequisites.items():
+            for required_id in required_ids:
+                dependents[required_id].append(event_id)
+
+        ready: List[int] = []
+        for event in events:
+            if remaining[event.event_id] == 0:
+                heappush(ready, index_by_id[event.event_id])
+
+        ordered: List[RelationshipEvent] = []
+        while ready:
+            event = events[heappop(ready)]
+            ordered.append(event)
+            for dependent_id in dependents[event.event_id]:
+                remaining[dependent_id] -= 1
+                if remaining[dependent_id] == 0:
+                    heappush(ready, index_by_id[dependent_id])
+
+        if len(ordered) != len(events):
+            raise TemporalHistoryConflictError(
+                "temporal history has unresolved causal ordering"
+            )
+        return ordered
+
+    @classmethod
+    def _validate_complete_ordered_history(
+        cls,
+        events: Sequence[RelationshipEvent],
+        by_id: Mapping[str, RelationshipEvent],
+    ) -> None:
+        """Checks lifecycle invariants once over an already causal history."""
+        confirmed_conditions: Set[tuple[str, str]] = set()
+        promise_resolutions: Set[str] = set()
+        open_loop_resolutions: Set[str] = set()
+        open_loop_origins: Set[str] = set()
+        promise_successors: Dict[str, str] = {}
+        open_loop_successors: Dict[str, str] = {}
+
+        for event in events:
+            payload = event.temporal_payload
+            if payload is None or isinstance(payload, PromiseSpec):
+                continue
+            if isinstance(payload, OpenLoopSpec):
+                origin_id = payload.origin_memory_node_id
+                if origin_id is not None:
+                    if origin_id in open_loop_origins:
+                        raise TemporalHistoryConflictError(
+                            "this legacy memory already has a formal Open Loop"
+                        )
+                    open_loop_origins.add(origin_id)
+                continue
+            if isinstance(payload, PromiseConditionConfirmation):
+                target = cls._typed_target(
+                    by_id,
+                    payload.promise_event_id,
+                    RelationshipEventType.PROMISE,
+                    PromiseSpec,
+                    "Promise condition confirmation",
+                )
+                target_payload = target.temporal_payload
+                assert isinstance(target_payload, PromiseSpec)
+                condition = target_payload.activation_condition
+                if (
+                    condition is None
+                    or condition.condition_id != payload.condition_id
+                ):
+                    raise TemporalHistoryConflictError(
+                        "Promise condition confirmation does not match the "
+                        "target condition"
+                    )
+                if payload.promise_event_id in promise_resolutions:
+                    raise TemporalHistoryConflictError(
+                        "a resolved Promise cannot receive a condition confirmation"
+                    )
+                confirmation_key = (
+                    payload.promise_event_id,
+                    payload.condition_id,
+                )
+                if confirmation_key in confirmed_conditions:
+                    raise TemporalHistoryConflictError(
+                        "this Promise condition has already been confirmed"
+                    )
+                confirmed_conditions.add(confirmation_key)
+                continue
+            if isinstance(payload, PromiseResolution):
+                cls._typed_target(
+                    by_id,
+                    payload.promise_event_id,
+                    RelationshipEventType.PROMISE,
+                    PromiseSpec,
+                    "Promise resolution",
+                )
+                if payload.promise_event_id in promise_resolutions:
+                    raise TemporalHistoryConflictError(
+                        "this Promise is already resolved"
+                    )
+                promise_resolutions.add(payload.promise_event_id)
+                if payload.resolution_kind == PromiseResolutionKind.SUPERSEDED:
+                    successor_id = payload.superseding_promise_event_id
+                    assert successor_id is not None
+                    cls._typed_target(
+                        by_id,
+                        successor_id,
+                        RelationshipEventType.PROMISE,
+                        PromiseSpec,
+                        "superseding Promise",
+                    )
+                    promise_successors[payload.promise_event_id] = successor_id
+                continue
+            if isinstance(payload, OpenLoopResolution):
+                cls._typed_target(
+                    by_id,
+                    payload.open_loop_event_id,
+                    RelationshipEventType.OPEN_LOOP,
+                    OpenLoopSpec,
+                    "Open Loop resolution",
+                )
+                if payload.open_loop_event_id in open_loop_resolutions:
+                    raise TemporalHistoryConflictError(
+                        "this Open Loop is already resolved"
+                    )
+                open_loop_resolutions.add(payload.open_loop_event_id)
+                if payload.resolution_kind == OpenLoopResolutionKind.SUPERSEDED:
+                    successor_id = payload.superseding_open_loop_event_id
+                    assert successor_id is not None
+                    cls._typed_target(
+                        by_id,
+                        successor_id,
+                        RelationshipEventType.OPEN_LOOP,
+                        OpenLoopSpec,
+                        "superseding Open Loop",
+                    )
+                    open_loop_successors[payload.open_loop_event_id] = successor_id
+
+        cls._validate_successor_graph(promise_successors, "Promise")
+        cls._validate_successor_graph(open_loop_successors, "Open Loop")
+
+    @staticmethod
+    def _validate_successor_graph(
+        successors: Mapping[str, str],
+        subject: str,
+    ) -> None:
+        """Rejects supersession cycles once without repeatedly rebuilding maps."""
+        complete: Set[str] = set()
+        for start in successors:
+            path: Set[str] = set()
+            cursor = start
+            while cursor in successors and cursor not in complete:
+                if cursor in path:
+                    raise TemporalHistoryConflictError(
+                        f"{subject} supersession would create a cycle"
+                    )
+                path.add(cursor)
+                cursor = successors[cursor]
+            complete.update(path)
 
     @classmethod
     def causal_prerequisites(

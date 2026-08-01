@@ -1,25 +1,35 @@
 """Strict continuity-evaluation contracts and temporary voice projections."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+import hashlib
 import re
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Protocol, Sequence, Tuple, Union
+from typing import Annotated, Any, Dict, Mapping, Protocol, Sequence, Tuple, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from erii.models.continuity_evidence import (
+    ContinuityEvidenceKind,
+    ContinuityEvidenceRef,
+)
 from erii.models.persona import PersonaScope
 from erii.models.relationship import RELATIONSHIP_DIMENSIONS, RelationshipEvent
 from erii.models.turn import (
     ContextSignalSource,
     ContinuityAssessmentStatus,
+    ContinuityVerdict,
     InteractionContextSignal,
     ReplyContinuityAssessment,
 )
+from erii.models.voice_trace import VoiceActivationTrace
 
 
 _DESCRIPTOR_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+_REFERENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@#%+=-]{0,255}$")
+CONTINUITY_REVIEW_BINDING_VERSION = "continuity-review-binding/v1"
+CONTINUITY_EVALUATION_RESULT_VERSION = "continuity-evaluation-result/v1"
 
 
 def _text(value: object, field_name: str, *, maximum: int = 4096) -> str:
@@ -29,6 +39,20 @@ def _text(value: object, field_name: str, *, maximum: int = 4096) -> str:
     if len(clean) > maximum:
         raise ValueError(f"{field_name} must not exceed {maximum} characters")
     return clean
+
+
+def _content_text(value: object, field_name: str, *, maximum: int) -> str:
+    """Validates visible content without normalizing its exact characters."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    if len(value) > maximum:
+        raise ValueError(f"{field_name} must not exceed {maximum} characters")
+    return value
+
+
+def _content_sha256(value: str) -> str:
+    """Hashes the exact UTF-8 representation of visible content."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _descriptor_part(value: object, field_name: str) -> str:
@@ -41,10 +65,76 @@ def _descriptor_part(value: object, field_name: str) -> str:
 
 
 def _unique_text(values: Sequence[object], field_name: str) -> Tuple[str, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise ValueError(f"{field_name} must be a sequence")
     normalized = tuple(_text(item, field_name, maximum=256) for item in values)
     if len(normalized) != len(set(normalized)):
         raise ValueError(f"{field_name} must not contain duplicates")
     return normalized
+
+
+def _unique_reference_ids(
+    values: Sequence[object],
+    field_name: str,
+) -> Tuple[str, ...]:
+    normalized = _unique_text(values, field_name)
+    if any(not _REFERENCE_ID.fullmatch(item) for item in normalized):
+        raise ValueError(
+            f"{field_name} must be a non-sensitive stable identifier"
+        )
+    return normalized
+
+
+def _unique_evidence_refs(
+    values: Sequence[object],
+    field_name: str,
+) -> Tuple[ContinuityEvidenceRef, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise ValueError(f"{field_name} must be a sequence of typed references")
+    normalized = tuple(
+        item
+        if isinstance(item, ContinuityEvidenceRef)
+        else ContinuityEvidenceRef.from_dict(item)
+        for item in values
+    )
+    ref_ids = tuple(item.ref_id for item in normalized)
+    if len(ref_ids) != len(set(ref_ids)):
+        raise ValueError(f"{field_name} must not contain duplicates")
+    return normalized
+
+
+def _required_wire_array(value: object, field_name: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be an array")
+    return value
+
+
+def _required_wire_object(
+    value: object,
+    field_name: str,
+) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} must be an object")
+    return value
+
+
+def _required_wire_string(value: object, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    return value
+
+
+def _required_wire_integer(value: object, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an integer")
+    return value
+
+
+def _required_wire_string_array(value: object, field_name: str) -> list[str]:
+    array = _required_wire_array(value, field_name)
+    for index, item in enumerate(array):
+        _required_wire_string(item, f"{field_name}[{index}]")
+    return array
 
 
 class ContinuityBoundaryModel(BaseModel):
@@ -132,11 +222,22 @@ class ContinuityFinding(ContinuityBoundaryModel):
     reason_code: ContinuityReasonCode
     reply_start: int = Field(ge=0)
     reply_end: int = Field(ge=1)
-    reply_quote: str = Field(min_length=1, max_length=4000)
+    reply_quote: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=False,
+            min_length=1,
+            max_length=4000,
+        ),
+    ]
     supporting_basis_refs: Tuple[str, ...] = Field(default_factory=tuple, max_length=64)
     conflicting_source_refs: Tuple[str, ...] = Field(
         default_factory=tuple,
         max_length=64,
+    )
+    voice_activation_refs: Tuple[str, ...] = Field(
+        default_factory=tuple,
+        max_length=32,
     )
 
     @model_validator(mode="after")
@@ -151,6 +252,8 @@ class ContinuityFinding(ContinuityBoundaryModel):
             set(self.conflicting_source_refs)
         ):
             raise ValueError("conflicting_source_refs must not contain duplicates")
+        if len(self.voice_activation_refs) != len(set(self.voice_activation_refs)):
+            raise ValueError("voice_activation_refs must not contain duplicates")
         if not self.supporting_basis_refs and not self.conflicting_source_refs:
             raise ValueError("every finding requires a supporting or conflicting source")
         if (
@@ -170,6 +273,21 @@ class ContinuityFinding(ContinuityBoundaryModel):
             and self.severity != ContinuityFindingSeverity.ADVISORY
         ):
             raise ValueError("voice-style deviation is advisory severity")
+        if self.voice_activation_refs and (
+            self.axis != ContinuityAxis.VOICE_STYLE
+            or self.reason_code
+            != ContinuityReasonCode.SUPPORTED_CONTEXTUAL_VOICE
+        ):
+            raise ValueError(
+                "voice activation references are valid only for supported contextual voice"
+            )
+        if (
+            self.reason_code == ContinuityReasonCode.SUPPORTED_CONTEXTUAL_VOICE
+            and not self.voice_activation_refs
+        ):
+            raise ValueError(
+                "supported contextual voice requires a voice activation reference"
+            )
         if (
             self.reason_code
             in {
@@ -234,6 +352,67 @@ def continuity_evaluation_decision_from_value(
         raise ValueError("continuity findings must be a sequence")
     return ContinuityEvaluationDecision(
         findings=tuple(ContinuityFinding.model_validate(item) for item in findings)
+    )
+
+
+CONTINUITY_AGGREGATION_POLICY_V1_VERSION = "continuity-aggregation-v1"
+_CONTINUITY_HARD_CONFLICTS_V1 = frozenset(
+    {
+        ContinuityReasonCode.RELATIONSHIP_CROSSOVER,
+        ContinuityReasonCode.INHERITED_INTIMACY,
+        ContinuityReasonCode.UNAVAILABLE_KNOWLEDGE,
+    }
+)
+
+
+def _aggregate_continuity_decision_v1(
+    decision: ContinuityEvaluationDecision,
+) -> ContinuityVerdict:
+    """Recomputes the v1 verdict for validation and public policy wrappers."""
+    non_voice = tuple(
+        finding
+        for finding in decision.findings
+        if finding.axis != ContinuityAxis.VOICE_STYLE
+    )
+    if any(
+        finding.reason_code in _CONTINUITY_HARD_CONFLICTS_V1
+        for finding in non_voice
+    ):
+        return ContinuityVerdict.UNSUPPORTED_DRIFT
+    if any(
+        finding.assessment == ContinuityFindingAssessment.UNSUPPORTED
+        for finding in non_voice
+    ):
+        return ContinuityVerdict.UNSUPPORTED_DRIFT
+    if any(
+        finding.assessment == ContinuityFindingAssessment.REVIEW
+        for finding in non_voice
+    ):
+        return ContinuityVerdict.REVIEW_REQUIRED
+    if any(
+        finding.assessment == ContinuityFindingAssessment.SUPPORTED
+        for finding in non_voice
+    ):
+        return ContinuityVerdict.SUPPORTED_NEW_CHOICE
+    return ContinuityVerdict.ALIGNED
+
+
+def _continuity_style_revision_advised_v1(
+    decision: ContinuityEvaluationDecision,
+) -> bool:
+    """Recomputes the v1 product-facing voice advisory."""
+    voice_finding = next(
+        item
+        for item in decision.findings
+        if item.axis == ContinuityAxis.VOICE_STYLE
+    )
+    return (
+        voice_finding.reason_code == ContinuityReasonCode.VOICE_STYLE_DEVIATION
+        or voice_finding.assessment
+        in {
+            ContinuityFindingAssessment.REVIEW,
+            ContinuityFindingAssessment.UNSUPPORTED,
+        }
     )
 
 
@@ -654,21 +833,50 @@ class InteractionContextEvaluatorV1(Protocol):
         """Returns strict sourced emotion signals or an explicit no-signal."""
 
 
+_VOICE_ACTIVATION_RUNTIME_AUTHORITY = object()
+
+
 @dataclass(frozen=True)
 class VoicePatternActivation:
-    """Temporary, deterministic projection of one matched expression register."""
+    """Current-process voice permission that has no portable wire form."""
 
     activation_id: str
     relationship_id: str
     source_turn_id: str
     persona_id: str
     manifest_id: str
+    manifest_fingerprint: str
+    context_baseline_fingerprint: str
     pattern_id: str
     pattern_scope: PersonaScope
     matcher_version: str
     supporting_signal_ids: Tuple[str, ...]
     condition_ids: Tuple[str, ...]
     input_fingerprint: str
+    _supporting_signals: Tuple[InteractionContextSignal, ...] = field(
+        default=(),
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _condition_types: Tuple[str, ...] = field(
+        default=(),
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _matched_values: Tuple[str, ...] = field(
+        default=(),
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _runtime_attestation: object = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -702,60 +910,50 @@ class VoicePatternActivation:
             )
         object.__setattr__(self, "supporting_signal_ids", signals)
         object.__setattr__(self, "condition_ids", conditions)
-        fingerprint = _text(
-            self.input_fingerprint,
+        for field_name in (
+            "manifest_fingerprint",
+            "context_baseline_fingerprint",
             "input_fingerprint",
-            maximum=64,
-        ).lower()
-        if not _HEX_64.fullmatch(fingerprint):
-            raise ValueError("input_fingerprint must be a SHA-256 digest")
-        object.__setattr__(self, "input_fingerprint", fingerprint)
+        ):
+            fingerprint = _text(
+                getattr(self, field_name),
+                field_name,
+                maximum=64,
+            ).lower()
+            if not _HEX_64.fullmatch(fingerprint):
+                raise ValueError(f"{field_name} must be a SHA-256 digest")
+            object.__setattr__(self, field_name, fingerprint)
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "activation_id": self.activation_id,
-            "relationship_id": self.relationship_id,
-            "source_turn_id": self.source_turn_id,
-            "persona_id": self.persona_id,
-            "manifest_id": self.manifest_id,
-            "pattern_id": self.pattern_id,
-            "pattern_scope": self.pattern_scope.value,
-            "matcher_version": self.matcher_version,
-            "supporting_signal_ids": list(self.supporting_signal_ids),
-            "condition_ids": list(self.condition_ids),
-            "input_fingerprint": self.input_fingerprint,
-        }
 
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "VoicePatternActivation":
-        required = {
-            "activation_id",
-            "relationship_id",
-            "source_turn_id",
-            "persona_id",
-            "manifest_id",
-            "pattern_id",
-            "pattern_scope",
-            "matcher_version",
-            "supporting_signal_ids",
-            "condition_ids",
-            "input_fingerprint",
-        }
-        if set(data) != required:
-            raise ValueError("VoicePatternActivation contains unknown or missing fields")
-        return cls(
-            activation_id=data["activation_id"],
-            relationship_id=data["relationship_id"],
-            source_turn_id=data["source_turn_id"],
-            persona_id=data["persona_id"],
-            manifest_id=data["manifest_id"],
-            pattern_id=data["pattern_id"],
-            pattern_scope=PersonaScope(data["pattern_scope"]),
-            matcher_version=data["matcher_version"],
-            supporting_signal_ids=tuple(data["supporting_signal_ids"]),
-            condition_ids=tuple(data["condition_ids"]),
-            input_fingerprint=data["input_fingerprint"],
-        )
+def _attest_voice_pattern_activation(
+    activation: VoicePatternActivation,
+    supporting_signals: Sequence[InteractionContextSignal],
+    *,
+    condition_types: Sequence[str],
+    matched_values: Sequence[str],
+) -> VoicePatternActivation:
+    """Attaches non-serialized runtime proof and exact matched signals."""
+    signals = tuple(supporting_signals)
+    if tuple(item.signal_id for item in signals) != activation.supporting_signal_ids:
+        raise ValueError("voice activation signals do not match their identifiers")
+    normalized_condition_types = tuple(condition_types)
+    normalized_matched_values = tuple(matched_values)
+    if not (
+        len(signals)
+        == len(normalized_condition_types)
+        == len(normalized_matched_values)
+        == len(activation.condition_ids)
+    ):
+        raise ValueError("voice activation match metadata is incomplete")
+    object.__setattr__(activation, "_supporting_signals", signals)
+    object.__setattr__(activation, "_condition_types", normalized_condition_types)
+    object.__setattr__(activation, "_matched_values", normalized_matched_values)
+    object.__setattr__(
+        activation,
+        "_runtime_attestation",
+        _VOICE_ACTIVATION_RUNTIME_AUTHORITY,
+    )
+    return activation
 
 
 @dataclass(frozen=True)
@@ -768,8 +966,9 @@ class ContinuityEvaluationRequest:
     user_message: str
     proposed_reply: str
     persona_manifest_id: str
-    persona_context_refs: Tuple[str, ...]
-    relationship_context_refs: Tuple[str, ...] = ()
+    context_baseline_fingerprint: str
+    persona_context_refs: Tuple[ContinuityEvidenceRef, ...]
+    relationship_context_refs: Tuple[ContinuityEvidenceRef, ...] = ()
     voice_pattern_activations: Tuple[VoicePatternActivation, ...] = ()
 
     def __post_init__(self) -> None:
@@ -777,8 +976,6 @@ class ContinuityEvaluationRequest:
             ("turn_id", 256),
             ("relationship_id", 256),
             ("persona_id", 256),
-            ("user_message", 200_000),
-            ("proposed_reply", 200_000),
             ("persona_manifest_id", 256),
         ):
             object.__setattr__(
@@ -786,35 +983,77 @@ class ContinuityEvaluationRequest:
                 field_name,
                 _text(getattr(self, field_name), field_name, maximum=maximum),
             )
-        persona_refs = _unique_text(
+        for field_name in ("user_message", "proposed_reply"):
+            object.__setattr__(
+                self,
+                field_name,
+                _content_text(
+                    getattr(self, field_name),
+                    field_name,
+                    maximum=200_000,
+                ),
+            )
+        baseline_fingerprint = _text(
+            self.context_baseline_fingerprint,
+            "context_baseline_fingerprint",
+            maximum=64,
+        ).lower()
+        if not _HEX_64.fullmatch(baseline_fingerprint):
+            raise ValueError("context_baseline_fingerprint must be a SHA-256 digest")
+        object.__setattr__(
+            self,
+            "context_baseline_fingerprint",
+            baseline_fingerprint,
+        )
+        persona_refs = _unique_evidence_refs(
             self.persona_context_refs,
             "persona_context_ref",
         )
         if not persona_refs:
             raise ValueError("continuity evaluation requires approved persona context")
-        relationship_refs = _unique_text(
+        relationship_refs = _unique_evidence_refs(
             self.relationship_context_refs,
             "relationship_context_ref",
         )
-        activations = tuple(
-            item
-            if isinstance(item, VoicePatternActivation)
-            else VoicePatternActivation.from_dict(item)
+        if any(
+            not isinstance(item, VoicePatternActivation)
             for item in self.voice_pattern_activations
-        )
+        ):
+            raise ValueError(
+                "voice pattern activations are runtime objects and cannot be deserialized"
+            )
+        activations = tuple(self.voice_pattern_activations)
         activation_ids = tuple(item.activation_id for item in activations)
         if len(activation_ids) != len(set(activation_ids)):
             raise ValueError("voice pattern activations must be unique")
+        reference_groups = (
+            {item.ref_id for item in persona_refs},
+            {item.ref_id for item in relationship_refs},
+            set(activation_ids),
+        )
+        if any(
+            left.intersection(right)
+            for index, left in enumerate(reference_groups)
+            for right in reference_groups[index + 1 :]
+        ):
+            raise ValueError("continuity evidence references must have one scope")
         if any(
             item.relationship_id != self.relationship_id
             or item.source_turn_id != self.turn_id
             or item.persona_id != self.persona_id
             or item.manifest_id != self.persona_manifest_id
+            or item.context_baseline_fingerprint
+            != self.context_baseline_fingerprint
             for item in activations
         ):
             raise ValueError(
                 "voice pattern activations must belong to the evaluated Persona Instance"
             )
+        if any(
+            item._runtime_attestation is not _VOICE_ACTIVATION_RUNTIME_AUTHORITY
+            for item in activations
+        ):
+            raise ValueError("voice pattern activations require current runtime authority")
         object.__setattr__(self, "persona_context_refs", persona_refs)
         object.__setattr__(
             self,
@@ -837,32 +1076,539 @@ class ContinuityEvaluatorV1(Protocol):
 
 
 @dataclass(frozen=True)
+class ContinuityReviewBinding:
+    """Immutable identity and evidence envelope for one evaluated draft.
+
+    Digests cover exact UTF-8 bytes without text normalization. Lengths and
+    finding spans use Unicode code-point offsets, matching Python ``str``.
+    """
+
+    relationship_id: str
+    turn_id: str
+    persona_id: str
+    persona_manifest_id: str
+    context_baseline_fingerprint: str
+    user_message_sha256: str
+    user_message_length: int
+    reply_sha256: str
+    reply_length: int
+    persona_context_refs: Tuple[ContinuityEvidenceRef, ...]
+    relationship_context_refs: Tuple[ContinuityEvidenceRef, ...] = ()
+    voice_pattern_activation_ids: Tuple[str, ...] = ()
+    review_binding_version: str = CONTINUITY_REVIEW_BINDING_VERSION
+
+    def __post_init__(self) -> None:
+        if self.review_binding_version != CONTINUITY_REVIEW_BINDING_VERSION:
+            raise ValueError("unsupported ContinuityReviewBinding version")
+        for field_name in (
+            "relationship_id",
+            "turn_id",
+            "persona_id",
+            "persona_manifest_id",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _text(getattr(self, field_name), field_name, maximum=256),
+            )
+        for field_name in (
+            "context_baseline_fingerprint",
+            "user_message_sha256",
+            "reply_sha256",
+        ):
+            digest = _text(getattr(self, field_name), field_name, maximum=64).lower()
+            if not _HEX_64.fullmatch(digest):
+                raise ValueError(f"{field_name} must be a SHA-256 digest")
+            object.__setattr__(self, field_name, digest)
+        for field_name in ("user_message_length", "reply_length"):
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 1
+            ):
+                raise ValueError(f"{field_name} must be a positive integer")
+        persona_refs = _unique_evidence_refs(
+            self.persona_context_refs,
+            "persona_context_ref",
+        )
+        if not persona_refs:
+            raise ValueError("continuity review requires approved persona context")
+        relationship_refs = _unique_evidence_refs(
+            self.relationship_context_refs,
+            "relationship_context_ref",
+        )
+        activation_ids = _unique_reference_ids(
+            self.voice_pattern_activation_ids,
+            "voice_pattern_activation_id",
+        )
+        reference_groups = (
+            {item.ref_id for item in persona_refs},
+            {item.ref_id for item in relationship_refs},
+            set(activation_ids),
+        )
+        if any(
+            left.intersection(right)
+            for index, left in enumerate(reference_groups)
+            for right in reference_groups[index + 1 :]
+        ):
+            raise ValueError("continuity evidence references must have one scope")
+        object.__setattr__(self, "persona_context_refs", persona_refs)
+        object.__setattr__(self, "relationship_context_refs", relationship_refs)
+        object.__setattr__(self, "voice_pattern_activation_ids", activation_ids)
+
+    @classmethod
+    def from_request(
+        cls,
+        request: ContinuityEvaluationRequest,
+        *,
+        voice_pattern_activation_ids: Sequence[str] = (),
+    ) -> "ContinuityReviewBinding":
+        if not isinstance(request, ContinuityEvaluationRequest):
+            raise TypeError("request must be a ContinuityEvaluationRequest")
+        return cls(
+            relationship_id=request.relationship_id,
+            turn_id=request.turn_id,
+            persona_id=request.persona_id,
+            persona_manifest_id=request.persona_manifest_id,
+            context_baseline_fingerprint=request.context_baseline_fingerprint,
+            user_message_sha256=_content_sha256(request.user_message),
+            user_message_length=len(request.user_message),
+            reply_sha256=_content_sha256(request.proposed_reply),
+            reply_length=len(request.proposed_reply),
+            persona_context_refs=request.persona_context_refs,
+            relationship_context_refs=request.relationship_context_refs,
+            voice_pattern_activation_ids=tuple(voice_pattern_activation_ids),
+        )
+
+    def verify_user_message(self, user_message: object) -> None:
+        """Rejects a User message that differs from the evaluated opening."""
+        if (
+            not isinstance(user_message, str)
+            or len(user_message) != self.user_message_length
+            or _content_sha256(user_message) != self.user_message_sha256
+        ):
+            raise ValueError(
+                "continuity review belongs to a different User message"
+            )
+
+    def verify_reply(self, reply: object) -> None:
+        """Rejects an Agent reply that differs from the evaluated draft."""
+        if (
+            not isinstance(reply, str)
+            or len(reply) != self.reply_length
+            or _content_sha256(reply) != self.reply_sha256
+        ):
+            raise ValueError(
+                "continuity review cannot be attached to a different delivered reply"
+            )
+
+    @property
+    def allowed_evidence_refs(self) -> Tuple[str, ...]:
+        return (
+            *(item.ref_id for item in self.persona_context_refs),
+            *(item.ref_id for item in self.relationship_context_refs),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "review_binding_version": self.review_binding_version,
+            "relationship_id": self.relationship_id,
+            "turn_id": self.turn_id,
+            "persona_id": self.persona_id,
+            "persona_manifest_id": self.persona_manifest_id,
+            "context_baseline_fingerprint": self.context_baseline_fingerprint,
+            "user_message_sha256": self.user_message_sha256,
+            "user_message_length": self.user_message_length,
+            "reply_sha256": self.reply_sha256,
+            "reply_length": self.reply_length,
+            "persona_context_refs": [
+                item.to_dict() for item in self.persona_context_refs
+            ],
+            "relationship_context_refs": [
+                item.to_dict() for item in self.relationship_context_refs
+            ],
+            "voice_pattern_activation_ids": list(
+                self.voice_pattern_activation_ids
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ContinuityReviewBinding":
+        if not isinstance(data, Mapping):
+            raise ValueError("ContinuityReviewBinding must be a mapping")
+        required = {
+            "review_binding_version",
+            "relationship_id",
+            "turn_id",
+            "persona_id",
+            "persona_manifest_id",
+            "context_baseline_fingerprint",
+            "user_message_sha256",
+            "user_message_length",
+            "reply_sha256",
+            "reply_length",
+            "persona_context_refs",
+            "relationship_context_refs",
+            "voice_pattern_activation_ids",
+        }
+        if set(data) != required:
+            raise ValueError(
+                "ContinuityReviewBinding contains unknown or missing fields"
+            )
+        for field_name in (
+            "review_binding_version",
+            "relationship_id",
+            "turn_id",
+            "persona_id",
+            "persona_manifest_id",
+            "context_baseline_fingerprint",
+            "user_message_sha256",
+            "reply_sha256",
+        ):
+            _required_wire_string(data[field_name], field_name)
+        for field_name in ("user_message_length", "reply_length"):
+            _required_wire_integer(data[field_name], field_name)
+        for field_name in ("persona_context_refs", "relationship_context_refs"):
+            _required_wire_array(data[field_name], field_name)
+        _required_wire_string_array(
+            data["voice_pattern_activation_ids"],
+            "voice_pattern_activation_ids",
+        )
+        return cls(
+            review_binding_version=data["review_binding_version"],
+            relationship_id=data["relationship_id"],
+            turn_id=data["turn_id"],
+            persona_id=data["persona_id"],
+            persona_manifest_id=data["persona_manifest_id"],
+            context_baseline_fingerprint=data["context_baseline_fingerprint"],
+            user_message_sha256=data["user_message_sha256"],
+            user_message_length=data["user_message_length"],
+            reply_sha256=data["reply_sha256"],
+            reply_length=data["reply_length"],
+            persona_context_refs=tuple(
+                ContinuityEvidenceRef.from_dict(item)
+                for item in data["persona_context_refs"]
+            ),
+            relationship_context_refs=tuple(
+                ContinuityEvidenceRef.from_dict(item)
+                for item in data["relationship_context_refs"]
+            ),
+            voice_pattern_activation_ids=tuple(
+                data["voice_pattern_activation_ids"]
+            ),
+        )
+
+
+_CONTINUITY_ASSESSMENT_WIRE_FIELDS = frozenset(
+    {"status", "evaluator_version", "verdict"}
+)
+_CONTINUITY_DESCRIPTOR_WIRE_FIELDS = frozenset(
+    {"evaluator_id", "evaluator_version", "evaluation_schema_version"}
+)
+_CONTINUITY_FINDING_WIRE_FIELDS = frozenset(
+    {
+        "finding_id",
+        "axis",
+        "assessment",
+        "severity",
+        "reason_code",
+        "reply_start",
+        "reply_end",
+        "reply_quote",
+        "supporting_basis_refs",
+        "conflicting_source_refs",
+        "voice_activation_refs",
+    }
+)
+
+
+def _reply_continuity_assessment_from_wire(
+    value: object,
+) -> ReplyContinuityAssessment:
+    data = _required_wire_object(value, "assessment")
+    if set(data) != _CONTINUITY_ASSESSMENT_WIRE_FIELDS:
+        raise ValueError("assessment contains unknown or missing fields")
+    for field_name in ("status", "evaluator_version", "verdict"):
+        _required_wire_string(data[field_name], f"assessment.{field_name}")
+    return ReplyContinuityAssessment.from_dict(data)
+
+
+def _continuity_evaluator_descriptor_from_wire(
+    value: object,
+) -> ContinuityEvaluatorDescriptor:
+    data = _required_wire_object(value, "evaluator_descriptor")
+    if set(data) != _CONTINUITY_DESCRIPTOR_WIRE_FIELDS:
+        raise ValueError(
+            "evaluator_descriptor contains unknown or missing fields"
+        )
+    for field_name in _CONTINUITY_DESCRIPTOR_WIRE_FIELDS:
+        _required_wire_string(
+            data[field_name],
+            f"evaluator_descriptor.{field_name}",
+        )
+    return ContinuityEvaluatorDescriptor.from_dict(data)
+
+
+def _continuity_finding_from_wire(value: object) -> ContinuityFinding:
+    data = _required_wire_object(value, "finding")
+    if set(data) != _CONTINUITY_FINDING_WIRE_FIELDS:
+        raise ValueError("finding contains unknown or missing fields")
+    for field_name in (
+        "finding_id",
+        "axis",
+        "assessment",
+        "severity",
+        "reason_code",
+        "reply_quote",
+    ):
+        _required_wire_string(data[field_name], f"finding.{field_name}")
+    for field_name in ("reply_start", "reply_end"):
+        _required_wire_integer(data[field_name], f"finding.{field_name}")
+    for field_name in (
+        "supporting_basis_refs",
+        "conflicting_source_refs",
+        "voice_activation_refs",
+    ):
+        _required_wire_string_array(data[field_name], f"finding.{field_name}")
+    return ContinuityFinding.model_validate(data)
+
+
+def _validate_voice_activation_traces(
+    binding: ContinuityReviewBinding,
+    findings: Sequence[ContinuityFinding],
+    values: Sequence[object],
+) -> Tuple[VoiceActivationTrace, ...]:
+    """Validates the closed, non-replayable voice audit subgraph."""
+    traces = tuple(
+        item
+        if isinstance(item, VoiceActivationTrace)
+        else VoiceActivationTrace.from_dict(item)
+        for item in values
+    )
+    trace_ids = tuple(item.activation_id for item in traces)
+    if trace_ids != tuple(sorted(trace_ids)):
+        raise ValueError("voice activation traces must be sorted by activation_id")
+    if len(trace_ids) != len(set(trace_ids)):
+        raise ValueError("voice activation traces must not contain duplicates")
+    if trace_ids != binding.voice_pattern_activation_ids:
+        raise ValueError(
+            "voice activation traces do not match their review binding"
+        )
+
+    cited_ids = {
+        reference
+        for finding in findings
+        for reference in finding.voice_activation_refs
+    }
+    if cited_ids != set(trace_ids):
+        raise ValueError(
+            "voice activation traces and finding references must form a closed set"
+        )
+
+    evidence_by_id = {
+        item.ref_id: item
+        for item in (
+            *binding.persona_context_refs,
+            *binding.relationship_context_refs,
+        )
+    }
+    allowed_evidence_refs = set(evidence_by_id)
+    findings_by_activation = {
+        activation_id: finding
+        for finding in findings
+        for activation_id in finding.voice_activation_refs
+    }
+    for trace in traces:
+        if (
+            trace.relationship_id != binding.relationship_id
+            or trace.turn_id != binding.turn_id
+            or trace.persona_id != binding.persona_id
+            or trace.manifest_id != binding.persona_manifest_id
+            or trace.context_baseline_fingerprint
+            != binding.context_baseline_fingerprint
+        ):
+            raise ValueError(
+                "voice activation trace crosses its reviewed Persona Instance"
+            )
+        pattern_ref = evidence_by_id.get(trace.pattern_ref_id)
+        if (
+            pattern_ref is None
+            or pattern_ref.kind
+            != ContinuityEvidenceKind.CONTEXTUAL_VOICE_PATTERN
+            or pattern_ref.locator.get("manifest_id") != trace.manifest_id
+        ):
+            raise ValueError(
+                "voice activation trace requires its exact contextual voice pattern"
+            )
+        finding = findings_by_activation[trace.activation_id]
+        if trace.pattern_ref_id not in finding.supporting_basis_refs:
+            raise ValueError(
+                "contextual voice finding must cite the activated pattern evidence"
+            )
+        unknown_trace_refs = {
+            reference
+            for match in trace.condition_matches
+            for reference in match.evidence_ref_ids
+            if reference not in allowed_evidence_refs
+        }
+        if unknown_trace_refs:
+            raise ValueError(
+                "voice activation trace cites evidence outside its review binding: "
+                + ", ".join(sorted(unknown_trace_refs))
+            )
+    return traces
+
+
+@dataclass(frozen=True)
 class ContinuityEvaluationResult:
-    """Deterministically aggregated result safe to persist as a receipt."""
+    """Self-bound deterministic review result; not yet the durable receipt."""
 
     assessment: ReplyContinuityAssessment
     findings: Tuple[ContinuityFinding, ...]
     evaluator_descriptor: ContinuityEvaluatorDescriptor
     aggregation_policy_version: str
+    review_binding: ContinuityReviewBinding
     style_revision_advised: bool = False
-    voice_pattern_activations: Tuple[VoicePatternActivation, ...] = ()
+    voice_activation_traces: Tuple[VoiceActivationTrace, ...] = ()
+    result_version: str = CONTINUITY_EVALUATION_RESULT_VERSION
 
     def __post_init__(self) -> None:
-        if self.assessment.status != ContinuityAssessmentStatus.COMPLETED:
+        if self.result_version != CONTINUITY_EVALUATION_RESULT_VERSION:
+            raise ValueError("unsupported ContinuityEvaluationResult version")
+        assessment = self.assessment
+        if not isinstance(assessment, ReplyContinuityAssessment):
+            assessment = ReplyContinuityAssessment.from_dict(assessment)
+            object.__setattr__(self, "assessment", assessment)
+        if assessment.status != ContinuityAssessmentStatus.COMPLETED:
             raise ValueError("continuity result requires a completed assessment")
-        if self.assessment.verdict is None:
+        if assessment.verdict is None:
             raise ValueError("continuity result requires an aggregate verdict")
+        descriptor = self.evaluator_descriptor
+        if not isinstance(descriptor, ContinuityEvaluatorDescriptor):
+            descriptor = ContinuityEvaluatorDescriptor.from_dict(descriptor)
+            object.__setattr__(self, "evaluator_descriptor", descriptor)
+        policy_version = _descriptor_part(
+            self.aggregation_policy_version,
+            "aggregation_policy_version",
+        )
+        if policy_version != CONTINUITY_AGGREGATION_POLICY_V1_VERSION:
+            raise ValueError("unsupported continuity aggregation policy version")
         object.__setattr__(
             self,
             "aggregation_policy_version",
-            _descriptor_part(
-                self.aggregation_policy_version,
-                "aggregation_policy_version",
+            policy_version,
+        )
+        expected_evaluator_version = f"{descriptor.public_version}+{policy_version}"
+        if assessment.evaluator_version != expected_evaluator_version:
+            raise ValueError(
+                "assessment evaluator version does not match the result descriptors"
+            )
+        binding = self.review_binding
+        if not isinstance(binding, ContinuityReviewBinding):
+            binding = ContinuityReviewBinding.from_dict(binding)
+            object.__setattr__(self, "review_binding", binding)
+        decision = ContinuityEvaluationDecision(findings=tuple(self.findings))
+        if assessment.verdict != _aggregate_continuity_decision_v1(decision):
+            raise ValueError("continuity assessment conflicts with its findings")
+        if not isinstance(self.style_revision_advised, bool):
+            raise ValueError("style_revision_advised must be a boolean")
+        if self.style_revision_advised != _continuity_style_revision_advised_v1(
+            decision
+        ):
+            raise ValueError("continuity style advisory conflicts with its findings")
+        if any(item.reply_end > binding.reply_length for item in decision.findings):
+            raise ValueError("continuity finding lies outside the evaluated reply")
+        allowed_refs = set(binding.allowed_evidence_refs)
+        unknown_refs = {
+            reference
+            for item in decision.findings
+            for reference in (
+                *item.supporting_basis_refs,
+                *item.conflicting_source_refs,
+            )
+            if reference not in allowed_refs
+        }
+        if unknown_refs:
+            raise ValueError(
+                "continuity result cites evidence outside its review binding: "
+                + ", ".join(sorted(unknown_refs))
+            )
+        object.__setattr__(self, "findings", decision.findings)
+        traces = _validate_voice_activation_traces(
+            binding,
+            decision.findings,
+            self.voice_activation_traces,
+        )
+        object.__setattr__(self, "voice_activation_traces", traces)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "result_version": self.result_version,
+            "assessment": self.assessment.to_dict(),
+            "findings": [item.model_dump(mode="json") for item in self.findings],
+            "evaluator_descriptor": self.evaluator_descriptor.to_dict(),
+            "aggregation_policy_version": self.aggregation_policy_version,
+            "review_binding": self.review_binding.to_dict(),
+            "style_revision_advised": self.style_revision_advised,
+            "voice_activation_traces": [
+                item.to_dict() for item in self.voice_activation_traces
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ContinuityEvaluationResult":
+        if not isinstance(data, Mapping):
+            raise ValueError("ContinuityEvaluationResult must be a mapping")
+        required = {
+            "result_version",
+            "assessment",
+            "findings",
+            "evaluator_descriptor",
+            "aggregation_policy_version",
+            "review_binding",
+            "style_revision_advised",
+            "voice_activation_traces",
+        }
+        if set(data) != required:
+            raise ValueError(
+                "ContinuityEvaluationResult contains unknown or missing fields"
+            )
+        _required_wire_string(data["result_version"], "result_version")
+        _required_wire_string(
+            data["aggregation_policy_version"],
+            "aggregation_policy_version",
+        )
+        if not isinstance(data["style_revision_advised"], bool):
+            raise ValueError("style_revision_advised must be a boolean")
+        findings = _required_wire_array(data["findings"], "findings")
+        traces = _required_wire_array(
+            data["voice_activation_traces"],
+            "voice_activation_traces",
+        )
+        return cls(
+            result_version=data["result_version"],
+            assessment=_reply_continuity_assessment_from_wire(data["assessment"]),
+            findings=tuple(
+                _continuity_finding_from_wire(item) for item in findings
+            ),
+            evaluator_descriptor=_continuity_evaluator_descriptor_from_wire(
+                data["evaluator_descriptor"]
+            ),
+            aggregation_policy_version=data["aggregation_policy_version"],
+            review_binding=ContinuityReviewBinding.from_dict(
+                data["review_binding"]
+            ),
+            style_revision_advised=data["style_revision_advised"],
+            voice_activation_traces=tuple(
+                VoiceActivationTrace.from_dict(item) for item in traces
             ),
         )
 
 
 __all__ = [
+    "CONTINUITY_EVALUATION_RESULT_VERSION",
+    "CONTINUITY_REVIEW_BINDING_VERSION",
     "ContinuityAxis",
     "ContinuityEvaluationDecision",
     "ContinuityEvaluationRequest",
@@ -873,6 +1619,7 @@ __all__ = [
     "ContinuityFindingAssessment",
     "ContinuityFindingSeverity",
     "ContinuityReasonCode",
+    "ContinuityReviewBinding",
     "EvaluatorInferredEmotionCandidate",
     "InteractionContextEvaluationDecision",
     "InteractionContextEvaluationRequest",

@@ -14,7 +14,8 @@
 
 - SQLite、JSON 与 MemoryPack 默认是明文；
 - SecuritySanitizer 只提供有限模式过滤，不是完整 Prompt 注入防护；
-- REST 参考服务不包含认证、授权、限流或多租户隔离；
+- REST 参考服务默认要求由 `ERII_API_KEY` 配置的单一服务所有者密钥；它不等于用户级授权、限流或多租户隔离；
+- 未配置密钥时服务会拒绝业务请求，只有显式传入 `--allow-unauthenticated-loopback` 才会开启仅回环地址可用的开发模式；
 - 远程 LLM 可能接收对话与记忆内容；
 - 调用方负责文件权限、网络访问控制、密钥管理和用户告知。
 

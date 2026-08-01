@@ -1,10 +1,93 @@
 """Durable source-turn records for visible Agent x User conversations."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, Tuple
 
 from erii.models.relationship import utc_now
+from erii.models.turn_context import TurnContextBaseline
+
+if TYPE_CHECKING:
+    from erii.models.continuity_review import (
+        ContinuityReviewRecord,
+        DeliveryExceptionRecord,
+    )
+
+
+TURN_RECORD_FORMAT_VERSION = "turn-record/v2"
+LEGACY_TURN_RECORD_FORMAT_VERSION = "turn-record/v1"
+TURN_RECORD_V2_FIELDS = frozenset(
+    {
+        "turn_id",
+        "relationship_id",
+        "status",
+        "transcript",
+        "interaction_context",
+        "source_revision",
+        "turn_format_version",
+        "record_version",
+        "opened_at",
+        "context_baseline",
+        "review_record",
+        "delivery_disposition",
+        "delivery_exception",
+        "processing_plan",
+        "processing_outcomes",
+        "completed_at",
+        "abandoned_at",
+        "abandonment_reason",
+    }
+)
+LEGACY_TURN_RECORD_V1_FIELDS = frozenset(
+    {
+        "turn_id",
+        "relationship_id",
+        "status",
+        "transcript",
+        "interaction_context",
+        "source_revision",
+        "record_version",
+        "opened_at",
+        "continuity_assessment",
+        "delivery_disposition",
+        "processing_plan",
+        "processing_outcomes",
+        "completed_at",
+        "abandoned_at",
+        "abandonment_reason",
+    }
+)
+
+
+def _require_exact_wire_fields(
+    data: Mapping[str, Any],
+    expected: frozenset[str],
+    object_name: str,
+) -> None:
+    if not isinstance(data, Mapping):
+        raise ValueError(f"{object_name} must be an object")
+    if set(data) != expected:
+        raise ValueError(f"{object_name} contains unknown or missing fields")
+
+
+def _require_wire_text(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value
+
+
+def _require_optional_wire_text(value: object, field_name: str) -> Optional[str]:
+    if value is None:
+        return None
+    return _require_wire_text(value, field_name)
+
+
+def _require_wire_array(value: object, field_name: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be an array")
+    return value
 
 
 def _require_text(value: Any, field_name: str) -> str:
@@ -54,6 +137,25 @@ class InteractionContextSignal:
         init=False,
         repr=False,
         compare=False,
+    )
+    _trace_context: object = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _WIRE_FIELDS = frozenset(
+        {
+            "signal_id",
+            "source",
+            "signal_type",
+            "value",
+            "evidence_refs",
+            "recorded_at",
+            "relationship_id",
+            "source_turn_id",
+            "producer_version",
+        }
     )
 
     def __post_init__(self) -> None:
@@ -142,6 +244,46 @@ class InteractionContextSignal:
             producer_version=data.get("producer_version"),
         )
 
+    @classmethod
+    def from_wire_dict(
+        cls,
+        data: Mapping[str, Any],
+    ) -> "InteractionContextSignal":
+        _require_exact_wire_fields(
+            data,
+            cls._WIRE_FIELDS,
+            "InteractionContextSignal",
+        )
+        evidence_refs = _require_wire_array(
+            data["evidence_refs"],
+            "evidence_refs",
+        )
+        return cls(
+            signal_id=_require_wire_text(data["signal_id"], "signal_id"),
+            source=ContextSignalSource(
+                _require_wire_text(data["source"], "source")
+            ),
+            signal_type=_require_wire_text(data["signal_type"], "signal_type"),
+            value=_require_wire_text(data["value"], "value"),
+            evidence_refs=tuple(
+                _require_wire_text(item, "evidence_ref")
+                for item in evidence_refs
+            ),
+            recorded_at=_require_wire_text(data["recorded_at"], "recorded_at"),
+            relationship_id=_require_optional_wire_text(
+                data["relationship_id"],
+                "relationship_id",
+            ),
+            source_turn_id=_require_optional_wire_text(
+                data["source_turn_id"],
+                "source_turn_id",
+            ),
+            producer_version=_require_optional_wire_text(
+                data["producer_version"],
+                "producer_version",
+            ),
+        )
+
 
 class ContinuityAssessmentStatus(str, Enum):
     """Whether a reply continuity assessment was actually performed."""
@@ -161,10 +303,15 @@ class ContinuityVerdict(str, Enum):
 
 
 class DeliveryDisposition(str, Enum):
-    """What the host did with the reply captured in this source turn."""
+    """How the host delivered this exact reply after applying its gate.
+
+    ``OVERRIDDEN`` means the host displayed the same evaluated text despite the
+    gate verdict. It never means that a different reply replaced the draft.
+    """
 
     SHOWN = "shown"
     OVERRIDDEN = "overridden"
+    SHOWN_UNREVIEWED = "shown_unreviewed"
 
 
 class SourceProcessingChannel(str, Enum):
@@ -251,6 +398,35 @@ class ReplyContinuityAssessment:
             ),
         )
 
+    @classmethod
+    def from_wire_dict(
+        cls,
+        data: Mapping[str, Any],
+    ) -> "ReplyContinuityAssessment":
+        _require_exact_wire_fields(
+            data,
+            frozenset({"status", "evaluator_version", "verdict"}),
+            "ReplyContinuityAssessment",
+        )
+        status = ContinuityAssessmentStatus(
+            _require_wire_text(data["status"], "assessment status")
+        )
+        evaluator_version = _require_optional_wire_text(
+            data["evaluator_version"],
+            "evaluator_version",
+        )
+        raw_verdict = data["verdict"]
+        verdict = (
+            ContinuityVerdict(_require_wire_text(raw_verdict, "verdict"))
+            if raw_verdict is not None
+            else None
+        )
+        return cls(
+            status=status,
+            evaluator_version=evaluator_version,
+            verdict=verdict,
+        )
+
 
 @dataclass(frozen=True)
 class SourceProcessingPlan:
@@ -283,6 +459,27 @@ class SourceProcessingPlan:
                 for item in data.get("channels", [])
             ),
             version=str(data.get("version", "source-processing-plan/v1")),
+        )
+
+    @classmethod
+    def from_wire_dict(cls, data: Mapping[str, Any]) -> "SourceProcessingPlan":
+        _require_exact_wire_fields(
+            data,
+            frozenset({"channels", "version"}),
+            "SourceProcessingPlan",
+        )
+        channels = _require_wire_array(data["channels"], "processing channels")
+        version = _require_wire_text(data["version"], "processing plan version")
+        if version != "source-processing-plan/v1":
+            raise ValueError("unsupported SourceProcessingPlan version")
+        return cls(
+            channels=tuple(
+                SourceProcessingChannel(
+                    _require_wire_text(item, "processing channel")
+                )
+                for item in channels
+            ),
+            version=version,
         )
 
 
@@ -324,6 +521,26 @@ class SourceProcessingOutcome:
                 str(data.get("state", SourceProcessingState.PENDING.value))
             ),
             updated_at=str(data["updated_at"]),
+        )
+
+    @classmethod
+    def from_wire_dict(
+        cls,
+        data: Mapping[str, Any],
+    ) -> "SourceProcessingOutcome":
+        _require_exact_wire_fields(
+            data,
+            frozenset({"channel", "state", "updated_at"}),
+            "SourceProcessingOutcome",
+        )
+        return cls(
+            channel=SourceProcessingChannel(
+                _require_wire_text(data["channel"], "processing channel")
+            ),
+            state=SourceProcessingState(
+                _require_wire_text(data["state"], "processing state")
+            ),
+            updated_at=_require_wire_text(data["updated_at"], "updated_at"),
         )
 
 
@@ -434,6 +651,20 @@ class TurnMessage:
             recorded_at=str(data["recorded_at"]),
         )
 
+    @classmethod
+    def from_wire_dict(cls, data: Mapping[str, Any]) -> "TurnMessage":
+        _require_exact_wire_fields(
+            data,
+            frozenset({"message_id", "role", "content", "recorded_at"}),
+            "TurnMessage",
+        )
+        return cls(
+            message_id=_require_wire_text(data["message_id"], "message_id"),
+            role=TurnRole(_require_wire_text(data["role"], "message role")),
+            content=_require_wire_text(data["content"], "message content"),
+            recorded_at=_require_wire_text(data["recorded_at"], "recorded_at"),
+        )
+
 
 @dataclass(frozen=True)
 class SourceTranscript:
@@ -475,6 +706,23 @@ class SourceTranscript:
             ),
         )
 
+    @classmethod
+    def from_wire_dict(cls, data: Mapping[str, Any]) -> "SourceTranscript":
+        _require_exact_wire_fields(
+            data,
+            frozenset({"user_message", "agent_message"}),
+            "SourceTranscript",
+        )
+        raw_agent = data["agent_message"]
+        return cls(
+            user_message=TurnMessage.from_wire_dict(data["user_message"]),
+            agent_message=(
+                TurnMessage.from_wire_dict(raw_agent)
+                if raw_agent is not None
+                else None
+            ),
+        )
+
 
 @dataclass(frozen=True)
 class TurnRecord:
@@ -486,10 +734,13 @@ class TurnRecord:
     transcript: SourceTranscript
     interaction_context: Tuple[InteractionContextSignal, ...] = ()
     source_revision: str = "1"
+    turn_format_version: str = TURN_RECORD_FORMAT_VERSION
     record_version: int = 1
     opened_at: str = field(default_factory=utc_now)
-    continuity_assessment: Optional[ReplyContinuityAssessment] = None
+    context_baseline: Optional[TurnContextBaseline] = None
+    review_record: Optional["ContinuityReviewRecord"] = None
     delivery_disposition: Optional[DeliveryDisposition] = None
+    delivery_exception: Optional["DeliveryExceptionRecord"] = None
     processing_plan: Optional[SourceProcessingPlan] = None
     processing_outcomes: Tuple[SourceProcessingOutcome, ...] = ()
     completed_at: Optional[str] = None
@@ -524,20 +775,59 @@ class TurnRecord:
             "source_revision",
             _require_text(self.source_revision, "source_revision"),
         )
-        if not isinstance(self.record_version, int) or self.record_version < 1:
+        if self.turn_format_version not in {
+            TURN_RECORD_FORMAT_VERSION,
+            LEGACY_TURN_RECORD_FORMAT_VERSION,
+        }:
+            raise ValueError("unsupported TurnRecord format version")
+        if (
+            isinstance(self.record_version, bool)
+            or not isinstance(self.record_version, int)
+            or self.record_version < 1
+        ):
             raise ValueError("record_version must be a positive integer")
         object.__setattr__(self, "opened_at", _require_text(self.opened_at, "opened_at"))
-        assessment = self.continuity_assessment
-        if assessment is not None and not isinstance(
-            assessment,
-            ReplyContinuityAssessment,
+        context_baseline = self.context_baseline
+        if context_baseline is not None and not isinstance(
+            context_baseline,
+            TurnContextBaseline,
         ):
-            assessment = ReplyContinuityAssessment.from_dict(assessment)
-            object.__setattr__(self, "continuity_assessment", assessment)
+            context_baseline = TurnContextBaseline.from_dict(context_baseline)
+            object.__setattr__(self, "context_baseline", context_baseline)
+        if context_baseline is not None and (
+            context_baseline.relationship_id != self.relationship_id
+            or context_baseline.turn_id != self.turn_id
+        ):
+            raise ValueError("Turn Context Baseline belongs to a different Turn")
+        if (
+            self.turn_format_version == LEGACY_TURN_RECORD_FORMAT_VERSION
+            and context_baseline is not None
+        ):
+            raise ValueError("a Legacy Turn cannot claim a modern context baseline")
+        review_record = self.review_record
+        if review_record is not None:
+            from erii.models.continuity_review import ContinuityReviewRecord
+
+            if not isinstance(review_record, ContinuityReviewRecord):
+                review_record = ContinuityReviewRecord.from_dict(review_record)
+                object.__setattr__(self, "review_record", review_record)
         disposition = self.delivery_disposition
         if disposition is not None and not isinstance(disposition, DeliveryDisposition):
             disposition = DeliveryDisposition(disposition)
             object.__setattr__(self, "delivery_disposition", disposition)
+        delivery_exception = self.delivery_exception
+        if delivery_exception is not None:
+            from erii.models.continuity_review import DeliveryExceptionRecord
+
+            if not isinstance(delivery_exception, DeliveryExceptionRecord):
+                delivery_exception = DeliveryExceptionRecord.from_dict(
+                    delivery_exception
+                )
+                object.__setattr__(
+                    self,
+                    "delivery_exception",
+                    delivery_exception,
+                )
         plan = self.processing_plan
         if plan is not None and not isinstance(plan, SourceProcessingPlan):
             plan = SourceProcessingPlan.from_dict(plan)
@@ -571,13 +861,20 @@ class TurnRecord:
 
     def _validate_lifecycle(self) -> None:
         if self.status == TurnStatus.OPEN:
+            if (
+                self.turn_format_version == TURN_RECORD_FORMAT_VERSION
+                and self.context_baseline is None
+            ):
+                raise ValueError("a modern open Turn requires a context baseline")
             if self.transcript.agent_message is not None:
                 raise ValueError("an open turn cannot contain an agent message")
             if any(
                 value is not None
                 for value in (
                     self.continuity_assessment,
+                    self.review_record,
                     self.delivery_disposition,
+                    self.delivery_exception,
                     self.processing_plan,
                     self.completed_at,
                     self.abandoned_at,
@@ -590,7 +887,7 @@ class TurnRecord:
             if self.transcript.agent_message is None:
                 raise ValueError("a completed turn requires an agent message")
             if (
-                self.continuity_assessment is None
+                self.review_record is None
                 or self.delivery_disposition is None
                 or self.processing_plan is None
                 or self.completed_at is None
@@ -598,6 +895,8 @@ class TurnRecord:
                 raise ValueError("a completed turn requires acceptance metadata")
             if self.abandoned_at is not None or self.abandonment_reason is not None:
                 raise ValueError("a completed turn cannot contain abandonment metadata")
+            if self.turn_format_version == TURN_RECORD_FORMAT_VERSION:
+                self._validate_modern_delivery_review()
             planned = self.processing_plan.channels
             actual = tuple(outcome.channel for outcome in self.processing_outcomes)
             if actual != planned:
@@ -610,13 +909,60 @@ class TurnRecord:
         if any(
             value is not None
             for value in (
-                self.continuity_assessment,
+                self.review_record,
                 self.delivery_disposition,
+                self.delivery_exception,
                 self.processing_plan,
                 self.completed_at,
             )
         ) or self.processing_outcomes:
             raise ValueError("an abandoned turn cannot contain source processing state")
+
+    def _validate_modern_delivery_review(self) -> None:
+        from erii.models.continuity_review import ContinuityReviewKind
+
+        review = self.review_record
+        disposition = self.delivery_disposition
+        exception = self.delivery_exception
+        if disposition == DeliveryDisposition.SHOWN:
+            if (
+                review.kind != ContinuityReviewKind.REVIEWED
+                or exception is not None
+                or self.context_baseline is None
+                or self.context_baseline.manifest is None
+            ):
+                raise ValueError(
+                    "shown delivery requires a reviewed baseline with an active "
+                    "Manifest; unreviewed delivery must use shown_unreviewed"
+                )
+            return
+        if disposition == DeliveryDisposition.OVERRIDDEN:
+            if (
+                review.kind != ContinuityReviewKind.REVIEWED
+                or exception is None
+                or exception.disposition != disposition
+            ):
+                raise ValueError(
+                    "overridden delivery requires a reviewed receipt and matching "
+                    "DeliveryExceptionRecord"
+                )
+            return
+        if disposition == DeliveryDisposition.SHOWN_UNREVIEWED:
+            if (
+                review.kind
+                not in {
+                    ContinuityReviewKind.NOT_EVALUATED,
+                    ContinuityReviewKind.FAILED,
+                }
+                or exception is None
+                or exception.disposition != disposition
+            ):
+                raise ValueError(
+                    "shown_unreviewed requires not_evaluated or failed review "
+                    "state and a matching DeliveryExceptionRecord"
+                )
+            return
+        raise ValueError("unsupported modern delivery disposition")
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -628,16 +974,27 @@ class TurnRecord:
                 signal.to_dict() for signal in self.interaction_context
             ],
             "source_revision": self.source_revision,
+            "turn_format_version": self.turn_format_version,
             "record_version": self.record_version,
             "opened_at": self.opened_at,
-            "continuity_assessment": (
-                self.continuity_assessment.to_dict()
-                if self.continuity_assessment is not None
+            "context_baseline": (
+                self.context_baseline.to_dict()
+                if self.context_baseline is not None
+                else None
+            ),
+            "review_record": (
+                self.review_record.to_dict()
+                if self.review_record is not None
                 else None
             ),
             "delivery_disposition": (
                 self.delivery_disposition.value
                 if self.delivery_disposition is not None
+                else None
+            ),
+            "delivery_exception": (
+                self.delivery_exception.to_dict()
+                if self.delivery_exception is not None
                 else None
             ),
             "processing_plan": (
@@ -653,12 +1010,20 @@ class TurnRecord:
             "abandonment_reason": self.abandonment_reason,
         }
 
+    @property
+    def continuity_assessment(self) -> Optional[ReplyContinuityAssessment]:
+        """Deprecated summary view derived from the authoritative Review Record."""
+        if self.review_record is None:
+            return None
+        return self.review_record.assessment
+
     def same_opening_as(self, other: "TurnRecord") -> bool:
         """Compares the host-controlled opening payload, excluding server time."""
         return (
             self.turn_id == other.turn_id
             and self.relationship_id == other.relationship_id
             and self.source_revision == other.source_revision
+            and self.context_baseline == other.context_baseline
             and len(self.interaction_context) == len(other.interaction_context)
             and all(
                 left.same_claim_as(right)
@@ -684,8 +1049,9 @@ class TurnRecord:
                 left_agent is not None
                 and right_agent is not None
                 and left_agent.content == right_agent.content
-                and self.continuity_assessment == other.continuity_assessment
+                and self.review_record == other.review_record
                 and self.delivery_disposition == other.delivery_disposition
+                and self.delivery_exception == other.delivery_exception
                 and self.processing_plan == other.processing_plan
                 and tuple(
                     (outcome.channel, outcome.state)
@@ -710,46 +1076,186 @@ class TurnRecord:
             and self.source_revision == existing.source_revision
             and self.record_version == existing.record_version + 1
             and self.opened_at == existing.opened_at
+            and self.context_baseline == existing.context_baseline
             and self.transcript.user_message == existing.transcript.user_message
             and self.interaction_context == existing.interaction_context
         )
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "TurnRecord":
+        from erii.models.continuity_review import ContinuityReviewRecord
+        from erii.models.continuity_review import DeliveryExceptionRecord
+
+        if not isinstance(data, Mapping):
+            raise ValueError("TurnRecord must be an object")
+        turn_format_version = data.get("turn_format_version")
+        if turn_format_version is None:
+            modern_only_fields = {
+                "context_baseline",
+                "review_record",
+                "delivery_exception",
+            }
+            if modern_only_fields.intersection(data):
+                raise ValueError(
+                    "modern TurnRecord authority fields require turn_format_version"
+                )
+            return cls._from_legacy_dict(data)
+
+        _require_exact_wire_fields(
+            data,
+            TURN_RECORD_V2_FIELDS,
+            "modern TurnRecord",
+        )
+        if not isinstance(turn_format_version, str):
+            raise ValueError("turn_format_version must be a string")
+        if turn_format_version != TURN_RECORD_FORMAT_VERSION:
+            raise ValueError("unsupported TurnRecord format version")
+        record_version = data["record_version"]
+        if (
+            isinstance(record_version, bool)
+            or not isinstance(record_version, int)
+            or record_version < 1
+        ):
+            raise ValueError("record_version must be a positive integer")
+        interaction_context = _require_wire_array(
+            data["interaction_context"],
+            "interaction_context",
+        )
+        processing_outcomes = _require_wire_array(
+            data["processing_outcomes"],
+            "processing_outcomes",
+        )
+        raw_disposition = data["delivery_disposition"]
+        disposition = (
+            DeliveryDisposition(
+                _require_wire_text(raw_disposition, "delivery_disposition")
+            )
+            if raw_disposition is not None
+            else None
+        )
         return cls(
-            turn_id=str(data["turn_id"]),
-            relationship_id=str(data["relationship_id"]),
-            status=TurnStatus(str(data["status"])),
-            transcript=SourceTranscript.from_dict(data["transcript"]),
-            interaction_context=tuple(
-                InteractionContextSignal.from_dict(item)
-                for item in data.get("interaction_context", [])
+            turn_id=_require_wire_text(data["turn_id"], "turn_id"),
+            relationship_id=_require_wire_text(
+                data["relationship_id"],
+                "relationship_id",
             ),
-            source_revision=str(data.get("source_revision", "1")),
-            record_version=int(data.get("record_version", data.get("revision", 1))),
-            opened_at=str(data["opened_at"]),
-            continuity_assessment=(
-                ReplyContinuityAssessment.from_dict(data["continuity_assessment"])
-                if data.get("continuity_assessment") is not None
+            status=TurnStatus(_require_wire_text(data["status"], "status")),
+            transcript=SourceTranscript.from_wire_dict(data["transcript"]),
+            interaction_context=tuple(
+                InteractionContextSignal.from_wire_dict(item)
+                for item in interaction_context
+            ),
+            source_revision=_require_wire_text(
+                data["source_revision"],
+                "source_revision",
+            ),
+            turn_format_version=turn_format_version,
+            record_version=record_version,
+            opened_at=_require_wire_text(data["opened_at"], "opened_at"),
+            context_baseline=(
+                TurnContextBaseline.from_dict(data["context_baseline"])
+                if data["context_baseline"] is not None
                 else None
             ),
-            delivery_disposition=(
-                DeliveryDisposition(str(data["delivery_disposition"]))
-                if data.get("delivery_disposition") is not None
+            review_record=(
+                ContinuityReviewRecord.from_dict(data["review_record"])
+                if data["review_record"] is not None
+                else None
+            ),
+            delivery_disposition=disposition,
+            delivery_exception=(
+                DeliveryExceptionRecord.from_dict(data["delivery_exception"])
+                if data["delivery_exception"] is not None
                 else None
             ),
             processing_plan=(
+                SourceProcessingPlan.from_wire_dict(data["processing_plan"])
+                if data["processing_plan"] is not None
+                else None
+            ),
+            processing_outcomes=tuple(
+                SourceProcessingOutcome.from_wire_dict(item)
+                for item in processing_outcomes
+            ),
+            completed_at=_require_optional_wire_text(
+                data["completed_at"],
+                "completed_at",
+            ),
+            abandoned_at=_require_optional_wire_text(
+                data["abandoned_at"],
+                "abandoned_at",
+            ),
+            abandonment_reason=_require_optional_wire_text(
+                data["abandonment_reason"],
+                "abandonment_reason",
+            ),
+        )
+
+    @classmethod
+    def _from_legacy_dict(cls, data: Mapping[str, Any]) -> "TurnRecord":
+        from erii.models.continuity_review import ContinuityReviewRecord
+
+        actual_fields = set(data)
+        revision_fields = (
+            LEGACY_TURN_RECORD_V1_FIELDS - {"record_version"}
+        ) | {"revision"}
+        if actual_fields not in {
+            LEGACY_TURN_RECORD_V1_FIELDS,
+            frozenset(revision_fields),
+        }:
+            raise ValueError(
+                "Legacy TurnRecord contains unknown or missing fields"
+            )
+        raw_disposition = data.get("delivery_disposition")
+        if raw_disposition not in {
+            None,
+            DeliveryDisposition.SHOWN.value,
+            DeliveryDisposition.OVERRIDDEN.value,
+        }:
+            raise ValueError("Legacy TurnRecord has a non-Legacy disposition")
+        legacy_summary = (
+            ReplyContinuityAssessment.from_dict(data["continuity_assessment"])
+            if data["continuity_assessment"] is not None
+            else None
+        )
+        status = TurnStatus(str(data["status"]))
+        return cls(
+            turn_id=str(data["turn_id"]),
+            relationship_id=str(data["relationship_id"]),
+            status=status,
+            transcript=SourceTranscript.from_dict(data["transcript"]),
+            interaction_context=tuple(
+                InteractionContextSignal.from_dict(item)
+                for item in data["interaction_context"]
+            ),
+            source_revision=str(data["source_revision"]),
+            turn_format_version=LEGACY_TURN_RECORD_FORMAT_VERSION,
+            record_version=int(data.get("record_version", data.get("revision"))),
+            opened_at=str(data["opened_at"]),
+            context_baseline=None,
+            review_record=(
+                ContinuityReviewRecord.legacy_unavailable(legacy_summary)
+                if status == TurnStatus.COMPLETED
+                else None
+            ),
+            delivery_disposition=(
+                DeliveryDisposition(str(raw_disposition))
+                if raw_disposition is not None
+                else None
+            ),
+            delivery_exception=None,
+            processing_plan=(
                 SourceProcessingPlan.from_dict(data["processing_plan"])
-                if data.get("processing_plan") is not None
+                if data["processing_plan"] is not None
                 else None
             ),
             processing_outcomes=tuple(
                 SourceProcessingOutcome.from_dict(item)
-                for item in data.get("processing_outcomes", [])
+                for item in data["processing_outcomes"]
             ),
-            completed_at=data.get("completed_at"),
-            abandoned_at=data.get("abandoned_at"),
-            abandonment_reason=data.get("abandonment_reason"),
+            completed_at=data["completed_at"],
+            abandoned_at=data["abandoned_at"],
+            abandonment_reason=data["abandonment_reason"],
         )
 
 
