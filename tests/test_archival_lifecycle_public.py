@@ -537,7 +537,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
         class SlowFirstExtractor(ScriptedMemoryExtractor):
             def extract(self, request):
                 if not self.calls:
-                    time.sleep(0.1)
+                    time.sleep(0.45)
                 return super().extract(request)
 
         for name, make_storage in self._storage_factories(tempfile.mkdtemp()):
@@ -551,7 +551,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
                     memory_extractor=extractor,
                     config=ERIIConfig(
                         async_archival=False,
-                        archival_lease_seconds=0.05,
+                        archival_lease_seconds=0.2,
                         archival_base_delay_seconds=0.0,
                     ),
                 )
@@ -574,6 +574,145 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
                     1,
                 )
                 engine.close()
+
+    def test_slow_consumer_renewal_does_not_starve_processing_heartbeat(self):
+        class SlowAfterClaimConsumerStorage(FileStorage):
+            def __init__(self, root_dir):
+                super().__init__(root_dir)
+                self._record_claimed = False
+                self.consumer_renewals_after_claim = 0
+
+            def claim_next_archival_record(self, **kwargs):
+                claimed = super().claim_next_archival_record(**kwargs)
+                if claimed is not None:
+                    self._record_claimed = True
+                return claimed
+
+            def acquire_archival_consumer(
+                self,
+                consumer_id,
+                *,
+                now,
+                lease_seconds,
+            ):
+                if self._record_claimed:
+                    self.consumer_renewals_after_claim += 1
+                    time.sleep(0.25)
+                return super().acquire_archival_consumer(
+                    consumer_id,
+                    now=now,
+                    lease_seconds=lease_seconds,
+                )
+
+        class SlowExtractor(ScriptedMemoryExtractor):
+            def extract(self, request):
+                time.sleep(0.45)
+                return super().extract(request)
+
+        storage = SlowAfterClaimConsumerStorage(tempfile.mkdtemp())
+        extractor = SlowExtractor(artifact_decision)
+        engine = ERIIEngine(
+            storage_driver=storage,
+            memory_extractor=extractor,
+            config=ERIIConfig(
+                async_archival=False,
+                archival_lease_seconds=0.2,
+                archival_consumer_lease_seconds=3.0,
+                archival_base_delay_seconds=0.0,
+            ),
+        )
+        try:
+            self._record_source_turn(engine, "turn-slow-consumer-renewal")
+            completed = engine.archive_turn(
+                "agent_erii",
+                "user_one",
+                "turn-slow-consumer-renewal",
+                idempotency_key="archive-slow-consumer-renewal",
+            )
+
+            self.assertEqual(completed.status, ArchivalStatus.COMPLETED)
+            self.assertEqual(storage.consumer_renewals_after_claim, 0)
+            self.assertEqual(len(extractor.calls), 1)
+            self.assertEqual(
+                len(engine.export_memory("agent_erii", "user_one").nodes),
+                1,
+            )
+        finally:
+            engine.close()
+
+    def test_valid_commit_permit_survives_processing_lease_expiry_after_binding(
+        self,
+    ):
+        class PauseAfterBindingFileStorage(FileStorage):
+            def bind_prepared_archival_batch(self, record, batch):
+                bound = super().bind_prepared_archival_batch(record, batch)
+                time.sleep(0.3)
+                return bound
+
+        class PauseAfterBindingSQLiteStorage(SQLiteStorage):
+            def bind_prepared_archival_batch(self, record, batch):
+                bound = super().bind_prepared_archival_batch(record, batch)
+                time.sleep(0.3)
+                return bound
+
+        root = tempfile.mkdtemp()
+        storage_factories = (
+            (
+                "file",
+                lambda: PauseAfterBindingFileStorage(
+                    os.path.join(root, "permit-files")
+                ),
+            ),
+            (
+                "sqlite",
+                lambda: PauseAfterBindingSQLiteStorage(
+                    os.path.join(root, "permit-memory.db")
+                ),
+            ),
+        )
+        for name, make_storage in storage_factories:
+            with self.subTest(storage=name):
+                extractor = ScriptedMemoryExtractor(artifact_decision)
+                engine = ERIIEngine(
+                    storage_driver=make_storage(),
+                    memory_extractor=extractor,
+                    config=ERIIConfig(
+                        async_archival=False,
+                        archival_lease_seconds=0.2,
+                        archival_commit_permit_seconds=2.0,
+                        archival_consumer_lease_seconds=2.0,
+                        archival_base_delay_seconds=0.0,
+                    ),
+                )
+                try:
+                    self._record_source_turn(
+                        engine,
+                        "turn-permit-after-binding",
+                    )
+                    completed = engine.archive_turn(
+                        "agent_erii",
+                        "user_one",
+                        "turn-permit-after-binding",
+                        idempotency_key="archive-permit-after-binding",
+                    )
+
+                    self.assertEqual(completed.status, ArchivalStatus.COMPLETED)
+                    self.assertEqual(
+                        completed.outcome_code,
+                        ArchivalOutcomeCode.ARTIFACTS_COMMITTED,
+                    )
+                    self.assertEqual(len(extractor.calls), 1)
+                    self.assertEqual(
+                        len(
+                            engine.export_memory(
+                                "agent_erii",
+                                "user_one",
+                            ).nodes
+                        ),
+                        1,
+                    )
+                finally:
+                    engine.close()
 
     def test_single_consumer_lease_prevents_two_tasks_from_extracting_in_parallel(self):
         class BlockingExtractor:

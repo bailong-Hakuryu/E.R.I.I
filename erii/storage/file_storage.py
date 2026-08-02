@@ -867,11 +867,12 @@ class FileStorage(BaseStorage):
         """Claims one ready record through a cross-process atomic replacement."""
         with self._turn_guard("__archival_global__"):
             state = self._load_archival_state()
+            observed_at = max(now, time.time())
             for index, raw in enumerate(state["records"]):
                 existing = ArchivalRecord.from_dict(raw)
                 if archival_id is not None and existing.receipt.archival_id != archival_id:
                     continue
-                if not self._archival_ready(existing, now):
+                if not self._archival_ready(existing, observed_at):
                     continue
                 recovered_expired_lease = (
                     existing.receipt.status == ArchivalStatus.PROCESSING
@@ -906,14 +907,14 @@ class FileStorage(BaseStorage):
                     receipt=receipt,
                     record_version=existing.record_version + 1,
                     lease_token=uuid.uuid4().hex,
-                    lease_expires_at=now + lease_seconds,
+                    lease_expires_at=observed_at + lease_seconds,
                     attempt_id=str(uuid.uuid4()),
                     recovered_expired_lease=recovered_expired_lease,
                     commit_permit=(
                         CommitPermit(
                             token=uuid.uuid4().hex,
                             binding_digest=str(existing.commit_binding_digest),
-                            expires_at=now + permit_seconds,
+                            expires_at=observed_at + permit_seconds,
                         )
                         if phase == ArchivalPhase.COMMIT
                         else None
@@ -937,6 +938,7 @@ class FileStorage(BaseStorage):
         """Renews one current, unexpired processing lease."""
         with self._turn_guard("__archival_global__"):
             state = self._load_archival_state()
+            observed_at = max(now, time.time())
             for index, raw in enumerate(state["records"]):
                 existing = ArchivalRecord.from_dict(raw)
                 if (
@@ -949,12 +951,12 @@ class FileStorage(BaseStorage):
                     or existing.attempt_id != attempt_id
                     or existing.lease_token != lease_token
                     or existing.lease_expires_at is None
-                    or existing.lease_expires_at <= now
+                    or existing.lease_expires_at <= observed_at
                 ):
                     return False
                 renewed = replace(
                     existing,
-                    lease_expires_at=now + lease_seconds,
+                    lease_expires_at=observed_at + lease_seconds,
                 )
                 state["records"][index] = renewed.to_dict()
                 self._write_json_atomic(self._get_archival_state_path(), state)
@@ -983,6 +985,30 @@ class FileStorage(BaseStorage):
             or existing.lease_expires_at <= time.time()
         ):
             raise ArchivalConflictError("archival processing lease is no longer valid")
+
+    @staticmethod
+    def _validate_bound_archival_commit(
+        existing: ArchivalRecord,
+        record: ArchivalRecord,
+    ) -> None:
+        if (
+            existing.receipt.archival_id != record.receipt.archival_id
+            or existing.receipt.relationship_id != record.receipt.relationship_id
+            or existing.idempotency_fingerprint != record.idempotency_fingerprint
+            or existing.request_fingerprint != record.request_fingerprint
+        ):
+            raise ArchivalConflictError("immutable archival identity changed")
+        if record.record_version != existing.record_version + 1:
+            raise ArchivalConflictError("stale archival record version")
+        if (
+            existing.receipt.status != ArchivalStatus.PROCESSING
+            or existing.receipt.phase != ArchivalPhase.COMMIT
+            or not existing.attempt_id
+            or existing.attempt_id != record.attempt_id
+            or not existing.lease_token
+            or existing.lease_token != record.lease_token
+        ):
+            raise ArchivalConflictError("archival commit authority is no longer valid")
 
     def bind_prepared_archival_batch(
         self,
@@ -1022,7 +1048,7 @@ class FileStorage(BaseStorage):
                 existing = ArchivalRecord.from_dict(raw)
                 if existing.receipt.archival_id != record.receipt.archival_id:
                     continue
-                self._validate_archival_update(existing, record)
+                self._validate_bound_archival_commit(existing, record)
                 if (
                     existing.prepared_batch is None
                     or existing.commit_binding_digest
@@ -1060,16 +1086,17 @@ class FileStorage(BaseStorage):
         """Enforces one active consumer for this FileStorage ledger."""
         with self._turn_guard("__archival_global__"):
             state = self._load_archival_state()
+            observed_at = max(now, time.time())
             lease = state.get("consumer_lease")
             if (
                 lease is not None
                 and lease.get("consumer_id") != consumer_id
-                and float(lease.get("expires_at", 0.0)) > now
+                and float(lease.get("expires_at", 0.0)) > observed_at
             ):
                 return False
             state["consumer_lease"] = {
                 "consumer_id": consumer_id,
-                "expires_at": now + lease_seconds,
+                "expires_at": observed_at + lease_seconds,
             }
             self._write_json_atomic(self._get_archival_state_path(), state)
             return True

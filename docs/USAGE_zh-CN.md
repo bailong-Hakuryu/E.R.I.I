@@ -690,6 +690,8 @@ receipts = engine.list_archival_receipts("agent_lumi", "user_chen")
 
 生命周期状态包括 `pending`、`processing`、`retry_wait`、`completed` 和 `failed`；成功结果码是 `artifacts_committed` 与 `no_memory`。临时提取/提交失败会依据配置保持可观察、可重试；提交阶段重试会重放已经冻结的批次，不会再次调用提取器。活动提取会续租带栅栏的 Processing/Consumer Lease；进程崩溃后发现的过期 attempt 会标记为 `processing_lease_expired`，沿用已有的有界尝试预算，不会因此额外调用一次模型。同步模式下，已接收但未能完成的处理会抛出 `ArchivalProcessingError`，应读取其 `.receipt` 获得安全的持久状态；没有配置提取器时会抛出 `ArchivalCapabilityError`。
 
+Processing Lease 严格到期，不存在隐藏宽限期。`archival_lease_seconds` 应高于部署主机最坏情况下的 FileStorage/SQLite 持久事务耗时与线程调度暂停；默认的 300 秒是有意保守的取值。亚秒级租约只适合受控测试，或已经测量并约束持久化延迟的存储。如果一次受 Processing Lease 保护的续租或绑定事务本身就超过配置租约，当前 attempt 会失去所有权，而不会通过迟到续租削弱 fencing。
+
 FileStorage 使用锁和原子文件替换；SQLiteStorage 在一个事务中发布 MemoryNode、结构化 Timeline 与终态回执，a6 将 SQLite Schema 升级到 v5。两个内置存储实现相同公开契约，并使用租约避免两个消费者重复发布同一提交。
 
 ### 5. 携带与留存

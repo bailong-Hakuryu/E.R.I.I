@@ -210,6 +210,58 @@ class ArchivalSafetyRegressionTests(unittest.TestCase):
                 finally:
                     engine.close()
 
+    def test_renewal_uses_storage_observation_instead_of_stale_caller_time(self):
+        for name, make_storage in self._storage_factories(tempfile.mkdtemp()):
+            with self.subTest(storage=name):
+                engine = ERIIEngine(
+                    storage_driver=make_storage(),
+                    memory_extractor=ImmediateArtifactExtractor(),
+                    config=ERIIConfig(async_archival=True),
+                )
+                store = engine.storage.atomic_archival_store_v1()
+                try:
+                    self._record_source_turn(engine, "turn-stale-renewal-clock")
+                    pending = engine.archive_turn(
+                        AGENT_ID,
+                        USER_ID,
+                        "turn-stale-renewal-clock",
+                        idempotency_key="archive-stale-renewal-clock",
+                    )
+                    now = time.time()
+                    self.assertTrue(
+                        store.acquire_archival_consumer(
+                            "stale-clock-worker",
+                            now=now,
+                            lease_seconds=1.0,
+                        )
+                    )
+                    claimed = store.claim_next_archival_record(
+                        now=now,
+                        lease_seconds=1.0,
+                        permit_seconds=1.0,
+                        archival_id=pending.archival_id,
+                    )
+                    self.assertIsNotNone(claimed)
+
+                    self.assertTrue(
+                        store.renew_archival_lease(
+                            relationship_id=claimed.receipt.relationship_id,
+                            archival_id=claimed.receipt.archival_id,
+                            attempt_id=claimed.attempt_id,
+                            lease_token=claimed.lease_token,
+                            now=time.time() - 0.5,
+                            lease_seconds=0.2,
+                        )
+                    )
+                    renewed = store.get_archival_record(
+                        claimed.receipt.relationship_id,
+                        claimed.receipt.archival_id,
+                    )
+                    self.assertGreater(renewed.lease_expires_at, time.time())
+                finally:
+                    store.release_archival_consumer("stale-clock-worker")
+                    engine.close()
+
     def test_close_waits_for_inflight_work_and_fences_the_next_claim(self):
         """Closing during extraction must not let the same drain claim task two."""
         for name, make_storage in self._storage_factories(tempfile.mkdtemp()):

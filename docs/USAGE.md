@@ -718,6 +718,8 @@ receipts = engine.list_archival_receipts("agent_lumi", "user_chen")
 
 Lifecycle states are `pending`, `processing`, `retry_wait`, `completed`, and `failed`. Successful outcome codes are `artifacts_committed` and `no_memory`. Temporary extraction or commit failures remain inspectable and retryable according to configuration; a commit retry replays the already frozen batch instead of calling the extractor again. An active extraction renews its fenced Processing and Consumer leases; a crashed attempt discovered after lease expiry is classified as `processing_lease_expired` and consumes the existing bounded attempt budget without another model call. With inline processing, an accepted attempt that cannot complete raises `ArchivalProcessingError`; its `.receipt` is the safe durable state to inspect. A missing extractor raises `ArchivalCapabilityError`.
 
+Processing Lease expiry is strict and has no hidden grace period. Configure `archival_lease_seconds` above the worst-case durable FileStorage/SQLite transaction time and scheduler pause of the deployment host; the 300-second default is deliberately conservative. Sub-second leases are suitable only for controlled tests or storage with a measured latency budget. If one Processing-Lease-guarded renewal or binding transaction itself exceeds the configured lease, the attempt loses ownership instead of renewing late and weakening fencing.
+
 FileStorage uses locked atomic file replacement. SQLiteStorage publishes nodes, structured Timeline entries, and the terminal receipt in one transaction; a6 upgrades SQLite to Schema v5. Both bundled stores implement the same public contract and use leases to prevent two consumers from publishing the same submission twice.
 
 ### 5. Portability and retention

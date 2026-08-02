@@ -328,6 +328,7 @@ class ArchivalCoordinator:
                     with self._state_condition:
                         if not self._accepting:
                             break
+                        consumer_lease_started_at = time.monotonic()
                         if not store.acquire_archival_consumer(
                             self.consumer_id,
                             now=time.time(),
@@ -347,7 +348,10 @@ class ArchivalCoordinator:
                     if claimed is None:
                         break
                     try:
-                        self._process_claimed(claimed)
+                        self._process_claimed(
+                            claimed,
+                            consumer_lease_started_at=consumer_lease_started_at,
+                        )
                     finally:
                         with self._state_condition:
                             self._in_flight_archival_id = None
@@ -367,7 +371,12 @@ class ArchivalCoordinator:
                 self._state_condition.notify_all()
             self._processing_lock.release()
 
-    def _process_claimed(self, record: ArchivalRecord) -> ArchivalReceipt:
+    def _process_claimed(
+        self,
+        record: ArchivalRecord,
+        *,
+        consumer_lease_started_at: float,
+    ) -> ArchivalReceipt:
         current = record
         try:
             if (
@@ -393,7 +402,10 @@ class ArchivalCoordinator:
                     safe_summary="the previous archival processing lease expired",
                 )
             if current.receipt.phase == ArchivalPhase.EXTRACTION:
-                current = self._extract_and_bind(current)
+                current = self._extract_and_bind(
+                    current,
+                    consumer_lease_started_at=consumer_lease_started_at,
+                )
             return self._commit(current)
         except ArchivalConflictError:
             return self._latest_receipt(current)
@@ -436,7 +448,12 @@ class ArchivalCoordinator:
                 safe_summary=summary,
             )
 
-    def _extract_and_bind(self, record: ArchivalRecord) -> ArchivalRecord:
+    def _extract_and_bind(
+        self,
+        record: ArchivalRecord,
+        *,
+        consumer_lease_started_at: float,
+    ) -> ArchivalRecord:
         store = self._require_capability()
         turn = self.storage.get_turn_record(
             record.receipt.relationship_id,
@@ -456,7 +473,11 @@ class ArchivalCoordinator:
             transcript=turn.transcript,
             interaction_context=turn.interaction_context,
         )
-        raw_decision, record = self._extract_with_heartbeat(record, request)
+        raw_decision, record = self._extract_with_heartbeat(
+            record,
+            request,
+            consumer_lease_started_at=consumer_lease_started_at,
+        )
         host_descriptor = self._host_descriptor
         if host_descriptor is None:
             raise ArchivalCapabilityError(
@@ -581,6 +602,8 @@ class ArchivalCoordinator:
         self,
         record: ArchivalRecord,
         request: MemoryExtractionRequest,
+        *,
+        consumer_lease_started_at: float,
     ):
         """Runs one explicit extraction while renewing its fenced leases."""
         store = self._require_capability()
@@ -591,45 +614,78 @@ class ArchivalCoordinator:
             self.lease_seconds,
         )
 
-        def renew() -> bool:
-            now = time.time()
-            if not store.acquire_archival_consumer(
-                self.consumer_id,
-                now=now,
-                lease_seconds=consumer_lease_seconds,
-            ):
-                return False
-            return store.renew_archival_lease(
+        processing_heartbeat_interval = max(
+            0.0001,
+            min(1.0, self.lease_seconds / 3.0),
+        )
+        consumer_heartbeat_interval = max(
+            0.0001,
+            min(1.0, consumer_lease_seconds / 3.0),
+        )
+        next_consumer_renewal = (
+            consumer_lease_started_at + consumer_heartbeat_interval
+        )
+
+        def renew_processing_lease():
+            started_at = time.monotonic()
+            renewed = store.renew_archival_lease(
                 relationship_id=record.receipt.relationship_id,
                 archival_id=record.receipt.archival_id,
                 attempt_id=record.attempt_id,
                 lease_token=record.lease_token,
-                now=now,
+                now=time.time(),
                 lease_seconds=self.lease_seconds,
             )
+            return started_at if renewed else None
 
-        if not renew():
+        def renew_leases(*, consumer_due: bool):
+            nonlocal next_consumer_renewal
+            processing_started_at = renew_processing_lease()
+            if processing_started_at is None:
+                return None
+            if not consumer_due:
+                return processing_started_at
+            consumer_started_at = time.monotonic()
+            if not store.acquire_archival_consumer(
+                self.consumer_id,
+                now=time.time(),
+                lease_seconds=consumer_lease_seconds,
+            ):
+                return None
+            next_consumer_renewal = (
+                consumer_started_at + consumer_heartbeat_interval
+            )
+            return renew_processing_lease()
+
+        processing_started_at = renew_leases(
+            consumer_due=time.monotonic() >= next_consumer_renewal,
+        )
+        if processing_started_at is None:
             raise ArchivalConflictError("archival processing lease expired")
+        next_processing_renewal = (
+            processing_started_at + processing_heartbeat_interval
+        )
         stopped = threading.Event()
         lease_lost = threading.Event()
-        heartbeat_interval = max(
-            0.0001,
-            min(
-                1.0,
-                self.lease_seconds / 3.0,
-                consumer_lease_seconds / 3.0,
-            ),
-        )
 
         def heartbeat() -> None:
-            while not stopped.wait(heartbeat_interval):
+            processing_deadline = next_processing_renewal
+            while True:
+                deadline = min(processing_deadline, next_consumer_renewal)
+                if stopped.wait(max(0.0, deadline - time.monotonic())):
+                    return
                 try:
-                    renewed = renew()
+                    processing_started = renew_leases(
+                        consumer_due=time.monotonic() >= next_consumer_renewal,
+                    )
                 except Exception:
-                    renewed = False
-                if not renewed:
+                    processing_started = None
+                if processing_started is None:
                     lease_lost.set()
                     return
+                processing_deadline = (
+                    processing_started + processing_heartbeat_interval
+                )
 
         heartbeat_thread = threading.Thread(
             target=heartbeat,
@@ -642,7 +698,12 @@ class ArchivalCoordinator:
         finally:
             stopped.set()
             heartbeat_thread.join()
-        if lease_lost.is_set() or not renew():
+        if lease_lost.is_set():
+            raise ArchivalConflictError("archival processing lease expired")
+        processing_started_at = renew_leases(
+            consumer_due=time.monotonic() >= next_consumer_renewal,
+        )
+        if processing_started_at is None:
             raise ArchivalConflictError("archival processing lease expired")
         latest = store.get_archival_record(
             record.receipt.relationship_id,

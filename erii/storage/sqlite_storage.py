@@ -1661,12 +1661,13 @@ class SQLiteStorage(BaseStorage):
         """Leases one ready record with first-writer-wins SQLite locking."""
         with closing(self._get_connection()) as conn:
             conn.execute("BEGIN IMMEDIATE")
+            observed_at = max(now, time.time())
             params = [
                 ArchivalStatus.PENDING.value,
                 ArchivalStatus.RETRY_WAIT.value,
-                now,
+                observed_at,
                 ArchivalStatus.PROCESSING.value,
-                now,
+                observed_at,
             ]
             archival_filter = ""
             if archival_id is not None:
@@ -1727,14 +1728,14 @@ class SQLiteStorage(BaseStorage):
                 receipt=receipt,
                 record_version=existing.record_version + 1,
                 lease_token=uuid.uuid4().hex,
-                lease_expires_at=now + lease_seconds,
+                lease_expires_at=observed_at + lease_seconds,
                 attempt_id=str(uuid.uuid4()),
                 recovered_expired_lease=recovered_expired_lease,
                 commit_permit=(
                     CommitPermit(
                         token=uuid.uuid4().hex,
                         binding_digest=str(existing.commit_binding_digest),
-                        expires_at=now + permit_seconds,
+                        expires_at=observed_at + permit_seconds,
                     )
                     if phase == ArchivalPhase.COMMIT
                     else None
@@ -1768,18 +1769,19 @@ class SQLiteStorage(BaseStorage):
                 conn.commit()
                 return False
             existing = self._archival_record_from_row(row)
+            observed_at = max(now, time.time())
             if (
                 existing.receipt.status != ArchivalStatus.PROCESSING
                 or existing.attempt_id != attempt_id
                 or existing.lease_token != lease_token
                 or existing.lease_expires_at is None
-                or existing.lease_expires_at <= now
+                or existing.lease_expires_at <= observed_at
             ):
                 conn.commit()
                 return False
             renewed = replace(
                 existing,
-                lease_expires_at=now + lease_seconds,
+                lease_expires_at=observed_at + lease_seconds,
             )
             self._write_archival_row(conn.cursor(), renewed)
             conn.commit()
@@ -1807,6 +1809,30 @@ class SQLiteStorage(BaseStorage):
             or existing.lease_expires_at <= time.time()
         ):
             raise ArchivalConflictError("archival processing lease is no longer valid")
+
+    @staticmethod
+    def _validate_bound_archival_commit(
+        existing: ArchivalRecord,
+        record: ArchivalRecord,
+    ) -> None:
+        if (
+            existing.receipt.archival_id != record.receipt.archival_id
+            or existing.receipt.relationship_id != record.receipt.relationship_id
+            or existing.idempotency_fingerprint != record.idempotency_fingerprint
+            or existing.request_fingerprint != record.request_fingerprint
+        ):
+            raise ArchivalConflictError("immutable archival identity changed")
+        if record.record_version != existing.record_version + 1:
+            raise ArchivalConflictError("stale archival record version")
+        if (
+            existing.receipt.status != ArchivalStatus.PROCESSING
+            or existing.receipt.phase != ArchivalPhase.COMMIT
+            or not existing.attempt_id
+            or existing.attempt_id != record.attempt_id
+            or not existing.lease_token
+            or existing.lease_token != record.lease_token
+        ):
+            raise ArchivalConflictError("archival commit authority is no longer valid")
 
     def bind_prepared_archival_batch(
         self,
@@ -1849,7 +1875,7 @@ class SQLiteStorage(BaseStorage):
             if row is None:
                 raise ArchivalNotFoundError("archival was not found")
             existing = self._archival_record_from_row(row)
-            self._validate_archival_update(existing, record)
+            self._validate_bound_archival_commit(existing, record)
             batch = existing.prepared_batch
             if (
                 batch is None
@@ -1922,10 +1948,11 @@ class SQLiteStorage(BaseStorage):
                 WHERE lease_name = 'global'
                 """
             ).fetchone()
+            observed_at = max(now, time.time())
             if (
                 row is not None
                 and row["consumer_id"] != consumer_id
-                and float(row["expires_at"]) > now
+                and float(row["expires_at"]) > observed_at
             ):
                 conn.commit()
                 return False
@@ -1938,7 +1965,7 @@ class SQLiteStorage(BaseStorage):
                     consumer_id = excluded.consumer_id,
                     expires_at = excluded.expires_at
                 """,
-                (consumer_id, now + lease_seconds),
+                (consumer_id, observed_at + lease_seconds),
             )
             conn.commit()
             return True
