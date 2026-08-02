@@ -1,12 +1,20 @@
 name: Release prerelease
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Annotated prerelease tag to publish (for example v0.4.0a8)
+        required: true
+        type: string
   push:
+    branches:
+      - "codex/release-v*"
     tags:
       - "v*"
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-prerelease
   cancel-in-progress: false
 
 permissions:
@@ -15,33 +23,95 @@ permissions:
 jobs:
   preflight:
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.target.outputs.release_tag }}
+      version: ${{ steps.identity.outputs.version }}
     steps:
+      - name: Resolve release target
+        id: target
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            release_tag="${REQUESTED_TAG}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            release_tag="${GITHUB_REF_NAME}"
+          else
+            release_tag="${GITHUB_REF_NAME#codex/release-}"
+          fi
+          if [[ ! "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$ ]]; then
+            echo "::error title=Invalid release target::${release_tag} is not a prerelease tag"
+            exit 1
+          fi
+          echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
       - uses: actions/checkout@v4
         with:
+          ref: ${{ steps.target.outputs.release_tag }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Verify immutable release identity
+      - name: Verify annotated immutable tag
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
         run: |
           set -euo pipefail
-          test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = "tag"
-          tag_version="${GITHUB_REF_NAME#v}"
-          package_version="$(python -c "import runpy; print(runpy.run_path('erii/_version.py')['__version__'])")"
-          [[ "${tag_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$ ]]
-          test "${tag_version}" = "${package_version}"
-          test -f "docs/release-notes-${package_version}.md"
-          if existing_draft="$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
-            if [ "${existing_draft}" = "true" ]; then
-              echo "A draft release already exists for ${GITHUB_REF_NAME}; inspect and delete that incomplete draft explicitly before retrying." >&2
-            else
-              echo "Release ${GITHUB_REF_NAME} already exists; published tags are immutable." >&2
-            fi
+          tag_type="$(git cat-file -t "refs/tags/${RELEASE_TAG}" 2>/dev/null || true)"
+          if [ "${tag_type}" != "tag" ]; then
+            echo "::error title=Mutable release identity::${RELEASE_TAG} must be an annotated tag"
             exit 1
           fi
+          tag_target="$(git rev-list -n 1 "refs/tags/${RELEASE_TAG}")"
+          checkout_target="$(git rev-parse HEAD)"
+          if [ "${tag_target}" != "${checkout_target}" ]; then
+            echo "::error title=Tag checkout mismatch::${RELEASE_TAG} does not resolve to the checked-out commit"
+            exit 1
+          fi
+      - name: Verify package version and release notes
+        id: identity
+        env:
+          RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          tag_version="${RELEASE_TAG#v}"
+          package_version="$(python -c "import runpy; print(runpy.run_path('erii/_version.py')['__version__'])")"
+          if [ "${tag_version}" != "${package_version}" ]; then
+            echo "::error title=Version mismatch::tag=${tag_version}, package=${package_version}"
+            exit 1
+          fi
+          if [ ! -f "docs/release-notes-${package_version}.md" ]; then
+            echo "::error title=Missing release notes::docs/release-notes-${package_version}.md"
+            exit 1
+          fi
+          echo "version=${package_version}" >> "${GITHUB_OUTPUT}"
+      - name: Refuse an existing GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          http_status="$(curl --silent --show-error \
+            --output "${response_file}" \
+            --write-out '%{http_code}' \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")"
+          case "${http_status}" in
+            404)
+              ;;
+            200)
+              echo "::error title=Release already exists::${RELEASE_TAG} is already a GitHub release"
+              exit 1
+              ;;
+            *)
+              echo "::error title=Release lookup failed::GitHub API returned HTTP ${http_status}"
+              exit 1
+              ;;
+          esac
 
   verify:
     needs: preflight
@@ -53,6 +123,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.preflight.outputs.release_tag }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -68,11 +139,12 @@ jobs:
         run: python -m compileall -q erii examples tests
 
   package:
-    needs: verify
+    needs: [preflight, verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.preflight.outputs.release_tag }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -85,16 +157,16 @@ jobs:
           python -m build
           python -m twine check --strict dist/*
           cd dist
-          sha256sum *.whl *.tar.gz > SHA256SUMS.txt
+          sha256sum ./*.whl ./*.tar.gz > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: release-dist-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: release-dist-${{ needs.preflight.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
 
   smoke:
-    needs: package
+    needs: [preflight, package]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -107,7 +179,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: release-dist-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: release-dist-${{ needs.preflight.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist
       - uses: actions/setup-python@v5
         with:
@@ -115,58 +187,61 @@ jobs:
       - name: Verify hashes and clean installation
         env:
           ARTIFACT_GLOB: ${{ matrix.artifact-glob }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
           (cd dist && sha256sum --check SHA256SUMS.txt)
           artifact="$(compgen -G "${ARTIFACT_GLOB}" | head -n 1)"
           test -n "${artifact}"
           python -m pip install "${artifact}[server]" httpx
-          python -c "import erii; assert erii.__version__ == '${GITHUB_REF_NAME#v}'"
-          python -c "import tempfile; from fastapi.testclient import TestClient; from erii.server.app import app, configure_engine, configure_server_access; directory = tempfile.TemporaryDirectory(); engine = configure_engine(directory.name); configure_server_access('release-smoke-key-' + 'x' * 32); client = TestClient(app); response = client.get('/api/v1/health'); assert response.status_code == 200, response.text; assert response.json()['version'] == '${GITHUB_REF_NAME#v}'; client.close(); engine.close(); directory.cleanup()"
+          python -c "import erii, os; assert erii.__version__ == os.environ['RELEASE_VERSION']"
+          python -c "import os, tempfile; from fastapi.testclient import TestClient; from erii.server.app import app, configure_engine, configure_server_access; directory = tempfile.TemporaryDirectory(); engine = configure_engine(directory.name); configure_server_access('release-smoke-key-' + 'x' * 32); client = TestClient(app); response = client.get('/api/v1/health'); assert response.status_code == 200, response.text; assert response.json()['version'] == os.environ['RELEASE_VERSION']; client.close(); engine.close(); directory.cleanup()"
           erii --help
 
   publish:
-    needs: smoke
+    needs: [preflight, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.preflight.outputs.release_tag }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: release-dist-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: release-dist-${{ needs.preflight.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: dist
       - name: Publish the verified files as a GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          local_tag_object="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}")"
-          remote_tag_object="$(git ls-remote --tags --refs origin "refs/tags/${GITHUB_REF_NAME}" | cut -f1)"
+          local_tag_object="$(git rev-parse "refs/tags/${RELEASE_TAG}")"
+          remote_tag_object="$(git ls-remote --tags --refs origin "refs/tags/${RELEASE_TAG}" | cut -f1)"
           test -n "${remote_tag_object}"
           test "${local_tag_object}" = "${remote_tag_object}"
-          test "$(git rev-list -n 1 "refs/tags/${GITHUB_REF_NAME}")" = "$(git rev-parse HEAD)"
+          test "$(git rev-list -n 1 "refs/tags/${RELEASE_TAG}")" = "$(git rev-parse HEAD)"
           (cd dist && sha256sum --check SHA256SUMS.txt)
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release create "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --draft \
             --prerelease \
             --latest=false \
-            --title "v${version} — Continuity Audit and Release Closeout" \
-            --notes-file "docs/release-notes-${version}.md"
-          gh release upload "${GITHUB_REF_NAME}" \
+            --title "E.R.I.I. ${RELEASE_TAG} - Continuity Audit and Release Closeout" \
+            --notes-file "docs/release-notes-${RELEASE_VERSION}.md"
+          gh release upload "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt
-          published_assets="$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')"
+          published_assets="$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')"
           for file in dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt; do
             grep -Fqx "$(basename "${file}")" <<<"${published_assets}"
           done
-          gh release edit "${GITHUB_REF_NAME}" \
+          gh release edit "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --draft=false \
             --prerelease \
