@@ -2,7 +2,7 @@
 
 **简体中文** · [English](USAGE.md)
 
-> 适用于 E.R.I.I. `0.4.0a7`。当前版本仍是 alpha：适合本地开发、原型验证和受控集成，不应未经加固直接承担公开生产服务。
+> 适用于 E.R.I.I. `0.4.0a8`。当前版本仍是 alpha：适合本地开发、原型验证和受控集成，不应未经加固直接承担公开生产服务。
 
 E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长期记忆内核。它不负责生成聊天回复，也不绑定某一种模型；它负责保存角色与某个用户共同经历过什么、当前如何理解这些经历，以及哪些承诺和未完成事项仍值得被想起。
 
@@ -42,7 +42,7 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 
 ### 环境要求
 
-- 要求 Python 3.9+；当前 CI 重点验证 3.9 与 3.12，新项目建议使用 Python 3.11 或 3.12；
+- 要求 Python 3.9+；`0.4.0a8` 是最后一个承诺支持 Python 3.9 的版本，`0.4.0b1` 起最低版本提高到 Python 3.11。当前 CI 重点验证 3.9 与 3.12，新项目建议使用 Python 3.11 或 3.12；
 - 基础安装只依赖 Pydantic；
 - SQLite 使用 Python 标准库，无需单独安装数据库服务。
 
@@ -95,7 +95,7 @@ python -m pip install -e ".[dev]"
 python -c "import erii; print(erii.__version__)"
 ```
 
-应输出 `0.4.0a7`。
+应输出 `0.4.0a8`。
 
 alpha 阶段用于长期环境时，应固定一个经过验证的 commit 或 release，不要让部署脚本无条件跟随 `main`。
 
@@ -487,6 +487,7 @@ record_turn() → archive_turn() → 持久回执
 ```python
 from erii import (
     ArchivalArtifactsDecision,
+    ArchivalEvidenceCitation,
     ArchivalNoMemoryDecision,
     ExtractorDescriptor,
     MemoryCandidate,
@@ -499,31 +500,47 @@ class MyMemoryExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="my-app.memory-extractor",
         extractor_version="1.0",
-        extraction_schema_version="1",
+        extraction_schema_version="2",
     )
 
     def extract(self, request):
         # request 标识关系与 Source Turn，并携带规范可见原文。
         # 真实实现可以在这里调用宿主选择的模型，再校验并转换输出。
-        user_text = request.transcript.user_message.content
+        user_message = request.transcript.user_message
+        user_text = user_message.content
         if user_text == "谢谢。":
             return ArchivalNoMemoryDecision(
                 reason_code="ordinary_acknowledgement",
             )
 
+        if "游戏厅" not in user_text:
+            return ArchivalNoMemoryDecision(reason_code="no_new_information")
+
+        evidence = (
+            ArchivalEvidenceCitation(
+                source_id=user_message.message_id,
+                source_revision=request.source_revision,
+                quote=user_text,
+                start=0,
+                end=len(user_text),
+            ),
+        )
+
         return ArchivalArtifactsDecision(
             timeline=(
                 TimelineCandidate(
-                    content="我们一起在街机厅度过了一个普通的下午。",
+                    content="用户提议去游戏厅。",
+                    evidence=evidence,
                 ),
             ),
             memories=(
                 MemoryCandidate(
                     node_type=MemoryType.PREFERENCE,
-                    content="用户喜欢和我一起玩格斗游戏。",
-                    tags=("arcade", "shared-experience"),
+                    content="用户想去游戏厅。",
+                    tags=("arcade", "user-request"),
                     base_importance=0.72,
                     emotional_score=0.35,
+                    evidence=evidence,
                 ),
             ),
         )
@@ -534,7 +551,9 @@ class MyMemoryExtractor:
 - `ArchivalArtifactsDecision`：至少包含一个 Timeline 或 Memory 候选；每条 Source Turn 最多提出一条 Timeline；
 - `ArchivalNoMemoryDecision`：明确表示成功但没有产物。允许的 reason code 是 `duplicate_information`、`ephemeral_coordination`、`no_new_information`、`none`、`nothing_durable` 和 `ordinary_acknowledgement`。
 
-空对象、自由格式 JSON、空的 `artifacts` 或未知 `kind` 都是无效输出。提取器只能提出有界的语义内容：不能直接写存储、选择权威 ID 或时间戳、创建 Core/Instruction Memory，也不能修改关系或人格状态。E.R.I.I. 会在提交时补上身份与来源。
+空对象、自由格式 JSON、空的 `artifacts` 或未知 `kind` 都是无效输出。提取器只能提出有界的语义内容：不能直接写存储、选择权威 ID 或时间戳、创建 Core/Instruction Memory，也不能修改关系或人格状态。E.R.I.I. 会在提交时补上身份与权威来源。
+
+schema `"2"` 的每个 Timeline/Memory 候选都必须携带一到十六条 `ArchivalEvidenceCitation`。Citation 通过持久消息 ID、Source revision 与精确 `quote + start/end` 声明原文范围；`start/end` 是 Unicode code point 位置，不是 UTF-8 字节位置，消息切片必须逐字等于 quote，不能 trim、Unicode 规范化或模糊搜索。提取器不能声明消息角色、关系或 Turn 范围；内核核验后才生成不复制 quote 的 `ArtifactEvidenceReference`。新的可靠归档提交不能再使用 schema `"1"`；旧 schema `"1"` 产物只以 Legacy 来源继续读取。
 
 ### 2. 先记录 Source Turn，再提交归档
 
@@ -595,6 +614,8 @@ with ERIIEngine(
 ```
 
 目标关系必须已经存在，Source Turn 必须是 `completed`，并且查询范围严格限制在完全相同的 `Agent × User`。`open` 或 `abandoned` Turn 会在创建回执前被拒绝。
+
+这个示例把已有可见对话记录为 `shown_unreviewed`，所以两个产物都刻意只引用 User 消息。Agent 回复仍完整保存在 Source Transcript 中，但不具有普通归档权威。如果同一归档决定中的任意候选引用这条异常 Agent 消息，整个决定会在形成 Prepared Batch 前失败；内核不会静默删除引文，也不会只发布其余产物。
 
 配置 `memory_extractor=` 后，`record_turn()` / `complete_turn()` 的默认处理计划也会包含 `memory_archival`。这个声明并不证明已经归档：`archive_turn()` 才是显式提交；`get_source_processing_outcomes()` 可以投影当前真实结果，而不会修改已经封存的 Turn Record。
 
@@ -679,15 +700,16 @@ FileStorage 使用锁和原子文件替换；SQLiteStorage 在一个事务中发
 compacted_count = engine.compact_archival_receipts()
 ```
 
-只有到期终态回执会被压缩。已经提交的 MemoryNode 与结构化 Timeline 不会被删除；重试原请求仍会解析到同一个 archival identity，也不会重新提取。因此 `get_archival_receipt()` 可能返回完整 `ArchivalReceipt`（`retention_state="full"`），也可能返回最小 `ArchivalTombstone`（`retention_state="compacted"`）。tombstone 保留终态、结果、来源与请求/幂等指纹，但移除提取器描述、尝试详情、摘要和产物清单。
+只有到期终态回执会被压缩。已经提交的 MemoryNode 与结构化 Timeline 不会被删除；重试原请求仍会解析到同一个 archival identity，也不会重新提取。因此 `get_archival_receipt()` 可能返回完整 `ArchivalReceipt`（`retention_state="full"`），也可能返回最小 `ArchivalTombstone`（`retention_state="compacted"`）。tombstone 保留终态、结果、来源与请求/幂等指纹，并移除提取器描述、尝试详情和摘要。现代带指纹回执还会把不含产物正文的 `artifact_commitments` 写入墓碑，每项绑定产物类型、稳定 ID 与规范不可变提交载荷的 SHA-256。MemoryNode 的强化、访问计数、状态、未决/最新标记、取代关系和最后访问时间等可变召回/生命周期字段不在承诺内。召回会连同 Source revision 重算并核对该指纹；同 ID 改写不可变提交字段或仅伪造一个合法 UUID 不能借用原权威。旧墓碑没有 commitments 时仍可维持幂等读取，但不能认证当前产物载荷。
 
-MemoryPack `0.4.0a7` 仍携带 a6 归档部分：
+MemoryPack `0.4.0a8` 携带的可靠归档部分包括：
 
 - 带 Source Turn、archival 与提取器来源的派生 MemoryNode；
 - 具有稳定 ID 和相同来源的结构化 `timeline_entries`；
-- 只保留幂等连续性和审计所需最小身份的终态 `archival_ledger` tombstone。
+- 保存幂等连续性、审计所需最小身份及可用的现代类型/ID/载荷指纹 commitments 的终态 `archival_ledger` tombstone；
+- schema `"2"` Artifact Evidence 引用，以及解析它们所需的精确 Source Turn 依赖闭包。
 
-它不会导出 pending/processing 工作、原始幂等键、详细尝试历史、`safe_summary` 或完整产物清单。即使本地完整回执仍处于留存期，MemoryPack 也只导出对应终态 tombstone；导入后的 tombstone 是刻意压缩的回执。由于这些来源绑定原关系，携带它们的 Pack 禁止重映射到另一个 `Agent × User`。
+它不会导出 pending/processing 工作、原始幂等键、详细尝试历史、`safe_summary` 或完整运维回执。即使本地完整回执仍处于留存期，MemoryPack 也只导出对应终态 tombstone；导入后的 tombstone 是刻意压缩的回执。紧凑 `artifact_commitments` 不含产物正文，但 Pack 中每个 schema `"2"` MemoryNode/Timeline 都必须在首次写入前按类型、稳定 ID 与重新计算的规范载荷 SHA-256 匹配其中一项。由于这些来源绑定原关系，携带它们的 Pack 禁止重映射到另一个 `Agent × User`。
 
 ### 旧 `remember()` 继续兼容
 
@@ -701,7 +723,7 @@ record_turn()（或 begin_turn() → complete_turn()）→ archive_turn()
 
 ## 自动关系处理：从 Source Turn 到 Event、Reflection 与 Consolidation
 
-`0.4.0a7` 提供了从 completed Source Turn 进入权威关系历史的默认路径：
+`0.4.0a7` 建立了从 completed Source Turn 进入权威关系历史的默认路径；`0.4.0a8` 保留该路径，并增加逐消息交付权威隔离：
 
 ```text
 completed Source Turn
@@ -856,6 +878,10 @@ print(run.event_ids)
 - `failed`：关系处理没有得到所需权威结果。
 
 合法 `no_relationship_event` 不等于记忆归档的 `no_memory`：归档通道仍可能保存 MemoryNode 或 Timeline；反过来，归档没有检索产物时，关系事件仍可能被接受。
+
+对于 `overridden | shown_unreviewed` Turn，Agent 消息仍是真实历史，但会被隔离出自动关系权威。任何引用它的候选都会以 `rejected + continuity_exception_agent_evidence_quarantined` 正常终结，并且不会创建 Relationship Event、状态变化、Promise、Open Loop、Persona Reflection 或 Growth 输入。同一冻结批次中彼此独立的 User-only 候选继续普通裁决；依赖受隔离候选的项目按普通依赖拒绝处理；如果全部候选都被隔离，run 以 `no_accepted_events` 完成，而不是伪装成技术失败。a8 的 `historical_reprocessing` 也不会自动绕过这条规则。
+
+该规则只看交付处置，不看情绪正负。通过普通审查并以 `shown` 交付的拒绝、愤怒、边界、疏远或伤害性表达仍属于普通 Source Turn。a8 不把温柔等同于正确；v0.5 会以追加方式处理后果与例外，但不会改写 a8 的拒绝回执。
 
 ### 3. 查询运行、反思、巩固与 Source Turn 结果
 
@@ -1538,7 +1564,7 @@ print(snapshot.state_reasons["trust"].evidence_event_id)
 
 ### 不可信模型候选进入证据裁决
 
-`0.4.x` 兼容接口允许模型先提出候选，再把完整临时 Source Turn 和候选一起交给内核：
+`0.4.x` 兼容接口允许模型先提出候选，再把完整 Source Turn 和候选一起交给内核；这个调用本身不会创建或替换持久 Turn Record：
 
 ```python
 result = engine.adjudicate_relationship_candidates(
@@ -1583,7 +1609,7 @@ for receipt in result.receipts:
     print(receipt.candidate_key, receipt.outcome, receipt.reason_codes)
 ```
 
-新集成应把持久 Turn Record 作为规范来源身份，并默认使用 `process_relationship_turn()`。上面的原始 `source_turn` 参数只为兼容旧流程和校验精确引文而保留，它不会创建或替代 Turn Record。兼容候选仍可能包含历史 `persona_reflection` 字段；自动 `RelationshipEventExtractorV1` 输出禁止携带它，正式反思会在事件 accepted 后独立执行。
+新集成应把持久 Turn Record 作为规范来源身份，并默认使用 `process_relationship_turn()`。如果提交的 `turn_id` 已经标识同一关系中的 completed Turn，`adjudicate_relationship_candidates()` 会要求 revision、消息 ID、角色、正文与发生时间逐项等于持久 Transcript；结果回执使用 `relationship-turn-adjudication-v1`，并从该 Turn 派生异常 Agent 隔离，任何不一致都失败关闭。只有确实不存在持久 Turn 时才走 transient Legacy 路径；一旦某个 Turn ID 被这种 transient 裁决使用，`begin_turn()` 与 `record_turn()` 之后不会允许把它注册成规范 Turn 来追授权威。已经有持久 Turn 时优先使用 `adjudicate_turn_candidates(..., source_turn_id, candidates, extractor_version=...)`。兼容候选仍可能包含历史 `persona_reflection` 字段；自动 `RelationshipEventExtractorV1` 输出禁止携带它，正式反思会在事件 accepted 后独立执行。
 
 裁决器会核对引文是否真的存在于指定消息中，并用版本化规则把定性信号映射为有界状态变化。模型置信度不能越过这些规则。
 
@@ -1616,7 +1642,7 @@ context = engine.recall(
 )
 ```
 
-返回值是已经渲染好的 Markdown，可以直接放进模型的系统上下文。这个旧接口会强化选中的 MemoryNode，以保持兼容行为；它不会自动带入完整的新关系人格模型。
+返回值是已经渲染好的 Markdown，可以直接放进模型的系统上下文。兼容接口会委托给与结构化召回相同的权威分类器、选择器、硬预算组装和 Renderer；它仍请求强化，但只有最终通过预算的 `ordinary` MemoryNode 会被强化，Legacy 与 Quarantined 永远不会。为保留历史 `set_core_memory()` 语义，这个兼容调用会在动态 `top_k` 选择之后额外加入一项带 `legacy_context` 标签的 Core Memory；它不占动态槽位，但仍受硬成本预算，也不会获得现代 Persona 或来源权威。`recall_structured()` 没有这个额外槽位。兼容召回不会自动带入完整的新关系人格模型。
 
 ### 推荐模式：`recall_structured()`
 
@@ -1653,7 +1679,15 @@ prompt_context = engine.render_recall(result)
 - 预算使用、遗漏项和强化报告；
 - 安全的提示信息。
 
-默认 `reinforce=False`，因此读取不会改变记忆。只有显式设为 `True` 时，最终通过受众过滤和预算选择的 MemoryNode 才会被强化。
+每条入选记忆都暴露 `authority_tier`，宿主或前端可以直接显示来源状态：
+
+- `ordinary`：拥有完整现代消息级证据，并且所引用消息均通过交付权威规则；
+- `legacy_context`：pre-a8 或 schema `"1"` 上下文，无法恢复现代消息来源，但也没有可证明的异常来源；
+- `quarantined_history`：已绑定现代异常 Turn，却没有足够消息角色证据证明只来自 User。
+
+Agent-private 生成排除 Quarantined，并把 Ordinary 与 Legacy 分别渲染到 `Verified Memories` 和 `Legacy Context - provenance incomplete`。Public 生成同时排除 Legacy 与 Quarantined。MemoryNode 只接受一次上游关键词/向量 RRF 与动态有效权重排序；权威选择器保留这份顺序，先分类 authority 再应用 `max_per_type`，不会另做一次词法相关性重排，因此高排名 Legacy 不会在分区前消耗 Ordinary 的类型配额。对结构化召回而言，`top_k` 是两类动态投影的总上限：现代不足时 Legacy 填充；现代已占满且 `top_k >= 2` 时，最多由一条相关 Legacy 替换最低排名 Ordinary；`top_k=1` 时 Ordinary 优先。精确 UTF-8 内容重复时保留 Ordinary。上面所述兼容 Core 位于这个动态计数之外，但仍受硬预算。
+
+默认 `reinforce=False`，因此读取不会改变记忆。只有显式设为 `True` 时，最终通过受众过滤、权威选择与硬预算的 `ordinary` MemoryNode 才会被强化。
 
 ### 受众必须显式选择
 
@@ -1805,6 +1839,8 @@ with ERIIEngine(storage_driver=storage) as engine:
 
 `0.4.0a7` 会把 Schema v5 迁移到 v6，增加持久 Relationship Processing Run、反思决定和正式反思记录。既有事件与旧 metadata 原样保留，并继续由兼容路径只读；不会把它们转换成字段不完整的正式反思。
 
+`0.4.0a8` 使用 SQLite Schema v9。v7-v9 增加有界最近 Timeline 读取、规范 UTC 排序键和相同时刻的稳定顺序。Turn v2 审查数据与归档证据仍保存在关系范围内的聚合中，并获得相同的事务往返语义。
+
 当前版本仍以 FileStorage 为默认；选择 SQLite 必须显式传入 `SQLiteStorage`。两者都不是多租户授权边界，也都默认以明文保存数据。
 
 ## MemoryPack：备份、迁移和用户数据携带
@@ -1833,7 +1869,7 @@ engine.import_memory(
 )
 ```
 
-MemoryPack `0.4.0a7` 会携带：
+MemoryPack `0.4.0a8` 会携带：
 
 - Core Memory、MemoryNode 和旧式体验时间线；
 - 来源完整的结构化 `timeline_entries`；
@@ -1841,22 +1877,25 @@ MemoryPack `0.4.0a7` 会携带：
 - 追加式关系事件、direct-event journal 顺序和证据裁决；
 - 人格编译提案、Manifest 和人格成长提案；
 - Promise、Open Loop、条件确认和解决事件；
-- 根级 `turn_records` 集合，包括完整可见 Source Transcript 与终态；
-- 以压缩 `archival_ledger` tombstone 表示的可靠归档终态身份；
+- 根级 `turn_records` 集合，包括完整可见 Source Transcript、现代 Review/Delivery Record、Voice Activation Trace 与终态；
+- 以压缩 `archival_ledger` tombstone 表示的可靠归档终态身份，包括现代类型/稳定 ID/规范载荷 SHA-256 commitments；
+- schema `"2"` Artifact Evidence 引用及其精确 Source Turn 依赖闭包；
 - 正式 Persona Reflection Record，以及 reflection/no-reflection 决定身份；
-- 全部持久 Relationship Processing Run，包括可恢复的非终态/partial 阶段、冻结决定、来源/处理身份和合法零产物结果。
+- 全部持久 Relationship Processing Run，包括可恢复的非终态/partial 阶段、冻结决定、来源/处理身份、合法零产物结果和候选级异常 Agent 拒绝回执。
 
-处理账本不会复制完整 Prompt、人设原文、Source Transcript 或模型推理。规范原文仍只在 `turn_records` 中；run 保存有界冻结决定、direct-event/adjudication journal 的两个高水位、完整基线指纹和迁移后续跑所需身份。导出与精确身份导入在读取或写入 Event、裁决、run 与反思时会持有与协调器相同的关系处理 guard，因此既不会捕获半完成阶段，也不会让迁移日志前缀与在线处理交错。导入不会用 `recorded_at` 猜测裁决前史，而是按冻结 journal prefix 使用生产裁决器重放 frozen candidate；因果导入只比较两本 journal 的队首，保持各自 FIFO。在写入普通记忆字段前，它会精确预检完整不可变 Relationship/Blueprint 身份、Source Turn、Timeline 稳定 ID、规范 run 身份与版本、目标已有裁决、目标与 incoming 合并后的时间生命周期、四种完整回执/Event，以及每条正式反思的唯一 accepted 来源与其 Evidence、baseline、关系绑定 Manifest、已批准成长和真正先前历史。每个 run 的基线元数据为常量大小，不会复制不断增长的完整关系历史。
+处理账本不会复制完整 Prompt、人设原文、Source Transcript 或模型推理。规范原文仍只在 `turn_records` 中；run 保存有界冻结决定、direct-event/adjudication journal 的两个高水位、完整基线指纹和迁移后续跑所需身份。导出与精确身份导入在读取或写入 Event、裁决、run 与反思时会持有与协调器相同的关系处理 guard，因此既不会捕获半完成阶段，也不会让迁移日志前缀与在线处理交错。导入不会用 `recorded_at` 猜测裁决前史，而是按冻结 journal prefix 使用生产裁决器重放 `relationship-processing-v1` frozen candidate；因果导入只比较两本 journal 的队首，保持各自 FIFO。在写入普通记忆字段前，它会精确预检完整不可变 Relationship/Blueprint 身份、Source Turn、Timeline 稳定 ID、规范 run 身份与版本、目标已有裁决、目标与 incoming 合并后的时间生命周期、可重放的四种处理回执/Event，以及每条正式反思的唯一 accepted 来源与其 Evidence、baseline、关系绑定 Manifest、已批准成长和真正先前历史。对于每项现代归档产物，导入先重算规范不可变提交载荷指纹并匹配墓碑 commitment，再从 Pack 中的 Source Turn 重算消息角色、消息哈希、Unicode 范围与 Evidence ID。每个 run 的基线元数据为常量大小，不会复制不断增长的完整关系历史。
 
-这些预检证明 Pack 在结构和因果上内部自洽，但不认证 Pack 的创建者。journal 数量与指纹都是同一文件中的未加密数据，能够整体改写 Pack 的一方也能重新计算它们。正式产品应由宿主管理签名或 MAC；需要保密时还应加入加密，并配置相应的授权与密钥管理。
+direct adjudication 不保存原始 frozen candidate，因此它的可携带承诺有意更窄：`relationship-turn-adjudication-v1` 回执只完整复核精确 completed Source Turn、Evidence identity，以及“异常 Agent 证据必须保持非 pivotal、无 Event 的 rejected”这一不变量。只把 receipt contract 降级而仍保留对应 Turn，不能绕过复核；但缺少候选时，E.R.I.I. 不宣称能完整重放普通 accepted direct Event。真正的旧 transient records 保持 Legacy 可读，导入不会为它们分配规范 Turn。
+
+这些预检证明 Pack 在结构和因果上内部自洽，但不认证 Pack 的创建者。journal 数量、contract 标签、commitment 与指纹都是同一文件中的未加密数据，能够整体改写 Pack 的一方也能重新计算它们、删除 Turn 或同步降级关联记录。正式产品应由宿主管理签名或 MAC；需要保密时还应加入加密，并配置相应的授权与密钥管理。
 
 Episode 与 Relationship Chapter 刻意不导出，因为它们可以从 Relationship Event 重建。
 
 `turn_records` 含有关系私有的逐字对话历史，归档/关系处理来源也绑定原始来源；包含任意一种的 Pack 只能恢复到完全相同的原始 `agent_id`、`user_id` 与关系身份。传入新的宿主 ID 会被拒绝，`overwrite=True` 也不能绕过。跨机器或跨存储 Adapter 搬迁同一关系时，应保留原 ID。
 
-`0.4.0a6` 及更早的 MemoryPack 没有 a7 反思/关系处理账本，仍可读取，也不会伪造缺失来源或零产物决定。`0.4.0a5` 及更早的 Pack 还没有 a6 结构化归档账本，`0.4.0a4` 及更早的 Pack 没有 `turn_records`；旧载荷只在既有完整性规则下保留历史重映射行为。这个兼容路径不能被理解成允许重映射含 Source Transcript、归档来源、正式反思或关系处理账本的 Pack。
+`0.4.0a7` 及更早的 MemoryPack 可能缺少 a8 Turn 审查记录、消息级归档证据、权威分类输入和异常 Agent 拒绝回执。它们仍由显式 Legacy 路径读取，但不会伪造缺失来源、成功审查、消息角色或零产物决定。`0.4.0a6` 及更早的 Pack 还没有 a7 反思/关系处理账本，`0.4.0a5` 及更早的 Pack 没有 a6 结构化归档账本，`0.4.0a4` 及更早的 Pack 没有 `turn_records`；旧载荷只在既有完整性规则下保留历史重映射行为。这个兼容路径不能被理解成允许重映射含 Source Transcript、归档来源、正式反思或关系处理账本的 Pack。
 
-可携带的 `archival_ledger` 不是实时运维队列。它只包含终态压缩 tombstone，不导出 pending/processing 任务、原始幂等键、尝试细节、`safe_summary` 或产物清单。派生 MemoryNode 和结构化 Timeline 在 FileStorage 与 SQLiteStorage 之间搬迁后仍可使用，并保留 Source Turn/提取器来源。
+可携带的 `archival_ledger` 不是实时运维队列。它只包含终态压缩 tombstone，不导出 pending/processing 任务、原始幂等键、尝试细节、`safe_summary` 或完整运维回执；现代墓碑仍保留不含正文的 `artifact_commitments`，其中只有类型、稳定 ID 与规范载荷 SHA-256。派生 MemoryNode 和结构化 Timeline 只有在 Source Turn/Evidence 闭包，以及 schema `"2"` 所需的匹配 commitment 都保持完整时，才能在 FileStorage 与 SQLiteStorage 之间保留相同权威。
 
 导入前请注意：
 
@@ -1865,9 +1904,11 @@ Episode 与 Relationship Chapter 刻意不导出，因为它们可以从 Relatio
 - 已存在关系的人设或 premise 不匹配时会拒绝导入；
 - 时间事件引用缺失、跨关系或顺序无效时会拒绝导入；
 - incoming decision ID 与目标已有裁决记录内容冲突时，会在其他目标写入前拒绝导入；
-- 导入 a7 处理账本时，目标与 incoming 的两本关系 journal 必须分别前缀兼容；导入不会合并已经分叉的关系历史；
+- 导入 a7 或更新的处理账本时，目标与 incoming 的两本关系 journal 必须分别前缀兼容；导入不会合并已经分叉的关系历史；
 - 即使两本 journal 分别前缀兼容，目标与 incoming 的并集仍必须构成合法时间生命周期；完整反思也必须继续只有一个 accepted 来源裁决；
-- 绑定型 Pack 必须匹配完整不可变关系/Blueprint 身份和精确 a7 Source Turn；结构化 Timeline 的稳定 ID 不能静默复用不同内容；
+- 绑定型 Pack 必须匹配完整不可变关系/Blueprint 身份和精确 Source Turn；结构化 Timeline 的稳定 ID 不能静默复用不同内容；
+- 现代 Artifact Evidence 必须能在 Pack 的关系与 Source Turn 闭包内解析，并且每项 schema `"2"` 产物必须匹配墓碑中的类型/ID/载荷指纹 commitment；悬空、跨 Turn、错角色、错哈希、错范围、同 ID 内容改写或伪造产物身份都会在任何目标写入前拒绝导入；
+- 持久 Turn direct adjudication 即使在对应 Turn 仍存在时被降级 contract，也会重新核对 Evidence/quarantine；这不等于在没有 frozen candidate 时完整重放 accepted Event；
 - 正式反思的来源与 Pack 内裁决或人格上下文不完全一致时，会在任何目标写入前拒绝导入；
 - 含 `turn_records` 或归档来源的 Pack 禁止跨 `Agent × User` 身份导入，即使请求覆盖也不允许；
 - 处理重要数据前，应先复制原存储文件并在测试目录验证结果。

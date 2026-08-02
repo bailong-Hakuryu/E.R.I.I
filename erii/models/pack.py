@@ -22,7 +22,7 @@ from erii.models.turn import TurnRecord
 class MemoryPack:
     """Portable container data structure for agent/user memory export & import."""
 
-    CURRENT_VERSION = "0.4.0a7"
+    CURRENT_VERSION = "0.4.0a8"
 
     def __init__(
         self,

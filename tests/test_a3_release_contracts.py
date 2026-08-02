@@ -47,10 +47,10 @@ class A3ReleaseContractsTest(unittest.TestCase):
         rendered = engine.recall("lumi", "chen", "dynamic", top_k=1)
         stored = {node.node_id: node for node in engine.storage.load_nodes("lumi", "chen")}
 
-        self.assertIn("# Core Persona Memory\nauthoritative legacy core", rendered)
-        self.assertIn("# Relevant Memories", rendered)
-        self.assertIn("[CORE] dynamic core node", rendered)
-        self.assertRegex(rendered, r"\(weight: \d+\.\d{2}\)")
+        self.assertIn("# Legacy Context - provenance incomplete", rendered)
+        self.assertIn("authoritative legacy core", rendered)
+        self.assertIn("[CORE; LEGACY UNRESOLVED IMPRESSION] dynamic core node", rendered)
+        self.assertEqual(stored["dynamic-core"].access_count, 0)
         self.assertEqual(stored["weak-unselected"].state, MemoryState.WEAK)
         engine.close()
 

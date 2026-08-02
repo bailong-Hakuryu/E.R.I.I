@@ -1286,6 +1286,11 @@ class SQLiteStorage(BaseStorage):
                 tombstone = ArchivalTombstone.from_record(
                     self._archival_record_from_row(row)
                 )
+                existing = by_id.get(tombstone.archival_id)
+                if existing is not None:
+                    tombstone = existing.prefer_stronger_commitment(
+                        tombstone
+                    )
                 by_id[tombstone.archival_id] = tombstone
         return list(by_id.values())
 
@@ -1316,9 +1321,26 @@ class SQLiteStorage(BaseStorage):
                     for row in live_rows
                 ),
             )
-            existing_ids = {item.archival_id for item in existing}
+            existing_by_id = {item.archival_id: item for item in existing}
             for tombstone in merged:
-                if tombstone.archival_id in existing_ids:
+                current = existing_by_id.get(tombstone.archival_id)
+                if current is not None:
+                    if current != tombstone:
+                        conn.execute(
+                            """
+                            UPDATE archival_tombstones
+                            SET data = ?, terminal_at = ?
+                            WHERE archival_id = ?
+                            """,
+                            (
+                                json.dumps(
+                                    tombstone.to_dict(),
+                                    ensure_ascii=False,
+                                ),
+                                tombstone.terminal_at,
+                                tombstone.archival_id,
+                            ),
+                        )
                     continue
                 raw = json.dumps(tombstone.to_dict(), ensure_ascii=False)
                 conn.execute(
@@ -1541,9 +1563,29 @@ class SQLiteStorage(BaseStorage):
                     existing = ArchivalTombstone.from_dict(
                         json.loads(existing_row["data"])
                     )
-                    if existing != tombstone:
+                    try:
+                        preferred = existing.prefer_stronger_commitment(
+                            tombstone
+                        )
+                    except ArchivalConflictError as exc:
                         raise ArchivalConflictError(
                             "archival tombstone conflicts with terminal receipt"
+                        ) from exc
+                    if preferred is not existing:
+                        conn.execute(
+                            """
+                            UPDATE archival_tombstones
+                            SET data = ?, terminal_at = ?
+                            WHERE archival_id = ?
+                            """,
+                            (
+                                json.dumps(
+                                    preferred.to_dict(),
+                                    ensure_ascii=False,
+                                ),
+                                preferred.terminal_at,
+                                preferred.archival_id,
+                            ),
                         )
                 else:
                     conn.execute(

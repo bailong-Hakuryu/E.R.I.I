@@ -6,8 +6,8 @@
 
 | 版本 | 核心主题 | 进入下一阶段的关键条件 |
 | --- | --- | --- |
-| `0.4.0a8` | 连续性审计与发布收口 | 最终回复的五轴判断可持久审计，包和 prerelease 流程可重复 |
-| `0.4.0b1` | 迁移、删除、重建与长期验证 | 真实旧数据可恢复迁移，长轨迹无关系泄漏或无依据权威写入 |
+| `0.4.0a8`（已实现，待发布） | 连续性审计与发布收口 | 最终回复的五轴判断可持久审计，包和 prerelease 流程可重复 |
+| `0.4.0b1`（当前阶段） | 迁移、删除、重建与长期验证 | 真实旧数据可恢复迁移，长轨迹无关系泄漏或无依据权威写入 |
 | `0.4.0rc1` | Interface、Schema 与 Artifact 冻结 | 干净安装、文档示例、迁移与可携带性全部通过 |
 | `0.4.0` / `0.4.x` | 稳定内核与兼容维护 | 数据格式和关系语义可被认真维护，但不承诺产品 SLA |
 | `0.5.x` | 关系后果、角色内在审视与认知修订谱系 | 异常交付、双方立场、关系张力、角色反思与认知修订均有来源且可重建 |
@@ -146,9 +146,9 @@
 - 每次巩固保存 History Fingerprint 与策略版本；Episode/Chapter 可从权威事件历史重建，不进入 MemoryPack，也不成为关系等级或关系状态写入来源；
 - 五轴 `ContinuityEvaluatorV1`、确定性汇总策略与来源支持的 Contextual Voice Pattern 在本阶段随公开契约落地，情境表达不会继承另一段关系的称呼、亲密或共同经历。
 
-### alpha.8：连续性审计与发布收口（当前开发阶段：`0.4.0a8`）
+### alpha.8：连续性审计与发布收口（已实现，尚未发布：`0.4.0a8`）
 
-`0.4.0a8` 是 v0.4 最后一个允许补充领域契约的 Alpha。它只补齐已经公开承诺、但尚未完整持久化的连续性审计证据，以及使这些审计状态真正生效所必需的最小来源权威过滤；该过滤不引入新的关系算法或记忆类型，a8 也不扩展人格变化能力。
+`0.4.0a8` 的实现与公开契约测试已经完成，但 prerelease 尚未发布。它是 v0.4 最后一个允许补充领域契约的 Alpha，只补齐已经公开承诺、但此前尚未完整持久化的连续性审计证据，以及使这些审计状态真正生效所必需的最小来源权威过滤；该过滤不引入新的关系算法或记忆类型，a8 也不扩展人格变化能力。
 
 #### 连续性回执
 
@@ -172,14 +172,18 @@
 - `overridden | shown_unreviewed` 中的 Agent 发言保留“当时确实说过”的事实地位及逐消息来源，但在没有后续正式处置能力的 a8 中保持权威隔离，不得静默进入普通 Persona、知识、承诺、反思、成长或自动关系跃迁依据；
 - 同轮 User 消息仍按普通来源规则处理，不能因为 Agent 回复异常而丢弃整轮，也不能把 User 自述自动提升为客观事实；
 - 现代 Timeline 与 Memory 候选必须以 `TurnMessage.message_id + TurnRecord.source_revision` 提供可由当前关系 Source Transcript 核验的消息级精确证据；schema `"2"` 强制显式 Unicode code-point `start/end`，不通过搜索 quote 猜测重复片段；持久产物只保留确定性 Evidence ID、消息身份、Source Turn revision、内核解析角色、哈希与范围，不复制引文正文；
+- 完整归档回执同时认证产物规范载荷、Source revision 与提取器描述；压缩为现代 tombstone 时删除运维详情，但把每项产物的类型、稳定 ID 与规范载荷 SHA-256 保存为不含正文的 `artifact_commitments`。召回与 MemoryPack 导入都重算当前产物指纹；旧墓碑缺少 commitment 时只能维持幂等/审计身份，不能把产物提升为 Ordinary；
 - 保留现有 `MemoryExtractorV1` 的 `descriptor + extract(request)` 调用接口，以 `ExtractorDescriptor.extraction_schema_version` 版本化返回语义：`"1"` 是只供 Legacy 识别与读取的无引用格式，`"2"` 是 a8 新归档提交必须显式声明的证据感知格式；不增加与 schema 重复的能力布尔值；
 - 升级时按持久阶段处理已有 schema `"1"` 工作：终态记录不变，未形成批次的 `EXTRACTION` 记录以不可重试 `extractor_schema_upgrade_required` 终结并要求 schema `"2"` 加新幂等键显式重提；只有完整绑定的 `COMMIT` 批次继续原子提交，结果保持 schema `"1"` 与 `legacy_unavailable` 消息依据；
 - 异常交付中只依赖 User 消息且通过普通事实规则的归档候选仍可提交；任何候选引用受隔离 Agent 消息时，整项 Archival Extraction Decision 在 Prepared Batch 形成前失败，不能静默裁剪，提取器只能重试或返回合法 `no_memory`；
 - 关系通道按候选独立隔离：引用异常 Agent 消息的候选以 `rejected + continuity_exception_agent_evidence_quarantined` 正常终结且不产生事件或状态副作用，合法 User-only 候选继续裁决；全部被拒时 Run 为 `completed + no_accepted_events`，不新增 pending 状态，也不伪装为技术失败；
+- `adjudicate_turn_candidates()` 与 direct API 精确命中同关系 completed Turn 的路径统一使用 `relationship-turn-adjudication-v1`；direct 提供的 revision、消息 ID、角色、正文和发生时间必须与持久 Turn 完全一致，并继承交付权威。真正没有持久 Turn 的 direct 调用继续作为 Legacy transient 兼容入口，但该 Turn ID 之后禁止注册为规范 Turn，不能通过晚建 Turn 追授现代权威；
+- MemoryPack 会在任何写入前复核绑定持久 Turn 的 direct adjudication 的 Source Turn、Evidence identity 与异常 Agent 必须保持拒绝的不变量；仅降级 receipt contract 而仍保留对应 Turn 不能绕过复核。direct 记录没有 frozen candidate，因此这项闭包不承诺完整重放普通 accepted Event；旧 transient records 只保持 Legacy 可读，未签名 Pack 的整体改写、删除 Turn 或同步降级仍不构成来源真实性保证；
 - 上述隔离只由 `overridden | shown_unreviewed` 交付事实触发，不检查发言情感极性；经过回滚或重生成后重新绑定最终文本、并以 `aligned | supported_new_choice + shown` 通过的拒绝、愤怒、疏远或伤害性选择属于普通 Source Turn，可按现有规则进入关系与记忆处理；
 - 召回按权威层级兼容旧数据：可证明绑定现代异常 Turn、却没有消息角色证据的产物标记为 `quarantined_history` 并从默认生成召回隔离；其他无法恢复现代证据链的旧产物作为显式 `legacy_context` 保留在 Agent-private 低权威分区，避免升级即失忆，但不参与强化、连续性依据、人格反思/成长或关系跃迁；
 - `legacy_context` 与 `quarantined_history` 都保持可检查、可标记、可导出和可删除；完整现代证据在权威使用与 Prompt 分区中优先，任何旧摘要都不能被内容猜测升级为普通权威；
-- 默认 `top_k` 是现代与 Legacy 的总上限：现代不足时 Legacy 按普通相关性填充，现代已占满且 `top_k >= 2` 时最多保留一个相关 Legacy 槽位，`top_k = 1` 时现代优先；精确内容重复只保留现代投影，并分别渲染 `Verified Memories` 与 `Legacy Context — provenance incomplete`；硬成本预算与必要 Persona/Relationship Context 始终优先；
+- MemoryNode 先由关键词/向量 RRF 与动态有效权重形成唯一上游顺序，召回选择器保留该顺序，先分类 `ordinary | legacy_context | quarantined_history`，再在可用权威分区内应用 `max_per_type`；不能让高排名 Legacy 提前消耗 Ordinary 的类型配额，也不使用第二套词法相关性重排 hybrid 结果；
+- 结构化召回的默认 `top_k` 是现代与 Legacy 动态投影的总上限：现代不足时 Legacy 按上游顺序填充，现代已占满且 `top_k >= 2` 时最多保留一个相关 Legacy 槽位，`top_k = 1` 时现代优先；精确内容重复只保留现代投影，并分别渲染 `Verified Memories` 与 `Legacy Context — provenance incomplete`。兼容 `recall()` 为旧 Core Memory 保留一个动态 `top_k` 外的 Legacy 候选，但它仍受硬成本预算；必要 Persona/Relationship Context 始终优先；
 - 连续性汇总与交付回执保持情感效价中立：温柔、顺从和亲密不获得通过优待，拒绝、生气、疏远和造成伤害不构成 OOC 原因；
 - 契约测试同时覆盖“有充分依据的拒绝/冲突”和“无关系依据的甜蜜/承诺”，证明判定依赖人格与经历因果而非情绪正负；
 - a8 不实现例外解除、双轨回溯复核、双方立场、叙事张力解决、反思敏感性或成长联动，也不发布这些能力的空壳 API；完整纵向能力进入 `0.5.0a1`。
@@ -203,10 +207,12 @@
 - Legacy Turn 的旧 `COMPLETED/ALIGNED` 摘要经过 File/SQLite/MemoryPack 往返仍存在于 `legacy_summary`，但兼容属性始终为 `None`，且不能进入任何现代权威判断；
 - 新 Archival Submission 使用 schema `"1"`、未显式声明 schema `"2"` 或返回缺少消息级依据的现代候选时，在创建新的归档身份或队列任务前失败；
 - schema `"1"` 的终态、提取阶段、完整提交阶段及损坏提交阶段迁移测试证明旧身份不会搭载新提取结果、冻结批次不会被重采样、Legacy 产物不会获得现代证据身份；
+- 完整回执与压缩 tombstone 测试证明 Source revision、产物类型、稳定 ID 和规范载荷 SHA-256 都参与认证；同 ID 内容改写、伪造合法 UUID、缺失 commitment 或 MemoryPack 中不匹配的 commitment 都不能获得 Ordinary 权威，并在导入首次写入前失败关闭；
 - 召回测试证明 pre-a8 Legacy 仍以 `legacy_context` 出现在 Agent-private 兼容分区且不被强化，已知现代异常来源的无角色产物不进入默认生成召回，两类内容都仍可检查、导出与删除；
-- `top_k=1`、现代不足、现代占满、无相关 Legacy、精确重复及硬成本不足测试分别证明现代优先、Legacy 渐进填充、最多一个预留槽、现代去重胜出和预算不被绕过；
+- `top_k=1`、现代不足、现代占满、无相关 Legacy、精确重复、同类型高权重 Legacy、Legacy Core 兼容上下文及硬成本不足测试分别证明现代优先、Legacy 渐进填充、最多一个预留槽、现代去重胜出、authority-first 类型配额、Core 位于动态上限外但不绕过预算；向量开启与关闭时选择器都保留上游 hybrid 顺序；
 - 异常 Agent 发言无法未经显式处置获得普通记忆或关系权威，而同轮 User 证据仍可按原规则处理；
 - 混合候选批次、全隔离批次、依赖被拒候选及重复处理测试证明候选级拒绝不会污染独立 User-only 结果，并经 File/SQLite/MemoryPack 保留冻结候选、精确证据、稳定 reason code 与正常 Run 终局；
+- direct adjudication 测试证明精确持久 Turn 会触发 `relationship-turn-adjudication-v1` 与异常 Agent 隔离，伪造 Source Turn 会失败，真正 transient 调用仍按 Legacy 行为处理且其 Turn ID 不能后续提升；MemoryPack 对保留对应 Turn 的 contract 降级仍执行 Evidence/quarantine 复核，并且不把无 frozen candidate 的 direct receipt 宣称为完整事件重放；
 - Timeline/Memory 候选的消息 ID、修订、角色、哈希与范围经过正常、悬空、错位、跨 Turn、异常 Agent 证据及 MemoryPack 往返测试；非法批次整体失败且不留下部分产物；
 - 重复 quote、缺失范围、UTF-8 多字节字符与 Unicode code-point 偏移测试证明 schema `"2"` 不依赖模糊文本搜索，也不会把字节偏移误当字符偏移；
 - 情感极性对照测试证明支持充分的拒绝可以通过、无依据的亲密可以被拒绝，连续性判定不退化为迎合度评分；
@@ -215,7 +221,7 @@
 - `CONTEXT.md`、领域模型、ADR、README 与代码对“临时评估结果”和“持久审计回执”使用一致定义；
 - v0.4 功能冻结清单与非目标公开，并建立第一个可靠的不可移动 prerelease tag。
 
-### beta.1：迁移、数据生命周期与长期验证（`0.4.0b1`）
+### beta.1：迁移、数据生命周期与长期验证（当前开发阶段：`0.4.0b1`）
 
 `0.4.0b1` 是 v0.4 的功能完整点。只有下列能力已经实现并通过门槛后才发布该版本；Beta 之后不再增加领域模型。
 

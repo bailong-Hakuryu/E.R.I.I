@@ -23,7 +23,7 @@ class TestERIIEngine(unittest.TestCase):
 
             # Recall context
             context = engine.recall("agent1", "user1", "tea preference")
-            self.assertIn("Core Persona Memory", context)
+            self.assertIn("Legacy Context - provenance incomplete", context)
             self.assertIn("be polite", context)
 
             engine.close()

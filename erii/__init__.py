@@ -71,6 +71,12 @@ from erii.models.archival import (
     TimelineCandidate,
     TimelineEntry,
 )
+from erii.models.archival_evidence import (
+    ARCHIVAL_EVIDENCE_CITATION_VERSION,
+    ARTIFACT_EVIDENCE_REFERENCE_VERSION,
+    ArchivalEvidenceCitation,
+    ArtifactEvidenceReference,
+)
 from erii.models.provenance import (
     ArtifactProvenanceState,
     ExtractorDescriptor,
@@ -219,6 +225,7 @@ from erii.models.recall import (
     PersonaRecallProjection,
     RecallAudience,
     RecallArtifactProvenance,
+    RecallAuthorityTier,
     RecallBudget,
     RecallNotice,
     RecallNoticeSeverity,
@@ -328,6 +335,8 @@ from erii.vector.in_memory_vector import (
 from erii._version import __version__
 
 __all__ = [
+    "ARCHIVAL_EVIDENCE_CITATION_VERSION",
+    "ARTIFACT_EVIDENCE_REFERENCE_VERSION",
     "CONTINUITY_EVALUATION_RESULT_VERSION",
     "CONTINUITY_EVIDENCE_REF_VERSION",
     "VOICE_ACTIVATION_TRACE_VERSION",
@@ -339,6 +348,7 @@ __all__ = [
     "ArchivalCapabilityError",
     "ArchivalConflictError",
     "ArchivalDrainReport",
+    "ArchivalEvidenceCitation",
     "ArchivalError",
     "ArchivalNoMemoryDecision",
     "ArchivalNotFoundError",
@@ -350,6 +360,7 @@ __all__ = [
     "ArchivalStatus",
     "ArchivalSubmissionError",
     "ArchivalTombstone",
+    "ArtifactEvidenceReference",
     "ArtifactProvenanceState",
     "ExtractorDescriptor",
     "MemoryCandidate",
@@ -415,6 +426,7 @@ __all__ = [
     "PromiseSpecCandidate",
     "RecallAudience",
     "RecallArtifactProvenance",
+    "RecallAuthorityTier",
     "RecallAudienceMismatchError",
     "RecallBudget",
     "RecallBudgetUnsatisfiedError",

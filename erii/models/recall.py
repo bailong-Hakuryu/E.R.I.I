@@ -98,6 +98,14 @@ class RecallArtifactProvenance(str, Enum):
     LEGACY_UNRESOLVED = "legacy_unresolved"
 
 
+class RecallAuthorityTier(str, Enum):
+    """Generation authority derived for one memory projection."""
+
+    ORDINARY = "ordinary"
+    LEGACY_CONTEXT = "legacy_context"
+    QUARANTINED_HISTORY = "quarantined_history"
+
+
 class WorldTime(RecallModel):
     """An explicit time value in one host-owned fictional or real clock."""
 
@@ -219,6 +227,7 @@ class MemoryRecallProjection(RecallProjection):
     provenance: RecallArtifactProvenance = (
         RecallArtifactProvenance.LEGACY_UNRESOLVED
     )
+    authority_tier: RecallAuthorityTier = RecallAuthorityTier.LEGACY_CONTEXT
     memory_type: str = Field(min_length=1, max_length=128)
     content: str = Field(min_length=1, max_length=200_000)
     created_at: Optional[str] = Field(default=None, min_length=1, max_length=256)

@@ -10,6 +10,7 @@ from erii.models.recall import (
     PersonaRecallProjection,
     RecallAudience,
     RecallArtifactProvenance,
+    RecallAuthorityTier,
     RecallResult,
     RecallSignalProjection,
     RelationshipNarrativeProjection,
@@ -127,12 +128,32 @@ class MarkdownRecallRenderer:
                 ]
                 sections.append("# Relationship Context\n" + "\n".join(lines))
 
-        if result.memories:
+        verified_memories = tuple(
+            item
+            for item in result.memories
+            if item.authority_tier == RecallAuthorityTier.ORDINARY
+        )
+        if verified_memories:
             lines = [
                 self._memory_line(item, index)
-                for index, item in enumerate(result.memories, 1)
+                for index, item in enumerate(verified_memories, 1)
             ]
-            sections.append("# Relevant Memories\n" + "\n".join(lines))
+            sections.append("# Verified Memories\n" + "\n".join(lines))
+
+        legacy_memories = tuple(
+            item
+            for item in result.memories
+            if item.authority_tier == RecallAuthorityTier.LEGACY_CONTEXT
+            and self.audience == RecallAudience.AGENT_PRIVATE
+        )
+        if legacy_memories:
+            lines = [
+                self._memory_line(item, index)
+                for index, item in enumerate(legacy_memories, 1)
+            ]
+            sections.append(
+                "# Legacy Context - provenance incomplete\n" + "\n".join(lines)
+            )
 
         if result.events:
             lines = [

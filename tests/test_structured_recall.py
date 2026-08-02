@@ -183,8 +183,9 @@ class StructuredRecallTest(unittest.TestCase):
         )
         nodes = {item.node_id: item for item in engine.storage.load_nodes("lumi", "chen")}
 
-        self.assertEqual(nodes["short"].access_count, 1)
+        self.assertEqual(nodes["short"].access_count, 0)
         self.assertEqual(nodes["large"].access_count, 0)
+        self.assertFalse(result.reinforcement.applied)
         self.assertTrue(any(item.source_id == "large" for item in result.budget_report.omitted))
         self.assertNotIn("snow snow snow", engine.render_recall(result))
         engine.close()
@@ -273,7 +274,8 @@ class StructuredRecallTest(unittest.TestCase):
         self.assertIsNone(result.persona_context)
         self.assertNotIn("private doubt", serialized)
         self.assertNotIn(SOURCE, serialized)
-        self.assertIn("public diary", serialized)
+        self.assertNotIn("public diary", serialized)
+        self.assertEqual(result.memories, ())
         engine.close()
 
     def test_sqlite_v3_and_memory_pack_carry_compilation(self):

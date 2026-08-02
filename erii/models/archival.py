@@ -7,6 +7,12 @@ import hashlib
 import json
 from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Tuple, Union
 
+from erii.models.archival_evidence import (
+    ArchivalEvidenceCitation,
+    ArtifactEvidenceReference,
+    archival_evidence_citations_from_value,
+    artifact_evidence_references_from_value,
+)
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
 from erii.models.provenance import (
     ArtifactProvenanceState,
@@ -79,6 +85,7 @@ class ArchivalOutcomeCode(str, Enum):
     INVALID_EXTRACTOR_OUTPUT = "invalid_extractor_output"
     COMMIT_TEMPORARY_FAILURE = "commit_temporary_failure"
     PROCESSING_LEASE_EXPIRED = "processing_lease_expired"
+    EXTRACTOR_SCHEMA_UPGRADE_REQUIRED = "extractor_schema_upgrade_required"
     PERMANENT_FAILURE = "permanent_failure"
     RETRY_EXHAUSTED = "retry_exhausted"
 
@@ -102,6 +109,7 @@ class TimelineCandidate:
     """Untrusted proposed narrative artifact without authoritative fields."""
 
     content: str
+    evidence: Tuple[ArchivalEvidenceCitation, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -109,15 +117,30 @@ class TimelineCandidate:
             "content",
             _text(self.content, "timeline content", max_length=4096),
         )
+        object.__setattr__(
+            self,
+            "evidence",
+            archival_evidence_citations_from_value(self.evidence),
+        )
 
-    def to_dict(self) -> Dict[str, str]:
-        return {"content": self.content}
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {"content": self.content}
+        if self.evidence:
+            data["evidence"] = [item.to_dict() for item in self.evidence]
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "TimelineCandidate":
-        if set(data) != {"content"}:
+        if not isinstance(data, Mapping) or not set(data).issubset(
+            {"content", "evidence"}
+        ) or "content" not in data:
             raise ValueError("TimelineCandidate contains unknown or missing fields")
-        return cls(content=data["content"])
+        return cls(
+            content=data["content"],
+            evidence=archival_evidence_citations_from_value(
+                data.get("evidence", ())
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -134,6 +157,7 @@ class MemoryCandidate:
     decayable: bool = True
     is_unresolved: bool = False
     foreshadowing_tags: Tuple[str, ...] = ()
+    evidence: Tuple[ArchivalEvidenceCitation, ...] = ()
 
     def __post_init__(self) -> None:
         node_type = (
@@ -182,9 +206,14 @@ class MemoryCandidate:
             bool,
         ):
             raise ValueError("memory flags must be booleans")
+        object.__setattr__(
+            self,
+            "evidence",
+            archival_evidence_citations_from_value(self.evidence),
+        )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "node_type": self.node_type.value,
             "content": self.content,
             "tags": list(self.tags),
@@ -196,6 +225,9 @@ class MemoryCandidate:
             "is_unresolved": self.is_unresolved,
             "foreshadowing_tags": list(self.foreshadowing_tags),
         }
+        if self.evidence:
+            data["evidence"] = [item.to_dict() for item in self.evidence]
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "MemoryCandidate":
@@ -210,9 +242,12 @@ class MemoryCandidate:
             "decayable",
             "is_unresolved",
             "foreshadowing_tags",
+            "evidence",
         }
-        if not {"node_type", "content"}.issubset(data) or not set(data).issubset(
-            allowed
+        if (
+            not isinstance(data, Mapping)
+            or not {"node_type", "content"}.issubset(data)
+            or not set(data).issubset(allowed)
         ):
             raise ValueError("MemoryCandidate contains unknown or missing fields")
         return cls(
@@ -229,6 +264,9 @@ class MemoryCandidate:
             decayable=data.get("decayable", True),
             is_unresolved=data.get("is_unresolved", False),
             foreshadowing_tags=tuple(data.get("foreshadowing_tags", ())),
+            evidence=archival_evidence_citations_from_value(
+                data.get("evidence", ())
+            ),
         )
 
 
@@ -305,28 +343,52 @@ ArchivalExtractionDecision = Union[
 ]
 
 
-def archival_decision_from_value(value: object) -> ArchivalExtractionDecision:
+def archival_decision_from_value(
+    value: object,
+    *,
+    extraction_schema_version: str,
+) -> ArchivalExtractionDecision:
     """Validates a host extractor result without permissive coercion."""
+    if extraction_schema_version not in {"1", "2"}:
+        raise ValueError("unsupported archival extraction schema version")
     if isinstance(
         value,
         (ArchivalArtifactsDecision, ArchivalNoMemoryDecision),
     ):
-        return value
-    if not isinstance(value, Mapping):
-        raise ValueError("extractor result must be a discriminated mapping")
-    kind = value.get("kind")
-    if kind == ArchivalArtifactsDecision.kind:
-        if not set(value).issubset({"kind", "timeline", "memories"}):
-            raise ValueError("artifacts decision contains unknown fields")
-        return ArchivalArtifactsDecision(
-            timeline=tuple(value.get("timeline", ())),
-            memories=tuple(value.get("memories", ())),
-        )
-    if kind == ArchivalNoMemoryDecision.kind:
-        if set(value) != {"kind", "reason_code"}:
-            raise ValueError("no_memory decision contains unknown or missing fields")
-        return ArchivalNoMemoryDecision(reason_code=value["reason_code"])
-    raise ValueError("extractor result requires kind=artifacts|no_memory")
+        decision = value
+    else:
+        if not isinstance(value, Mapping):
+            raise ValueError("extractor result must be a discriminated mapping")
+        kind = value.get("kind")
+        if kind == ArchivalArtifactsDecision.kind:
+            if not set(value).issubset({"kind", "timeline", "memories"}):
+                raise ValueError("artifacts decision contains unknown fields")
+            decision = ArchivalArtifactsDecision(
+                timeline=tuple(value.get("timeline", ())),
+                memories=tuple(value.get("memories", ())),
+            )
+        elif kind == ArchivalNoMemoryDecision.kind:
+            if set(value) != {"kind", "reason_code"}:
+                raise ValueError(
+                    "no_memory decision contains unknown or missing fields"
+                )
+            decision = ArchivalNoMemoryDecision(reason_code=value["reason_code"])
+        else:
+            raise ValueError("extractor result requires kind=artifacts|no_memory")
+
+    if isinstance(decision, ArchivalArtifactsDecision):
+        candidates = (*decision.timeline, *decision.memories)
+        if extraction_schema_version == "1" and any(
+            item.evidence for item in candidates
+        ):
+            raise ValueError("extraction schema 1 artifacts must not contain evidence")
+        if extraction_schema_version == "2" and any(
+            not item.evidence for item in candidates
+        ):
+            raise ValueError(
+                "extraction schema 2 requires 1 to 16 evidence citations per artifact"
+            )
+    return decision
 
 
 @dataclass(frozen=True)
@@ -422,6 +484,7 @@ class TimelineEntry:
     source_archival_id: Optional[str] = None
     provenance_state: ArtifactProvenanceState = ArtifactProvenanceState.COMPLETE
     extractor_descriptor: Optional[ExtractorDescriptor] = None
+    evidence_references: Tuple[ArtifactEvidenceReference, ...] = ()
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -453,6 +516,10 @@ class TimelineEntry:
                 "extractor_descriptor",
                 ExtractorDescriptor.from_dict(descriptor),
             )
+        references = artifact_evidence_references_from_value(
+            self.evidence_references
+        )
+        object.__setattr__(self, "evidence_references", references)
         if self.recorded_at is not None:
             object.__setattr__(
                 self,
@@ -489,9 +556,35 @@ class TimelineEntry:
             raise ValueError(
                 "legacy Timeline cannot promote an unverified timestamp to recorded_at"
             )
+        self._validate_evidence_references()
+
+    def _validate_evidence_references(self) -> None:
+        descriptor = self.extractor_descriptor
+        references = self.evidence_references
+        if descriptor is not None and descriptor.extraction_schema_version not in {
+            "1",
+            "2",
+        }:
+            raise ValueError("unsupported archival extraction schema version")
+        if self.provenance_state == ArtifactProvenanceState.LEGACY_UNAVAILABLE:
+            if references:
+                raise ValueError("legacy Timeline cannot claim evidence references")
+            return
+        if descriptor is None:
+            return
+        if descriptor.extraction_schema_version == "1" and references:
+            raise ValueError("schema 1 Timeline must not contain evidence references")
+        if descriptor.extraction_schema_version == "2" and not references:
+            raise ValueError("schema 2 Timeline requires evidence references")
+        if any(
+            item.relationship_id != self.relationship_id
+            or item.source_turn_id != self.source_turn_id
+            for item in references
+        ):
+            raise ValueError("Timeline evidence references must match artifact scope")
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "timeline_entry_id": self.timeline_entry_id,
             "relationship_id": self.relationship_id,
             "agent_id": self.agent_id,
@@ -508,6 +601,11 @@ class TimelineEntry:
                 else None
             ),
         }
+        if self.evidence_references:
+            data["evidence_references"] = [
+                item.to_dict() for item in self.evidence_references
+            ]
+        return data
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "TimelineEntry":
@@ -533,6 +631,9 @@ class TimelineEntry:
                 ExtractorDescriptor.from_dict(descriptor)
                 if descriptor is not None
                 else None
+            ),
+            evidence_references=artifact_evidence_references_from_value(
+                data.get("evidence_references", ())
             ),
         )
 
@@ -581,6 +682,10 @@ def archival_artifact_fingerprint(
             ),
             "created_at": artifact.created_at,
         }
+        if artifact.evidence_references:
+            payload["evidence_references"] = [
+                item.to_dict() for item in artifact.evidence_references
+            ]
     else:
         raise TypeError("unsupported archival artifact type")
     encoded = json.dumps(
@@ -924,6 +1029,7 @@ class ArchivalTombstone:
     terminal_at: str
     request_fingerprint: str
     idempotency_fingerprint: str
+    artifact_commitments: Optional[Tuple[ArchivalArtifactReference, ...]] = None
 
     retention_state = ArchivalRetentionState.COMPACTED
 
@@ -954,12 +1060,61 @@ class ArchivalTombstone:
                 field_name,
                 _text(getattr(self, field_name), field_name, max_length=256),
             )
+        commitments = self.artifact_commitments
+        if commitments is not None:
+            normalized = tuple(
+                item
+                if isinstance(item, ArchivalArtifactReference)
+                else ArchivalArtifactReference.from_dict(item)
+                for item in commitments
+            )
+            if any(item.artifact_fingerprint is None for item in normalized):
+                raise ValueError(
+                    "ArchivalTombstone artifact commitments require fingerprints"
+                )
+            identities = tuple((item.kind, item.artifact_id) for item in normalized)
+            if len(identities) != len(set(identities)):
+                raise ValueError(
+                    "ArchivalTombstone artifact commitments must be unique"
+                )
+            normalized = tuple(
+                sorted(
+                    normalized,
+                    key=lambda item: (
+                        item.kind.value,
+                        item.artifact_id,
+                        item.artifact_fingerprint or "",
+                    ),
+                )
+            )
+            if (
+                self.outcome_code == ArchivalOutcomeCode.ARTIFACTS_COMMITTED
+                and not normalized
+            ):
+                raise ValueError(
+                    "an artifacts-committed tombstone requires artifact commitments"
+                )
+            if (
+                self.outcome_code != ArchivalOutcomeCode.ARTIFACTS_COMMITTED
+                and normalized
+            ):
+                raise ValueError(
+                    "a non-artifact tombstone cannot claim artifact commitments"
+                )
+            object.__setattr__(self, "artifact_commitments", normalized)
 
     @classmethod
     def from_record(cls, record: "ArchivalRecord") -> "ArchivalTombstone":
         receipt = record.receipt
         if receipt.status not in {ArchivalStatus.COMPLETED, ArchivalStatus.FAILED}:
             raise ValueError("only terminal archival records have tombstones")
+        manifest = receipt.artifact_manifest
+        commitments = (
+            tuple(manifest)
+            if manifest is not None
+            and all(item.artifact_fingerprint is not None for item in manifest)
+            else None
+        )
         return cls(
             archival_id=receipt.archival_id,
             relationship_id=receipt.relationship_id,
@@ -972,10 +1127,11 @@ class ArchivalTombstone:
             terminal_at=receipt.completed_at or receipt.updated_at,
             request_fingerprint=record.request_fingerprint,
             idempotency_fingerprint=record.idempotency_fingerprint,
+            artifact_commitments=commitments,
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "archival_id": self.archival_id,
             "relationship_id": self.relationship_id,
             "agent_id": self.agent_id,
@@ -989,6 +1145,59 @@ class ArchivalTombstone:
             "idempotency_fingerprint": self.idempotency_fingerprint,
             "retention_state": self.retention_state.value,
         }
+        if self.artifact_commitments is not None:
+            data["artifact_commitments"] = [
+                item.to_dict() for item in self.artifact_commitments
+            ]
+        return data
+
+    def is_compatible_with(self, other: object) -> bool:
+        """Returns whether two records describe the same terminal identity.
+
+        Tombstones written before artifact commitments existed omit that field.
+        They remain readable and idempotent, but an omitted commitment never
+        certifies artifact content.  Two present commitment sets must still
+        match exactly.
+        """
+        if not isinstance(other, ArchivalTombstone):
+            return False
+        identity_fields = (
+            "archival_id",
+            "relationship_id",
+            "agent_id",
+            "user_id",
+            "source_turn_id",
+            "source_revision",
+            "status",
+            "outcome_code",
+            "terminal_at",
+            "request_fingerprint",
+            "idempotency_fingerprint",
+        )
+        if any(
+            getattr(self, field_name) != getattr(other, field_name)
+            for field_name in identity_fields
+        ):
+            return False
+        return (
+            self.artifact_commitments is None
+            or other.artifact_commitments is None
+            or self.artifact_commitments == other.artifact_commitments
+        )
+
+    def prefer_stronger_commitment(
+        self,
+        other: "ArchivalTombstone",
+    ) -> "ArchivalTombstone":
+        """Merges compatible versions without downgrading content authority."""
+        if not self.is_compatible_with(other):
+            raise ArchivalConflictError("Archival Tombstone identity conflict")
+        if (
+            self.artifact_commitments is None
+            and other.artifact_commitments is not None
+        ):
+            return other
+        return self
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ArchivalTombstone":
@@ -1004,6 +1213,14 @@ class ArchivalTombstone:
             terminal_at=str(data["terminal_at"]),
             request_fingerprint=str(data["request_fingerprint"]),
             idempotency_fingerprint=str(data["idempotency_fingerprint"]),
+            artifact_commitments=(
+                tuple(
+                    ArchivalArtifactReference.from_dict(item)
+                    for item in data["artifact_commitments"]
+                )
+                if data.get("artifact_commitments") is not None
+                else None
+            ),
         )
 
 
@@ -1130,10 +1347,12 @@ def merge_archival_tombstone_batch(
                 "Archival Tombstone belongs to another relationship"
             )
         current = merged.get(tombstone.archival_id)
-        if current is not None and current != tombstone:
-            raise ArchivalConflictError("Archival Tombstone identity conflict")
+        if current is not None:
+            tombstone = current.prefer_stronger_commitment(tombstone)
+            merged[tombstone.archival_id] = tombstone
         live = live_by_id.get(tombstone.archival_id)
         matched_live = False
+        retain_live_upgrade = False
         if live is not None:
             if live.receipt.status not in {
                 ArchivalStatus.COMPLETED,
@@ -1142,10 +1361,17 @@ def merge_archival_tombstone_batch(
                 raise ArchivalConflictError(
                     "Archival Tombstone conflicts with a live archival"
                 )
-            if ArchivalTombstone.from_record(live) != tombstone:
+            live_tombstone = ArchivalTombstone.from_record(live)
+            try:
+                preferred = live_tombstone.prefer_stronger_commitment(
+                    tombstone
+                )
+            except ArchivalConflictError as exc:
                 raise ArchivalConflictError(
                     "Archival Tombstone conflicts with a live archival"
-                )
+                ) from exc
+            retain_live_upgrade = preferred is not live_tombstone
+            tombstone = preferred
             matched_live = True
         for record in live_records:
             if (
@@ -1165,7 +1391,9 @@ def merge_archival_tombstone_batch(
             raise ArchivalConflictError(
                 "Archival Tombstone conflicts with an existing binding"
             )
-        if current is None and not matched_live:
+        if current is None and (
+            not matched_live or retain_live_upgrade
+        ):
             merged[tombstone.archival_id] = tombstone
             accepted.append(tombstone)
     return tuple(merged.values())

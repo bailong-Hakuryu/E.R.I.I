@@ -4,6 +4,7 @@ from dataclasses import replace
 import os
 import tempfile
 import unittest
+import uuid
 
 from erii import (
     ArchivalArtifactsDecision,
@@ -17,6 +18,7 @@ from erii import (
     PersonaDelivery,
     RecallAudience,
     RecallArtifactProvenance,
+    RecallAuthorityTier,
     RecallOptions,
     RecallRequest,
     SQLiteStorage,
@@ -41,20 +43,34 @@ class _ArtifactExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="tests.provenance-extractor",
         extractor_version="1",
-        extraction_schema_version="1",
+        extraction_schema_version="2",
     )
 
     def extract(self, request):
+        user_message = request.transcript.user_message
+        evidence = (
+            {
+                "citation_version": "archival-evidence-citation/v1",
+                "kind": "message_span",
+                "source_id": user_message.message_id,
+                "source_revision": request.source_revision,
+                "quote": user_message.content,
+                "start": 0,
+                "end": len(user_message.content),
+            },
+        )
         return ArchivalArtifactsDecision(
             timeline=(
                 TimelineCandidate(
                     content="We spent an ordinary afternoon at the arcade.",
+                    evidence=evidence,
                 ),
             ),
             memories=(
                 MemoryCandidate(
                     node_type=MemoryType.EVENT,
                     content="We played one arcade game together.",
+                    evidence=evidence,
                     tags=("arcade",),
                 ),
             ),
@@ -104,6 +120,36 @@ class _LegacyManifestFileStorage(FileStorage):
             )
             for record in super().list_archival_records(relationship_id)
         ]
+
+
+class _ReceiptRevisionMismatchMixin:
+    """Returns a full receipt bound to the wrong Source Turn revision."""
+
+    def list_archival_records(self, relationship_id):
+        return [
+            replace(
+                record,
+                receipt=replace(
+                    record.receipt,
+                    source_revision="forged-revision",
+                ),
+            )
+            for record in super().list_archival_records(relationship_id)
+        ]
+
+
+class _ReceiptRevisionMismatchFileStorage(
+    _ReceiptRevisionMismatchMixin,
+    FileStorage,
+):
+    pass
+
+
+class _ReceiptRevisionMismatchSQLiteStorage(
+    _ReceiptRevisionMismatchMixin,
+    SQLiteStorage,
+):
+    pass
 
 
 class _TimelineTamperMixin:
@@ -443,18 +489,9 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                 )
             )
 
-            projection = next(
-                item
-                for item in result.memories
-                if item.source_id == "memory-fake-archive"
-            )
-            self.assertEqual(
-                projection.provenance,
-                RecallArtifactProvenance.PARTIAL_SOURCE,
-            )
             self.assertNotIn(
-                "archive-does-not-exist",
-                {item.source_id for item in projection.source_references},
+                "memory-fake-archive",
+                {item.source_id for item in result.memories},
             )
             engine.close()
 
@@ -517,18 +554,9 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                 )
             )
 
-            projection = next(
-                item
-                for item in result.memories
-                if item.source_id == "memory-not-in-manifest"
-            )
-            self.assertEqual(
-                projection.provenance,
-                RecallArtifactProvenance.PARTIAL_SOURCE,
-            )
             self.assertNotIn(
-                receipt.archival_id,
-                {item.source_id for item in projection.source_references},
+                "memory-not-in-manifest",
+                {item.source_id for item in result.memories},
             )
             engine.close()
 
@@ -558,7 +586,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                         turn_id=f"turn-mutated-{name}",
                         delivery_exception=_preexisting_delivery_exception(),
                     )
-                    receipt = engine.archive_turn(
+                    engine.archive_turn(
                         "agent-lumi",
                         "user-chen",
                         turn.source_turn_id,
@@ -590,21 +618,9 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                         )
                     )
 
-                    projection = next(
-                        item
-                        for item in result.memories
-                        if item.source_id == original.node_id
-                    )
-                    self.assertEqual(
-                        projection.provenance,
-                        RecallArtifactProvenance.PARTIAL_SOURCE,
-                    )
                     self.assertNotIn(
-                        receipt.archival_id,
-                        {
-                            item.source_id
-                            for item in projection.source_references
-                        },
+                        original.node_id,
+                        {item.source_id for item in result.memories},
                     )
                     engine.close()
 
@@ -634,7 +650,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                         turn_id=f"turn-mutated-descriptor-{name}",
                         delivery_exception=_preexisting_delivery_exception(),
                     )
-                    receipt = engine.archive_turn(
+                    engine.archive_turn(
                         "agent-lumi",
                         "user-chen",
                         turn.source_turn_id,
@@ -669,21 +685,9 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                         )
                     )
 
-                    projection = next(
-                        item
-                        for item in result.memories
-                        if item.source_id == original.node_id
-                    )
-                    self.assertEqual(
-                        projection.provenance,
-                        RecallArtifactProvenance.PARTIAL_SOURCE,
-                    )
                     self.assertNotIn(
-                        receipt.archival_id,
-                        {
-                            item.source_id
-                            for item in projection.source_references
-                        },
+                        original.node_id,
+                        {item.source_id for item in result.memories},
                     )
                     engine.close()
 
@@ -725,7 +729,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                             turn_id=f"turn-timeline-{name}-{mutation}",
                             delivery_exception=_preexisting_delivery_exception(),
                         )
-                        receipt = engine.archive_turn(
+                        engine.archive_turn(
                             "agent-lumi",
                             "user-chen",
                             turn.source_turn_id,
@@ -749,21 +753,9 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                             )
                         )
 
-                        projection = next(
-                            item
-                            for item in result.memories
-                            if item.source_id == original.timeline_entry_id
-                        )
-                        self.assertEqual(
-                            projection.provenance,
-                            RecallArtifactProvenance.PARTIAL_SOURCE,
-                        )
                         self.assertNotIn(
-                            receipt.archival_id,
-                            {
-                                item.source_id
-                                for item in projection.source_references
-                            },
+                            original.timeline_entry_id,
+                            {item.source_id for item in result.memories},
                         )
                         engine.close()
 
@@ -788,7 +780,7 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                 turn_id="turn-receipt-only",
                 delivery_exception=_preexisting_delivery_exception(),
             )
-            receipt = engine.archive_turn(
+            engine.archive_turn(
                 "agent-lumi",
                 "user-chen",
                 turn.source_turn_id,
@@ -807,28 +799,82 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                 )
             )
 
-            modern = [
-                item
-                for item in result.memories
-                if item.source_kind
-                in {"memory_node", "experiential_timeline"}
-            ]
-            self.assertEqual(len(modern), 2)
-            for projection in modern:
-                self.assertEqual(
-                    projection.provenance,
-                    RecallArtifactProvenance.PARTIAL_SOURCE,
+            self.assertFalse(
+                any(
+                    item.source_kind
+                    in {"memory_node", "experiential_timeline"}
+                    for item in result.memories
                 )
-                self.assertNotIn(
-                    receipt.archival_id,
-                    {
-                        item.source_id
-                        for item in projection.source_references
-                    },
-                )
+            )
             engine.close()
 
-    def test_compacted_tombstone_cannot_certify_real_or_forged_artifacts(self):
+    def test_full_receipt_revision_must_match_the_completed_source_turn(self):
+        with tempfile.TemporaryDirectory() as root:
+            storage_factories = (
+                (
+                    "file",
+                    lambda: _ReceiptRevisionMismatchFileStorage(
+                        os.path.join(root, "files-revision")
+                    ),
+                ),
+                (
+                    "sqlite",
+                    lambda: _ReceiptRevisionMismatchSQLiteStorage(
+                        os.path.join(root, "revision.db")
+                    ),
+                ),
+            )
+            for name, make_storage in storage_factories:
+                with self.subTest(storage=name):
+                    engine = ERIIEngine(
+                        storage_driver=make_storage(),
+                        config=ERIIConfig(async_archival=False),
+                        memory_extractor=_ArtifactExtractor(),
+                    )
+                    engine.initialize_relationship(
+                        "agent-lumi",
+                        "user-chen",
+                        "Lumi is patient.",
+                    )
+                    turn = engine.record_turn(
+                        "agent-lumi",
+                        "user-chen",
+                        "Let us play one arcade game.",
+                        "Okay.",
+                        turn_id=f"turn-revision-{name}",
+                        delivery_exception=_preexisting_delivery_exception(),
+                    )
+                    engine.archive_turn(
+                        "agent-lumi",
+                        "user-chen",
+                        turn.source_turn_id,
+                        idempotency_key=f"archive-revision-{name}",
+                    )
+
+                    result = engine.recall_structured(
+                        RecallRequest(
+                            agent_id="agent-lumi",
+                            user_id="user-chen",
+                            query="arcade",
+                            audience=RecallAudience.AGENT_PRIVATE,
+                            options=RecallOptions(
+                                top_k=10,
+                                max_per_type=10,
+                                persona_delivery=PersonaDelivery.FULL,
+                            ),
+                        )
+                    )
+
+                    self.assertFalse(
+                        any(
+                            item.authority_tier
+                            == RecallAuthorityTier.ORDINARY
+                            for item in result.memories
+                        )
+                    )
+                    engine.close()
+
+    def test_compacted_tombstone_keeps_real_authority_and_rejects_forgery(self):
         with tempfile.TemporaryDirectory() as root:
             storage_factories = (
                 ("file", lambda: FileStorage(os.path.join(root, "files"))),
@@ -898,22 +944,103 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                     )
 
                     by_id = {item.source_id: item for item in result.memories}
-                    for artifact_id in (
-                        original.node_id,
-                        forged_data["node_id"],
-                    ):
-                        projection = by_id[artifact_id]
-                        self.assertEqual(
-                            projection.provenance,
-                            RecallArtifactProvenance.PARTIAL_SOURCE,
+                    projection = by_id[original.node_id]
+                    self.assertEqual(
+                        projection.provenance,
+                        RecallArtifactProvenance.PARTIAL_SOURCE,
+                    )
+                    self.assertNotIn(
+                        receipt.archival_id,
+                        {
+                            item.source_id
+                            for item in projection.source_references
+                        },
+                    )
+                    self.assertNotIn(forged_data["node_id"], by_id)
+                    engine.close()
+
+    def test_compacted_tombstone_rejects_tampered_and_uuid_shaped_artifacts(self):
+        with tempfile.TemporaryDirectory() as root:
+            storage_factories = (
+                ("file", lambda: FileStorage(os.path.join(root, "files"))),
+                ("sqlite", lambda: SQLiteStorage(os.path.join(root, "memory.db"))),
+            )
+            for name, make_storage in storage_factories:
+                with self.subTest(storage=name):
+                    engine = ERIIEngine(
+                        storage_driver=make_storage(),
+                        config=ERIIConfig(
+                            async_archival=False,
+                            archival_receipt_retention_days=0,
+                        ),
+                        memory_extractor=_ArtifactExtractor(),
+                    )
+                    engine.initialize_relationship(
+                        "agent-lumi",
+                        "user-chen",
+                        "Lumi is patient.",
+                    )
+                    turn = engine.record_turn(
+                        "agent-lumi",
+                        "user-chen",
+                        "Let us play one arcade game.",
+                        "Okay.",
+                        turn_id=f"turn-compacted-tamper-{name}",
+                        delivery_exception=_preexisting_delivery_exception(),
+                    )
+                    receipt = engine.archive_turn(
+                        "agent-lumi",
+                        "user-chen",
+                        turn.source_turn_id,
+                        idempotency_key=f"archive-compacted-tamper-{name}",
+                    )
+                    original = engine.storage.load_nodes(
+                        "agent-lumi",
+                        "user-chen",
+                    )[0]
+                    self.assertEqual(engine.compact_archival_receipts(), 1)
+
+                    tampered = replace(
+                        original,
+                        content="A tampered arcade memory reusing the real ID.",
+                    )
+                    forged = replace(
+                        original,
+                        node_id=str(
+                            uuid.uuid5(
+                                uuid.UUID(receipt.archival_id),
+                                "memory:63",
+                            )
+                        ),
+                        content="A forged arcade memory with a valid-shaped ID.",
+                    )
+                    engine.storage.save_nodes(
+                        "agent-lumi",
+                        "user-chen",
+                        [tampered, forged],
+                    )
+
+                    result = engine.recall_structured(
+                        RecallRequest(
+                            agent_id="agent-lumi",
+                            user_id="user-chen",
+                            query="arcade",
+                            audience=RecallAudience.AGENT_PRIVATE,
+                            options=RecallOptions(
+                                top_k=10,
+                                max_per_type=10,
+                                persona_delivery=PersonaDelivery.FULL,
+                            ),
                         )
-                        self.assertNotIn(
-                            receipt.archival_id,
-                            {
-                                item.source_id
-                                for item in projection.source_references
-                            },
-                        )
+                    )
+
+                    ordinary_ids = {
+                        item.source_id
+                        for item in result.memories
+                        if item.authority_tier == RecallAuthorityTier.ORDINARY
+                    }
+                    self.assertNotIn(tampered.node_id, ordinary_ids)
+                    self.assertNotIn(forged.node_id, ordinary_ids)
                     engine.close()
 
     def test_open_turn_cannot_supply_a_verified_source_revision(self):
@@ -1033,16 +1160,10 @@ class StructuredRecallMemoryProvenanceTests(unittest.TestCase):
                 )
             )
 
-            projection = next(
-                item
-                for item in result.memories
-                if item.source_id == "memory-cross-relationship"
+            self.assertNotIn(
+                "memory-cross-relationship",
+                {item.source_id for item in result.memories},
             )
-            self.assertEqual(
-                projection.provenance,
-                RecallArtifactProvenance.PARTIAL_SOURCE,
-            )
-            self.assertEqual(projection.source_references, ())
             engine.close()
 
 

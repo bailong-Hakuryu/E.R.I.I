@@ -4,22 +4,44 @@
 
 ## [Unreleased]
 
+## [0.4.0a8] - 2026-08-02
+
 ### Added
 
+- 现代 `turn-record/v2`：每个最终可见回复都原子携带严格判别的 `ContinuityReviewRecord`；成功审查保存五轴 `ContinuityReviewReceipt`，未评估、失败与 Legacy 分支不再伪装成现代通过结论。
+- 版本化 `DeliveryExceptionRecord` 与冻结的 `TurnContextBaseline`，将最终回复字节、交付处置、Persona/Manifest/Growth 权威、关系前提及关系历史高水位绑定到同一 Turn 生命周期。
+- 类型化 `ContinuityEvidenceRef` 及关系范围内的来源解析；只有最终 `voice_style` Finding 实际引用的激活才投影为不可重放、不可反向激活的 `VoiceActivationTrace`。
+- 归档 extractor schema `"2"` 与消息级 `ArchivalEvidenceCitation` / `ArtifactEvidenceReference`：使用精确 Unicode code-point 范围、Source Turn revision、内核解析角色、消息哈希和稳定 Evidence ID 验证 Timeline 与 MemoryNode 来源。
+- Recall 产物增加 `ordinary | legacy_context | quarantined_history` 权威层级与引用；Public 只使用 Ordinary，Agent-private 将 Ordinary 与 Legacy 分区渲染，并且只有最终入选的 Ordinary MemoryNode 可以强化。选择器保留上游 keyword/vector RRF 与动态权重顺序，先分类权威再应用 `max_per_type`，不会让高排名 Legacy 提前耗尽 Ordinary 的类型配额。
+- 关系候选的连续性例外隔离：引用 `overridden | shown_unreviewed` Agent 消息的候选以 `rejected + continuity_exception_agent_evidence_quarantined` 正常终结并保留精确证据；独立 User-only 候选继续裁决，全部隔离时 Run 为 `completed + no_accepted_events`。`adjudicate_turn_candidates()` 以及精确命中持久 completed Turn 的 direct API 使用 `relationship-turn-adjudication-v1`；真正 transient 的旧入口保持 Legacy，并禁止其 Turn ID 后续被提升为规范 Turn。
+- MemoryPack `0.4.0a8` 携带 Turn v2、审查/例外记录、类型化证据、Voice Trace、归档证据闭包、Recall 来源和关系隔离回执；每个 schema `"2"` 产物在首次写入前必须同时闭合到精确 Source Turn 与 tombstone 的类型、稳定 ID、规范载荷 SHA-256 commitment。绑定持久 Turn 的 direct adjudication 会复核 Source Turn、Evidence 与 quarantine 不变量；即使 receipt contract 被降级，只要对应 Turn 仍在 Pack 中也会复核。
+- REST Turn、归档、关系处理、Recall 与 MemoryPack 路径往返新的 a8 wire，并保持与 Engine 相同的严格版本、关系范围和错误语义。
 - 关系范围内的 Persona Context 计划与 Pipeline Inspection：宿主可以区分已批准 Manifest、旧式完整原文降级、连续性评估覆盖率、待处理通道和连续 no-event 运行。
 - 结构化 Recall 产物来源等级与引用，区分完整 Source Turn + Archival 认证、部分来源和旧式未解析记忆。
 - FileStorage/SQLiteStorage 一致的语义 Timeline 最近项读取；SQLite Schema v9 保存规范 UTC 排序键与稳定等时刻次序。
 
 ### Changed
 
+- 包版本与 MemoryPack 当前格式升级为 `0.4.0a8`；SQLite Schema 升级到 v9，并为新审查、证据与关系处理状态提供 FileStorage/SQLiteStorage 共享契约。
+- `recall()` 兼容签名现在委托给与 `recall_structured()` 相同的权威分类、选择、预算和 Renderer，不再让 Legacy 或异常历史绕过现代召回边界；为保持历史 Core Memory 语义，它会在动态 `top_k` 选择之后额外加入带 `legacy_context` 标签的 Core 候选，该候选仍受硬成本预算。
+- 新归档提交必须使用 extractor schema `"2"`；schema `"1"` 终态保持不变，未形成批次的提取工作以 `extractor_schema_upgrade_required` 终结，已完整绑定的提交批次继续按原身份原子完成。
 - 已批准 Persona Manifest 只有在批准记录仍为当前有效状态时才可用于运行时召回；撤销后立即失效。带 Manifest 的 `FULL` delivery 也遵守当前 `Agent × User` 关系范围，旧数据继续保留显式兼容路径。
-- 完整归档回执使用不可变产物指纹认证 MemoryNode/Timeline 内容与提取器描述；旧回执缺少指纹、产物被同 ID 改写或只剩墓碑时只能报告部分来源。
+- 完整归档回执使用不可变产物指纹认证 MemoryNode/Timeline 内容、Source revision 与提取器描述；现代压缩墓碑把类型、稳定 ID 与规范载荷 SHA-256 保留为不含正文的 `artifact_commitments`。因此压缩后来源投影仍如实标为 partial，但未改写产物可以继续获得普通权威；旧回执/墓碑缺少指纹，或产物被同 ID 改写时，不能获得该认证。
+- direct adjudication 没有 frozen candidate，MemoryPack 因而只承诺完整复核持久 Source Turn、Evidence identity 与异常 Agent quarantine，不宣称能像 `relationship-processing-v1` 一样重放普通 accepted Event。旧 transient records 保持 Legacy 可读；未签名 Pack 若被整体改写、删除 Turn 或同步降级字段，仍不具备来源真实性保证。
 - 自定义 FileStorage 的默认持久任务队列与该存储目录共置，不再回落到进程工作目录。
 - 同步归档若命中既有终态 `FAILED` 回执，现在抛出带该回执的 `ArchivalProcessingError`，宿主不能再把幂等重放误判为成功。
 
+### Compatibility
+
+- `0.4.0a7` 及更早的 FileStorage、SQLite 与 MemoryPack 继续可读；缺少现代审查或消息级证据的记录保持显式 `legacy_unavailable` / `legacy_context`，不会通过内容猜测升级为 Ordinary 权威。
+- `0.4.0a8` 是最后一个承诺支持 Python 3.9 的版本；`0.4.0b1` 起最低 Python 版本提升为 3.11，并同步包元数据、CI 与使用文档。
+- a8 只保存异常交付、精确证据和候选级拒绝，不提供例外解除 API。`0.5.0a1` 将由具备相应宿主能力的调用者以新的 `historical_reprocessing` 身份引用原 Turn、冻结候选和 a8 拒绝回执，再分别追加 Continuity Authority 与 Relationship Consequence 结论；旧记录不可修改，关系后果不能授予连续性权威，后续连续性批准也不能自动接受旧关系候选。
+
 ### Security
 
+- Turn、Finding、Archival Evidence、Recall 与关系候选均强制原始 `Agent × User` 范围；异常 Agent 发言保留“确实说过”的历史事实，但在显式 v0.5 处置前不能自动成为人格、知识、承诺、反思、成长或关系跃迁权威。
 - 关系前提、原作经历图和称呼绑定必须与批准 Manifest 的规范值及证据范围精确一致；不匹配输入失败关闭，不会从其他关系继承亲密度或原作角色位置。
+- 指纹与闭包校验用于内部自洽和损坏检测，不等同于来源认证、防篡改签名、授权、加密或多租户隔离；这些正式服务安全边界仍不属于 a8。
 
 ## [0.4.0a7] - 2026-07-30
 

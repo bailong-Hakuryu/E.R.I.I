@@ -1,5 +1,7 @@
 """Capture of the exact authority and relationship prefixes visible to a Turn."""
 
+from __future__ import annotations
+
 from erii.core.adjudication import relationship_events_from_journals
 from erii.core.continuity import (
     InteractionContextEvaluationCoordinator,
@@ -9,6 +11,7 @@ from erii.core.continuity import (
 from erii.models.adjudication import PersonaGrowthProposal
 from erii.models.persona import PersonaCompilationStatus, PersonaManifest
 from erii.models.relationship import RelationshipProfile
+from erii.models.turn import TurnConflictError
 from erii.models.turn_context import (
     TurnApprovedGrowthReference,
     TurnBlueprintReference,
@@ -34,6 +37,7 @@ def capture_turn_context_baseline(
     snapshot = storage.capture_turn_context_source(profile)
     source_profile = snapshot.profile
     _require_same_immutable_profile(profile, source_profile)
+    ensure_canonical_turn_identity_available(snapshot, profile, turn_id)
     manifest = _active_snapshot_manifest(snapshot)
     approved_growth = snapshot.approved_growth
     for proposal in approved_growth:
@@ -93,6 +97,23 @@ def capture_turn_context_baseline(
             "voice_matcher_policy": VoicePatternMatcher.VERSION,
         },
     )
+
+
+def ensure_canonical_turn_identity_available(
+    snapshot,
+    profile: RelationshipProfile,
+    turn_id: str,
+) -> None:
+    """Rejects promotion of a transient adjudication into canonical Turn data."""
+    _require_same_immutable_profile(profile, snapshot.profile)
+    if any(
+        record.receipt.source_turn_id == turn_id
+        for record in snapshot.adjudications
+    ):
+        raise TurnConflictError(
+            "turn_id was already used by a transient relationship "
+            "adjudication and cannot be promoted to a canonical Turn"
+        )
 
 
 def _require_same_immutable_profile(
@@ -224,6 +245,7 @@ def resolve_turn_context_history(
 __all__ = [
     "RELATIONSHIP_HISTORY_PROJECTION_VERSION",
     "capture_turn_context_baseline",
+    "ensure_canonical_turn_identity_available",
     "resolve_turn_context_approved_growth",
     "resolve_turn_context_authorities",
     "resolve_turn_context_history",

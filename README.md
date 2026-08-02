@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0a7-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-0.4.0a8-orange.svg)]()
 
 E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI 伴侣、虚拟角色和叙事型 Agent。
 
@@ -26,7 +26,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 当前版本能够做什么
 
-`v0.4.0a7` 已实现：
+`v0.4.0a8` 已实现：
 
 - 按 `(agent_id, user_id)` 隔离记忆；
 - 核心人格文本、体验时间线和分类印象节点；
@@ -68,7 +68,12 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - 合法 `no_relationship_event` / `no_reflection`、反思局部失败与正式 Reflection Record 的独立可查询结果；
 - 只使用显式分组证据、可通过 History Fingerprint 重建的 Episode 与 Relationship Chapter；证据不足的事件不会被丢弃；
 - 五轴回复连续性评估，以及由带来源情境信号激活、不会继承另一段关系亲密度的 Contextual Voice Pattern；关系安全由当前 Relationship Snapshot 确定性分档，情绪只能由可选的严格 `InteractionContextEvaluatorV1` 在当前关系/Turn 证据内提出；
-- SQLite Schema v6 与 FileStorage 可靠归档/关系处理账本；MemoryPack `0.4.0a7` 携带结构化 Timeline、归档来源、正式反思和可恢复的持久关系处理 run；
+- 每个现代完成 Turn 原子绑定版本化 Context Baseline、`ContinuityReviewRecord` 与必要的 `DeliveryExceptionRecord`，审查依据使用关系范围内的类型化引用；
+- 被最终语气判断实际采用的 Contextual Voice 激活投影为不可重放、不会回灌 Prompt 的审计 Trace；
+- schema `"2"` 归档候选必须携带可由 Source Transcript 精确核验的 Unicode 消息区间，持久产物只保存内核解析后的证据引用；
+- 召回将记忆投影区分为 `ordinary | legacy_context | quarantined_history`：Public 只使用 Ordinary，Agent-private 分区显示 Legacy，Legacy 不参与强化；
+- `overridden | shown_unreviewed` 的 Agent 消息仍永久保留为真实历史，但引用它的关系候选以 `continuity_exception_agent_evidence_quarantined` 正常拒绝；同轮 User-only 候选继续处理；
+- SQLite Schema v9 与 FileStorage 可靠归档/关系处理账本；MemoryPack `0.4.0a8` 携带结构化 Timeline、带产物内容承诺的精确归档证据闭包、正式反思、可恢复的持久关系处理 run，以及绑定持久 Turn 的 direct adjudication 证据闭包；
 - 由宿主显式控制的后台归档生命周期。
 
 当前版本尚未实现：
@@ -277,6 +282,7 @@ engine.abandon_turn(
 from datetime import datetime, timezone
 
 from erii import (
+    ArchivalEvidenceCitation,
     ArchivalArtifactsDecision,
     DeliveryExceptionRecord,
     ERIIConfig,
@@ -292,20 +298,34 @@ class MyMemoryExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="my-app.memory-extractor",
         extractor_version="1.0",
-        extraction_schema_version="1",
+        extraction_schema_version="2",
     )
 
     def extract(self, request):
         # 真实实现可以在这里调用宿主选择的模型，然后校验并转换结果。
+        user_message = request.transcript.user_message
+        evidence = (
+            ArchivalEvidenceCitation(
+                source_id=user_message.message_id,
+                source_revision=request.source_revision,
+                quote=user_message.content,
+                start=0,
+                end=len(user_message.content),
+            ),
+        )
         return ArchivalArtifactsDecision(
             timeline=(
-                TimelineCandidate(content="我们一起在街机厅度过了一个下午。"),
+                TimelineCandidate(
+                    content="用户提出一起去游戏厅。",
+                    evidence=evidence,
+                ),
             ),
             memories=(
                 MemoryCandidate(
                     node_type=MemoryType.PREFERENCE,
-                    content="用户喜欢和我一起玩格斗游戏。",
+                    content="用户希望一起去游戏厅。",
                     tags=("arcade", "shared-experience"),
+                    evidence=evidence,
                 ),
             ),
         )
@@ -348,7 +368,7 @@ with ERIIEngine(config=config, memory_extractor=MyMemoryExtractor()) as engine:
 
 当 `async_archival=True` 时，`archive_turn()` 只持久化并返回 `pending`，不会启动隐藏处理。宿主随后调用 `process_pending()` 逐批消费，或在停机/检查点前调用 `drain(timeout=...)` 处理调用时可见的任务快照。回执只包含 ID、状态、版本化提取器描述、计数和安全结果，不包含 Source Transcript；读取原文仍必须通过同一 `Agent × User` 范围内的 `get_turn()`。
 
-完整终态回执默认保留 30 天（`archival_receipt_retention_days`），到期后可由 `compact_archival_receipts()` 压缩为最小 tombstone。压缩不会删除已经提交的记忆或结构化 Timeline，也不会破坏幂等重试；它只移除不再需要的详细运维字段。
+完整终态回执默认保留 30 天（`archival_receipt_retention_days`），到期后可由 `compact_archival_receipts()` 压缩为最小 tombstone。压缩不会删除已经提交的记忆或结构化 Timeline，也不会破坏幂等重试。由现代带指纹回执生成的 tombstone 会保留不含产物正文的 `artifact_commitments`，逐项绑定产物类型、稳定 ID 与规范载荷的 SHA-256；召回会重算当前产物指纹，并连同 Source revision、已完成 Source Turn 和精确消息证据一起核验。因此完整回执消失后，运维详情和完整来源投影会如实降为部分来源，但精确产物内容承诺仍可让未被改写的 schema `"2"` 产物保持普通召回权威。旧墓碑若没有 commitments，只能保留幂等与审计身份，不能认证当前产物载荷。
 
 `remember()` 仍是兼容旧集成的 Prompt/JSON 归档入口，但不会自动建立规范 Source Turn 的来源关系。新集成应优先使用 `record_turn()`（或 `begin_turn()` → `complete_turn()`）再调用 `archive_turn()`。完整说明见[中文使用手册](docs/USAGE_zh-CN.md#可靠归档从-source-turn-生成长期记忆)和 [English guide](docs/USAGE.md#reliable-archival-derive-long-term-memory-from-a-source-turn)。
 
@@ -488,7 +508,7 @@ with ERIIEngine(storage_dir="./erii_memory") as engine:
     print(engine.get_relationship_snapshot("agent_lumi", "user_chen").state.intimacy)
 ```
 
-上例是 `0.4.x` 保留的旧式手工候选入口：宿主临时提供完整 turn 供精确引文校验，裁决记录只保留最小证据。`0.4.0a5` 的规范 Source Transcript 则由 Turn Recording 生命周期独立、完整持久化；两者不能靠相同字符串或相似时间自动推断为同一轮。新集成应先取得稳定 `source_turn_id`，后续归档、关系提取和重处理围绕该身份扩展。
+上例是 `0.4.x` 保留的旧式手工候选入口：宿主提供完整 Source Turn 供精确引文校验，裁决记录只保留最小证据；该调用本身不会创建或替换 Turn Record。若同一关系中已经存在相同 `turn_id` 的 completed Turn，a8 会要求 revision、消息 ID、角色、正文与发生时间逐项精确匹配，再以 `relationship-turn-adjudication-v1` 保存裁决并应用该 Turn 的交付权威；任一字段不符都会失败关闭。只有确实不存在持久 Turn 时才沿用 transient Legacy 行为，而且一旦该 Turn ID 被 transient 裁决使用，之后不能再把它注册成规范 Turn 来追授现代权威。新集成应先取得稳定 `source_turn_id`，优先调用 `adjudicate_turn_candidates()` 或自动关系处理路径。
 
 模型置信度被拆成提取置信度与解释置信度，只参与路由和限幅。关系数值始终由版本化规则计算；低解释置信度的有效事实可以进入中性历史，但不会自动改变关系或保存 Persona Reflection。
 
@@ -560,7 +580,9 @@ with ERIIEngine(storage_dir="./erii_memory") as engine:
     prompt_context = engine.render_recall(result)
 ```
 
-关系未初始化时，结构化召回会明确返回 `uninitialized`，继续提供旧记忆投影，但绝不会因此创建默认人设。结构化召回默认只读；只有 `reinforce=True` 才会强化最终通过预算的 MemoryNode。`public` 受众会在组装阶段排除人设原文、内部独白、关系数值和默认私有关系事件，不能依靠 Renderer 临时隐藏。
+关系未初始化时，结构化召回会明确返回 `uninitialized`，继续提供旧记忆投影，但绝不会因此创建默认人设。结构化召回默认只读；只有 `reinforce=True` 才会强化最终通过预算且权威级别为 `ordinary` 的 MemoryNode。
+
+每个 Memory 投影都带有独立于 Memory Type 的 `authority_tier`。`ordinary` 具有完整现代消息证据和合格交付路径；`legacy_context` 保留 pre-a8 记忆的连续性，但只进入 Agent-private 的 `Legacy Context - provenance incomplete` 分区且永不强化；`quarantined_history` 仍可检查、导出和删除，但不进入默认生成 Prompt。`public` 受众只接收 Ordinary，并在组装阶段排除人设原文、内部独白、关系数值和默认私有关系事件，不能依靠 Renderer 临时隐藏。MemoryNode 只经过一次关键词/向量 RRF 与动态权重排序；权威分类先把 Ordinary、Legacy 与 Quarantined 分开，再对可用分区应用 `max_per_type`，因此高排名 Legacy 不会提前耗尽 Ordinary 的类型配额，选择器也不会用第二套词法相关性重排上游 hybrid 顺序。
 
 人设交付有两种模式：
 
@@ -569,7 +591,7 @@ with ERIIEngine(storage_dir="./erii_memory") as engine:
 
 每段关系还可在初始化时显式选择 `fresh`、`address_only` 或 `canonical_continuation`。默认 `fresh` 不继承原作关系；`address_only` 只继承称呼；`canonical_continuation` 必须提供有原文区间证据的 Premise Experience，并由版本化 Premise Policy 把定性等级确定映射为该关系独有的 Baseline。不同用户始终是不同世界线。
 
-REST 客户端可调用 `POST /api/v1/recall/structured`；旧 `POST /api/v1/recall` 与 `ERIIEngine.recall()` 仍返回兼容 Markdown，并保留自动强化行为。
+REST 客户端可调用 `POST /api/v1/recall/structured`；旧 `POST /api/v1/recall` 与 `ERIIEngine.recall()` 仍返回 Markdown 字符串并保留自动强化请求，但同样只能强化最终预算内的 Ordinary MemoryNode。为了不破坏旧集成，兼容 `recall()` 还会把 `set_core_memory()` 保存的 Core Memory 作为带 `legacy_context` 标签的兼容上下文放在动态 `top_k` 之外；它仍受同一硬成本预算约束，也不会因此获得现代 Persona 或来源权威。`recall_structured()` 没有这个额外槽位。
 
 ## 时间承诺与开放事项
 
@@ -625,7 +647,7 @@ with ERIIEngine(storage_driver=storage) as engine:
     ...
 ```
 
-SQLite 驱动启用 WAL，并使用参数化 SQL。`0.4.0a7` 会把已有数据库原地迁移到 Schema v6：除 `source_turns` 与可靠归档数据外，还保存关系处理运行、合法零产物、反思决定和正式反思记录。FileStorage 提供相同的关系范围与幂等语义。两者都不是授权、加密或多租户边界。
+SQLite 驱动启用 WAL，并使用参数化 SQL。`0.4.0a8` 会把已有数据库原地迁移到 Schema v9：除 `source_turns` 与可靠归档数据外，还保存关系处理运行、合法零产物、反思决定、正式反思记录，以及现代 Turn 的审查、例外和冻结上下文。FileStorage 提供相同的关系范围与幂等语义。两者都不是授权、加密或多租户边界。
 
 ## 独白与未完成事件
 
@@ -662,9 +684,9 @@ pack = engine.export_memory(
 engine.import_memory("./lumi-memory.json", overwrite=False)
 ```
 
-MemoryPack `0.4.0a7` 在既有 `turn_records`、结构化 Timeline 与归档 tombstone 之外，携带正式 Persona Reflection、direct-event journal 顺序和全部持久 Relationship Processing Run，包括可恢复的非终态/partial 阶段与冻结决定。这样换用 FileStorage/SQLite 后仍能保留 accepted/no-event/no-reflection 结果、普通重试身份和续跑位置；这些记录不复制完整 Prompt、人设或 Source Transcript。导出、精确身份导入和在线关系处理共用同一个 relationship guard；导入保持 direct-event/adjudication 两本日志各自的追加顺序，并在写入任何普通记忆字段前核验完整不可变 Relationship/Blueprint 身份、精确 Source Turn、Timeline 稳定 ID、目标与 incoming 合并后的时间生命周期、反思唯一裁决来源、Manifest、已批准成长及目标已有账本冲突。Episode 和 Relationship Chapter 是可重建投影，不进入 Pack。
+MemoryPack `0.4.0a8` 在既有 `turn_records`、结构化 Timeline 与归档 tombstone 之外，携带正式 Persona Reflection、direct-event journal 顺序和全部持久 Relationship Processing Run，包括可恢复的非终态/partial 阶段与冻结决定。每个 schema `"2"` 产物必须携带其精确 Source Turn 依赖闭包，并匹配对应 tombstone 的 `artifact_commitments` 中由类型、稳定 ID 与规范载荷 SHA-256 组成的一项；导入会在第一次写入前重算产物指纹、消息角色、revision、消息 SHA-256、Unicode 区间与 Evidence ID。绑定持久 Turn 的 direct adjudication 使用 `relationship-turn-adjudication-v1`；导入会复核其完整 Source Turn、证据身份和异常 Agent 必须保持拒绝的不变量，即使有人只把 receipt 的 contract 字段降级、却仍保留对应 Turn，也不会绕过复核。这里没有 frozen candidate，因此 direct import 不声称能够完整重放普通 accepted Event；旧 transient 记录继续以 Legacy 形式可读，也不会仅因导入而获得规范 Turn 权威。这样换用 FileStorage/SQLite 后仍能保留 accepted/no-event/no-reflection 结果、普通重试身份和续跑位置；这些记录不复制完整 Prompt、人设或 Source Transcript。导出、精确身份导入和在线关系处理共用同一个 relationship guard；导入保持 direct-event/adjudication 两本日志各自的追加顺序，并在写入任何普通记忆字段前核验完整不可变 Relationship/Blueprint 身份、精确 Source Turn、Timeline 稳定 ID、目标与 incoming 合并后的时间生命周期、反思唯一裁决来源、Manifest、已批准成长及目标已有账本冲突。Episode 和 Relationship Chapter 是可重建投影，不进入 Pack。
 
-因为完整来源、反思和处理账本属于特定关系，含这些数据的 Pack 只允许恢复到原来的 `Agent × User` 与 `relationship_id`；传入另一组 Agent/User ID 会被拒绝，`overwrite=True` 也不能绕过该边界。旧 Pack 仍可读取，但迁移不会为缺失来源补造当时上下文。在依赖它处理重要数据前，请保留原始存储备份并验证导入结果。这里的指纹与重放用于检查 Pack 的结构、因果和内部自洽性，并不认证 Pack 的真实来源：能够整体改写 Pack 的一方也能重新计算未加密指纹。正式产品仍需在内核外为导出文件增加签名或 MAC、加密、授权与密钥管理。
+因为完整来源、反思和处理账本属于特定关系，含这些数据的 Pack 只允许恢复到原来的 `Agent × User` 与 `relationship_id`；传入另一组 Agent/User ID 会被拒绝，`overwrite=True` 也不能绕过该边界。旧 Pack 仍可读取，但迁移不会为缺失来源补造当时上下文。在依赖它处理重要数据前，请保留原始存储备份并验证导入结果。这里的指纹与重放用于检查 Pack 的结构、因果和内部自洽性，并不认证 Pack 的真实来源：能够整体改写未签名 Pack 的一方也能删除 Turn、同步降级关联 contract 并重新计算未加密指纹。正式产品仍需在内核外为导出文件增加签名或 MAC、加密、授权与密钥管理。
 
 ## 混合召回
 
@@ -677,7 +699,7 @@ engine = ERIIEngine(
 )
 ```
 
-当前关键词通道使用词元重合度排名，不是完整 BM25。启用向量组件后，系统通过 Reciprocal Rank Fusion 合并关键词排名与向量排名，再乘以记忆的动态有效权重并应用类型配额。
+当前关键词通道使用词元重合度排名，不是完整 BM25。启用向量组件后，系统通过 Reciprocal Rank Fusion 合并关键词排名与向量排名，再乘以记忆的动态有效权重。召回权威选择器保留这份上游顺序，先分类 `ordinary | legacy_context | quarantined_history`，再在各可用权威分区中应用类型配额；它不会用另一套词法评分重排 hybrid 结果。
 
 ## REST 服务
 
@@ -740,7 +762,7 @@ python -m unittest discover -s tests -v
 python -m compileall -q erii examples tests
 ```
 
-仓库的测试覆盖存储、衰减、召回、任务队列、MemoryPack、时间锚定、独白可见性、安全过滤、显式服务生命周期、关系隔离、人设不可变性、事件幂等、证据裁决、冻结重试、独立反思、历史重处理、人格成长、五轴连续性、情境语气、时间承诺和分层投影重建。
+仓库的测试覆盖存储、衰减、召回、任务队列、MemoryPack、时间锚定、独白可见性、安全过滤、显式服务生命周期、关系隔离、人设不可变性、事件幂等、证据裁决、冻结重试、独立反思、历史重处理、人格成长、五轴连续性、情境语气、时间承诺、分层投影重建，以及 a8 的精确归档证据、召回权威分层、异常 Agent 候选隔离和 REST/MemoryPack 往返。
 
 ## 路线图
 
@@ -799,9 +821,7 @@ python -m compileall -q erii examples tests
 - 只用显式分组证据的 Episode / Relationship Chapter，以及诚实保留的未巩固事件；
 - SQLite Schema v6 与 MemoryPack 关系处理/反思携带。
 
-以下版本均为公开规划，尚未实现；实际发布必须满足 [ROADMAP.md](ROADMAP.md) 中的退出条件。
-
-### v0.4.0a8 — 连续性审计与发布收口（计划）
+### v0.4.0a8 — 连续性审计与发布收口（实现完成，待发布验证）
 
 - 每个现代最终可见回复与 `ContinuityReviewRecord` 原子绑定，只有 `reviewed` 分支包含五轴 `ContinuityReviewReceipt`；
 - 类型化、可解析且严格保持 `Agent × User` 范围的连续性依据；
@@ -815,10 +835,12 @@ python -m compileall -q erii examples tests
 - `MemoryExtractorV1` 调用接口保持兼容，a8 新归档提交通过显式 `extraction_schema_version="2"` 启用证据感知结果；schema `"1"` 只保留为 Legacy 身份；
 - 升级时未提取的 schema `"1"` 工作显式失败并由宿主以新幂等键重提，已冻结的 Commit 继续原子完成但仍标记为 Legacy，不会自动换模型重采样；
 - 旧记忆不会因升级被删除：真正 pre-a8 数据以带前端标签的低权威 `legacy_context` 维持兼容召回且不再强化；可证明来自现代异常交付、却缺少消息角色证据的旧产物只保留检查与携带能力，不进入默认生成 Prompt；
-- 召回预算随现代记忆积累渐进过渡：现代不足时 Legacy 填充上下文，现代充足后最多保留一个相关 Legacy 槽位；两类记忆分区显示、精确重复由现代版本胜出；
+- 召回预算随现代记忆积累渐进过渡：保留上游 hybrid/RRF 顺序并在权威分类后应用类型配额；现代不足时 Legacy 填充上下文，现代充足后最多保留一个相关 Legacy 槽位；两类记忆分区显示、精确重复由现代版本胜出；兼容 `recall()` 的 Legacy Core 位于动态 `top_k` 外但仍受硬预算；
 - 连续性判定保持情感效价中立，不把温柔当正确或把拒绝、生气当 OOC；
 - FileStorage、SQLiteStorage、MemoryPack、旧数据、并发幂等、干净安装与 prerelease 构建收口；
 - 这是最后一个承诺支持 Python 3.9 的版本。
+
+以下版本均为公开规划，尚未实现；实际发布必须满足 [ROADMAP.md](ROADMAP.md) 中的退出条件。
 
 ### v0.5.0a1 — 关系后果与角色内在审视（计划）
 

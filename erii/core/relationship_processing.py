@@ -13,6 +13,7 @@ from erii.core.adjudication import (
     relationship_events_from_journals,
     list_complete_relationship_events,
 )
+from erii.core.evidence_authority import quarantined_agent_source_ids
 from erii.core.persona_context import active_persona_manifest
 from erii.models.adjudication import (
     AdjudicationRecord,
@@ -695,6 +696,7 @@ class RelationshipProcessingCoordinator:
                 ),
                 baseline_direct_events=baseline_direct_events,
                 baseline_adjudications=baseline_adjudications,
+                quarantined_source_ids=quarantined_agent_source_ids(turn),
             )
         except Exception:
             failed = run.advance(

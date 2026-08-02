@@ -153,7 +153,7 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
         )
         restored = MemoryPack.from_json(pack.to_json())
 
-        self.assertEqual(restored.version, "0.4.0a7")
+        self.assertEqual(restored.version, "0.4.0a8")
         self.assertEqual(restored.relationship_processing_runs, [run])
         self.assertEqual(restored.persona_reflection_decisions, [reflection])
         self.assertNotIn("episodes", restored.to_dict())

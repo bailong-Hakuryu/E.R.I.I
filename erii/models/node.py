@@ -10,8 +10,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+from erii.models.archival_evidence import (
+    ArtifactEvidenceReference,
+    artifact_evidence_references_from_value,
+)
 from erii.models.provenance import ArtifactProvenanceState, ExtractorDescriptor
 
 
@@ -70,6 +74,9 @@ class MemoryNode:
         ArtifactProvenanceState.LEGACY_UNAVAILABLE
     )
     extractor_descriptor: Optional[ExtractorDescriptor] = None
+    evidence_references: Tuple[ArtifactEvidenceReference, ...] = field(
+        default_factory=tuple
+    )
     created_at: str = field(
         default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
@@ -88,6 +95,9 @@ class MemoryNode:
             self.extractor_descriptor = ExtractorDescriptor.from_dict(
                 self.extractor_descriptor
             )
+        self.evidence_references = artifact_evidence_references_from_value(
+            self.evidence_references
+        )
         if self.provenance_state == ArtifactProvenanceState.COMPLETE and (
             not self.relationship_id
             or not self.source_turn_id
@@ -97,6 +107,32 @@ class MemoryNode:
             raise ValueError(
                 "complete memory provenance requires relationship, source, and descriptor"
             )
+        self._validate_evidence_references()
+
+    def _validate_evidence_references(self) -> None:
+        descriptor = self.extractor_descriptor
+        references = self.evidence_references
+        if descriptor is not None and descriptor.extraction_schema_version not in {
+            "1",
+            "2",
+        }:
+            raise ValueError("unsupported archival extraction schema version")
+        if self.provenance_state == ArtifactProvenanceState.LEGACY_UNAVAILABLE:
+            if references:
+                raise ValueError("legacy memory cannot claim evidence references")
+            return
+        if descriptor is None:
+            return
+        if descriptor.extraction_schema_version == "1" and references:
+            raise ValueError("schema 1 memory must not contain evidence references")
+        if descriptor.extraction_schema_version == "2" and not references:
+            raise ValueError("schema 2 memory requires evidence references")
+        if any(
+            item.relationship_id != self.relationship_id
+            or item.source_turn_id != self.source_turn_id
+            for item in references
+        ):
+            raise ValueError("memory evidence references must match artifact scope")
 
     def calculate_effective_weight(
         self, decay_rate: float = 0.05, max_weight_cap: float = 0.95
@@ -191,6 +227,12 @@ class MemoryNode:
             if isinstance(self.extractor_descriptor, ExtractorDescriptor)
             else self.extractor_descriptor
         )
+        if self.evidence_references:
+            data["evidence_references"] = [
+                item.to_dict() for item in self.evidence_references
+            ]
+        else:
+            data.pop("evidence_references", None)
         return data
 
     @classmethod
@@ -236,6 +278,9 @@ class MemoryNode:
             data_copy["extractor_descriptor"] = ExtractorDescriptor.from_dict(
                 descriptor
             )
+        data_copy["evidence_references"] = artifact_evidence_references_from_value(
+            data_copy.get("evidence_references", ())
+        )
 
         return cls(**data_copy)
 

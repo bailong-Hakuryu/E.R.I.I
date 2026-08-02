@@ -52,6 +52,7 @@ from erii.storage.base import BaseStorage
 
 
 RULE_VERSION = "relationship-adjudication-v1"
+PERSISTED_TURN_CONTRACT_VERSION = "relationship-turn-adjudication-v1"
 MIN_EXTRACTION_CONFIDENCE = 0.5
 MIN_STATE_CONFIDENCE = 0.7
 MIN_REFLECTION_CONFIDENCE = 0.8
@@ -281,6 +282,7 @@ class RelationshipAdjudicator:
         baseline_adjudications: Optional[
             Sequence[AdjudicationRecord]
         ] = None,
+        quarantined_source_ids: Sequence[str] = (),
     ) -> AdjudicationBatchResult:
         """Adjudicates one bounded candidate batch with candidate-level atomicity."""
         batch_fingerprint = self._batch_fingerprint(source_turn, candidates)
@@ -345,6 +347,7 @@ class RelationshipAdjudicator:
                 baseline_adjudications=baseline_adjudications,
                 timestamp_hints=current_records,
                 reusable_records=current_records,
+                quarantined_source_ids=quarantined_source_ids,
             )
             canonical_by_id = {
                 record.receipt.decision_id: record
@@ -522,6 +525,7 @@ class RelationshipAdjudicator:
         reusable_records: Optional[
             Mapping[str, AdjudicationRecord]
         ] = None,
+        quarantined_source_ids: Sequence[str] = (),
     ) -> Tuple[AdjudicationBatchResult, Tuple[str, ...]]:
         """Purely replays one batch against an immutable history baseline."""
         direct_events = tuple(baseline_direct_events)
@@ -547,6 +551,19 @@ class RelationshipAdjudicator:
             base_decision_ids.add(decision_id)
 
         policy = self._policy_for(profile)
+        quarantined_ids = frozenset(quarantined_source_ids)
+        messages_by_id = {
+            message.source_id: message for message in source_turn.messages
+        }
+        if any(
+            source_id not in messages_by_id
+            or messages_by_id[source_id].role != SourceRole.AGENT
+            for source_id in quarantined_ids
+        ):
+            raise ValueError(
+                "quarantined relationship evidence must name Agent messages "
+                "from the current Source Turn"
+            )
         batch_fingerprint = self._batch_fingerprint(
             source_turn,
             candidates,
@@ -681,6 +698,7 @@ class RelationshipAdjudicator:
                         records_by_decision={},
                         events_by_id=events_by_id,
                         occurrence_events=occurrence_events,
+                        quarantined_source_ids=quarantined_ids,
                     )
                 accept_resolution(candidate_key, candidate, record)
                 made_progress = True
@@ -751,6 +769,7 @@ class RelationshipAdjudicator:
         records_by_decision: Mapping[str, AdjudicationRecord],
         events_by_id: Mapping[str, RelationshipEvent],
         occurrence_events: Mapping[str, RelationshipEvent],
+        quarantined_source_ids: Sequence[str] = (),
     ) -> AdjudicationRecord:
         decision_id = self._decision_id(profile, source_turn, candidate)
         fingerprint = self._candidate_fingerprint(source_turn, candidate)
@@ -777,6 +796,22 @@ class RelationshipAdjudicator:
                 batch_fingerprint,
                 DecisionOutcome.REJECTED,
                 [evidence_error],
+            )
+        if any(
+            item.source_id in quarantined_source_ids
+            for item in evidence
+        ):
+            return self._receipt_record(
+                profile,
+                source_turn,
+                candidate,
+                policy,
+                fingerprint,
+                batch_fingerprint,
+                DecisionOutcome.REJECTED,
+                ["continuity_exception_agent_evidence_quarantined"],
+                evidence=evidence,
+                retain_rejected_evidence=True,
             )
         if candidate.signal.extraction_confidence < MIN_EXTRACTION_CONFIDENCE:
             return self._receipt_record(
@@ -1092,10 +1127,12 @@ class RelationshipAdjudicator:
         related_event_id: Optional[str] = None,
         occurrence_fingerprint: Optional[str] = None,
         pivotal_eligible: bool = False,
+        retain_rejected_evidence: bool = False,
     ) -> AdjudicationRecord:
         retained_evidence = (
             tuple(evidence)
             if outcome in (DecisionOutcome.ACCEPTED, DecisionOutcome.CORROBORATED)
+            or retain_rejected_evidence
             else ()
         )
         receipt = DecisionReceipt(

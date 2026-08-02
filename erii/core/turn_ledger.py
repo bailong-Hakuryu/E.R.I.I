@@ -8,6 +8,7 @@ from erii.core.continuity_evidence import ContinuityEvidenceResolver
 from erii.core.continuity_review import build_continuity_review_receipt
 from erii.core.turn_context import (
     capture_turn_context_baseline,
+    ensure_canonical_turn_identity_available,
 )
 from erii.models.continuity import ContinuityEvaluationResult
 from erii.models.continuity_review import (
@@ -469,6 +470,18 @@ class TurnLedger:
                 else ()
             )
         )
+        try:
+            self._storage.get_turn_record(
+                profile.relationship_id,
+                stable_turn_id,
+            )
+        except TurnNotFoundError:
+            snapshot = self._storage.capture_turn_context_source(profile)
+            ensure_canonical_turn_identity_available(
+                snapshot,
+                profile,
+                stable_turn_id,
+            )
         visible_user = TurnMessage(
             message_id=f"{stable_turn_id}:user",
             role=TurnRole.USER,

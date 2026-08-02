@@ -1,4 +1,4 @@
-"""Public API and package-version contracts introduced in 0.4.0a7."""
+"""Public API contracts introduced in a7 and the current package version."""
 
 from importlib import import_module
 import unittest
@@ -9,8 +9,8 @@ import erii.models as model_api
 
 
 class A7PublicApiTests(unittest.TestCase):
-    def test_version_is_a7(self) -> None:
-        self.assertEqual(erii.__version__, "0.4.0a7")
+    def test_version_is_a8(self) -> None:
+        self.assertEqual(erii.__version__, "0.4.0a8")
 
     def test_consolidation_and_continuity_models_are_public(self) -> None:
         for module_name in (

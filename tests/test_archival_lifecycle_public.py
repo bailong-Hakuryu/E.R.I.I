@@ -46,7 +46,7 @@ class ScriptedMemoryExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="tests.scripted-memory-extractor",
         extractor_version="1.0",
-        extraction_schema_version="1",
+        extraction_schema_version="2",
     )
 
     def __init__(self, *results):
@@ -62,20 +62,36 @@ class ScriptedMemoryExtractor:
             result = self._results.pop(0)
         if isinstance(result, BaseException):
             raise result
+        if callable(result):
+            return result(request)
         return result
 
 
-def artifact_decision():
+def artifact_decision(request):
+    user_message = request.transcript.user_message
+    evidence = (
+        {
+            "citation_version": "archival-evidence-citation/v1",
+            "kind": "message_span",
+            "source_id": user_message.message_id,
+            "source_revision": request.source_revision,
+            "quote": user_message.content,
+            "start": 0,
+            "end": len(user_message.content),
+        },
+    )
     return ArchivalArtifactsDecision(
         timeline=(
             TimelineCandidate(
                 content="We spent an ordinary afternoon together at the arcade.",
+                evidence=evidence,
             ),
         ),
         memories=(
             MemoryCandidate(
                 node_type=MemoryType.PREFERENCE,
                 content="The user enjoys playing fighting games with me.",
+                evidence=evidence,
                 tags=("arcade", "shared-experience"),
                 base_importance=0.72,
                 emotional_score=0.35,
@@ -112,7 +128,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
     def test_inline_archival_atomically_publishes_artifacts_with_provenance(self):
         for name, make_storage in self._storage_factories(tempfile.mkdtemp()):
             with self.subTest(storage=name):
-                extractor = ScriptedMemoryExtractor(artifact_decision())
+                extractor = ScriptedMemoryExtractor(artifact_decision)
                 engine = ERIIEngine(
                     storage_driver=make_storage(),
                     memory_extractor=extractor,
@@ -231,7 +247,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
     def test_expired_receipt_compacts_to_tombstone_without_losing_artifacts_or_idempotency(self):
         for name, make_storage in self._storage_factories(tempfile.mkdtemp()):
             with self.subTest(storage=name):
-                extractor = ScriptedMemoryExtractor(artifact_decision())
+                extractor = ScriptedMemoryExtractor(artifact_decision)
                 engine = ERIIEngine(
                     storage_driver=make_storage(),
                     memory_extractor=extractor,
@@ -292,7 +308,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
     def test_deferred_submission_survives_restart_and_requires_explicit_processing(self):
         for name, make_storage in self._storage_factories(tempfile.mkdtemp()):
             with self.subTest(storage=name):
-                extractor = ScriptedMemoryExtractor(artifact_decision())
+                extractor = ScriptedMemoryExtractor(artifact_decision)
                 config = ERIIConfig(async_archival=True)
                 engine = ERIIEngine(
                     storage_driver=make_storage(),
@@ -362,7 +378,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
     def test_incomplete_or_abandoned_turn_is_rejected_before_receipt_creation(self):
         for name, make_storage in self._storage_factories(tempfile.mkdtemp()):
             with self.subTest(storage=name):
-                extractor = ScriptedMemoryExtractor(artifact_decision())
+                extractor = ScriptedMemoryExtractor(artifact_decision)
                 engine = ERIIEngine(
                     storage_driver=make_storage(),
                     memory_extractor=extractor,
@@ -472,7 +488,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
     def test_two_consumers_claim_one_submission_without_duplicate_effects(self):
         for name, make_storage in self._storage_factories(tempfile.mkdtemp()):
             with self.subTest(storage=name):
-                extractor = ScriptedMemoryExtractor(artifact_decision())
+                extractor = ScriptedMemoryExtractor(artifact_decision)
                 config = ERIIConfig(async_archival=True)
                 first = ERIIEngine(
                     storage_driver=make_storage(),
@@ -527,7 +543,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
         for name, make_storage in self._storage_factories(tempfile.mkdtemp()):
             with self.subTest(storage=name):
                 extractor = SlowFirstExtractor(
-                    artifact_decision(),
+                    artifact_decision,
                     ArchivalNoMemoryDecision(reason_code="nothing_durable"),
                 )
                 engine = ERIIEngine(
@@ -564,6 +580,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
             descriptor = ExtractorDescriptor(
                 extractor_id="tests.blocking-memory-extractor",
                 extractor_version="1.0",
+                extraction_schema_version="2",
             )
 
             def __init__(self):
@@ -627,7 +644,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
     def test_commit_retry_replays_frozen_batch_without_calling_extractor_again(self):
         root = tempfile.mkdtemp()
         db_path = os.path.join(root, "commit-retry.db")
-        extractor = ScriptedMemoryExtractor(artifact_decision())
+        extractor = ScriptedMemoryExtractor(artifact_decision)
         config = ERIIConfig(
             async_archival=True,
             archival_base_delay_seconds=0.0,
@@ -739,7 +756,7 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
 
     def test_memorypack_carries_structured_timeline_provenance_and_tombstone_only(self):
         root = tempfile.mkdtemp()
-        extractor = ScriptedMemoryExtractor(artifact_decision())
+        extractor = ScriptedMemoryExtractor(artifact_decision)
         source = ERIIEngine(
             storage_driver=FileStorage(os.path.join(root, "source")),
             memory_extractor=extractor,
@@ -764,6 +781,13 @@ class ArchivalLifecyclePublicTests(unittest.TestCase):
         ledger_json = round_tripped.to_dict()["archival_ledger"][0]
         self.assertEqual(ledger_json["retention_state"], "compacted")
         self.assertNotIn("artifact_manifest", ledger_json)
+        self.assertEqual(len(ledger_json["artifact_commitments"]), 2)
+        self.assertTrue(
+            all(
+                len(item["artifact_fingerprint"]) == 64
+                for item in ledger_json["artifact_commitments"]
+            )
+        )
         self.assertNotIn("safe_summary", ledger_json)
         self.assertNotIn("extraction_attempts", ledger_json)
 

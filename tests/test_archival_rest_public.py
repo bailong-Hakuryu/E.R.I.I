@@ -34,7 +34,7 @@ class NoMemoryExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="tests.no-memory",
         extractor_version="1.0",
-        extraction_schema_version="1",
+        extraction_schema_version="2",
     )
 
     def extract(self, request):

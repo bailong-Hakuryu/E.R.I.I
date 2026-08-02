@@ -2,7 +2,7 @@
 
 **English** · [简体中文](USAGE_zh-CN.md)
 
-> This guide applies to E.R.I.I. `0.4.0a7`. The current release is still an alpha: it is suitable for local development, prototyping, and controlled integrations, but should not be exposed as a public production service without additional hardening.
+> This guide applies to E.R.I.I. `0.4.0a8`. The current release is still an alpha: it is suitable for local development, prototyping, and controlled integrations, but should not be exposed as a public production service without additional hardening.
 
 E.R.I.I. is a long-term memory kernel for relationship-oriented AI characters, companions, and narrative applications. It does not generate chat responses, nor is it tied to a particular model. Its job is to preserve what a character and a specific user have experienced together, how those experiences are currently understood, and which promises or unfinished matters are still worth remembering.
 
@@ -52,7 +52,7 @@ Real products will usually use the first two paths together: legacy MemoryNodes 
 
 ### Requirements
 
-- Python 3.9+ is required. The current CI focuses on Python 3.9 and 3.12; Python 3.11 or 3.12 is recommended for new projects.
+- Python 3.9+ is required. `0.4.0a8` is the last release that promises Python 3.9 support; the minimum becomes Python 3.11 in `0.4.0b1`. Current CI focuses on Python 3.9 and 3.12, and Python 3.11 or 3.12 is recommended for new projects.
 - The base installation depends only on Pydantic.
 - SQLite uses Python's standard library and does not require a separate database service.
 
@@ -121,7 +121,7 @@ Confirm that installation succeeded:
 python -c "import erii; print(erii.__version__)"
 ```
 
-The command should print `0.4.0a7`.
+The command should print `0.4.0a8`.
 
 For long-lived alpha deployments, pin a verified commit or release instead of allowing deployment scripts to follow `main` unconditionally.
 
@@ -513,6 +513,7 @@ This path is separate from relationship adjudication and persona growth. Archivi
 ```python
 from erii import (
     ArchivalArtifactsDecision,
+    ArchivalEvidenceCitation,
     ArchivalNoMemoryDecision,
     ExtractorDescriptor,
     MemoryCandidate,
@@ -525,32 +526,48 @@ class MyMemoryExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="my-app.memory-extractor",
         extractor_version="1.0",
-        extraction_schema_version="1",
+        extraction_schema_version="2",
     )
 
     def extract(self, request):
         # request identifies the relationship and Source Turn and contains its
         # canonical visible transcript. A real implementation can call the
         # host's chosen model here, then validate and convert its output.
-        user_text = request.transcript.user_message.content
+        user_message = request.transcript.user_message
+        user_text = user_message.content
         if user_text == "Thanks.":
             return ArchivalNoMemoryDecision(
                 reason_code="ordinary_acknowledgement",
             )
 
+        if "arcade" not in user_text.lower():
+            return ArchivalNoMemoryDecision(reason_code="no_new_information")
+
+        evidence = (
+            ArchivalEvidenceCitation(
+                source_id=user_message.message_id,
+                source_revision=request.source_revision,
+                quote=user_text,
+                start=0,
+                end=len(user_text),
+            ),
+        )
+
         return ArchivalArtifactsDecision(
             timeline=(
                 TimelineCandidate(
-                    content="We spent an ordinary afternoon together at the arcade.",
+                    content="The user suggested going to the arcade.",
+                    evidence=evidence,
                 ),
             ),
             memories=(
                 MemoryCandidate(
                     node_type=MemoryType.PREFERENCE,
-                    content="The user enjoys playing fighting games with me.",
-                    tags=("arcade", "shared-experience"),
+                    content="The user wants to visit the arcade.",
+                    tags=("arcade", "user-request"),
                     base_importance=0.72,
                     emotional_score=0.35,
+                    evidence=evidence,
                 ),
             ),
         )
@@ -561,7 +578,9 @@ The extractor returns exactly one discriminated decision:
 - `ArchivalArtifactsDecision`: at least one Timeline or Memory candidate; one Source Turn can propose at most one Timeline entry.
 - `ArchivalNoMemoryDecision`: an explicit successful result with no artifacts. Allowed reason codes are `duplicate_information`, `ephemeral_coordination`, `no_new_information`, `none`, `nothing_durable`, and `ordinary_acknowledgement`.
 
-An empty object, permissive free-form JSON, an empty `artifacts` decision, or an unknown `kind` is invalid output. Extractors propose bounded semantic content only: they cannot write storage, choose authoritative IDs or timestamps, create Core/Instruction memory, or modify relationship/persona state. E.R.I.I. supplies identity and provenance at commit time.
+An empty object, permissive free-form JSON, an empty `artifacts` decision, or an unknown `kind` is invalid output. Extractors propose bounded semantic content only: they cannot write storage, choose authoritative IDs or timestamps, create Core/Instruction memory, or modify relationship/persona state. E.R.I.I. supplies identity and authoritative provenance at commit time.
+
+Every schema `"2"` Timeline or Memory candidate must carry one to sixteen `ArchivalEvidenceCitation` values. A citation names one persisted message and Source revision and gives an exact `quote[start:end]` claim: `start` and `end` are Unicode code-point offsets, not UTF-8 byte offsets, and the exact message slice must equal `quote` without trimming, normalization, or fuzzy search. The extractor does not declare the message role, relationship, or Turn scope; the kernel resolves those fields and persists a quote-free `ArtifactEvidenceReference`. New reliable archival submissions cannot use schema `"1"`; old schema `"1"` artifacts remain readable only as Legacy provenance.
 
 ### 2. Record the Source Turn, then submit archival
 
@@ -622,6 +641,8 @@ with ERIIEngine(
 ```
 
 The relationship must already exist, the Source Turn must be `completed`, and the lookup is restricted to the exact `Agent × User` scope. An `open` or `abandoned` Turn is rejected before a receipt is created.
+
+This example records a pre-existing visible exchange as `shown_unreviewed`, so both artifacts deliberately cite only the User message. The Agent reply remains part of the exact Source Transcript, but it is not ordinary archival authority. If any candidate in one archival decision cites that exceptional Agent message, the entire decision fails before a Prepared Batch is formed; the kernel does not silently remove the citation or partially publish the other artifacts.
 
 Configuring `memory_extractor=` also makes `memory_archival` part of the default processing plan recorded by `record_turn()` / `complete_turn()`. That declaration is not proof that archival happened: `archive_turn()` is the explicit submission, and `get_source_processing_outcomes()` projects its current result without mutating the sealed Turn Record.
 
@@ -706,15 +727,16 @@ Full terminal receipts are retained for 30 days by default. Configure the window
 compacted_count = engine.compact_archival_receipts()
 ```
 
-Only expired terminal receipts are compacted. Their MemoryNodes and structured Timeline entries remain intact, and retrying the original request still resolves to the same archival identity without re-extraction. `get_archival_receipt()` may therefore return either a full `ArchivalReceipt` (`retention_state="full"`) or a minimal `ArchivalTombstone` (`retention_state="compacted"`). The tombstone preserves terminal status, outcome, source and request/idempotency fingerprints while dropping the extractor descriptor, attempt details, summary, and artifact manifest.
+Only expired terminal receipts are compacted. Their MemoryNodes and structured Timeline entries remain intact, and retrying the original request still resolves to the same archival identity without re-extraction. `get_archival_receipt()` may therefore return either a full `ArchivalReceipt` (`retention_state="full"`) or a minimal `ArchivalTombstone` (`retention_state="compacted"`). The tombstone preserves terminal status, outcome, source and request/idempotency fingerprints while dropping the extractor descriptor, attempt details, and summary. For a modern fingerprinted receipt it also preserves content-free `artifact_commitments`: each entry binds an artifact kind and stable ID to the SHA-256 of its canonical immutable commit payload. For MemoryNode this intentionally excludes mutable recall/lifecycle fields such as reinforcement, access counters, state, unresolved/latest markers, supersession and last access. Recall recomputes that fingerprint together with the Source revision; a same-ID rewrite of a committed field or a merely well-formed UUID cannot borrow the original authority. A Legacy tombstone without commitments remains readable for idempotency but cannot certify the current payload.
 
-The a6 archival portion, still carried by MemoryPack `0.4.0a7`, includes:
+The reliable archival portion carried by MemoryPack `0.4.0a8` includes:
 
 - derived MemoryNodes with Source Turn, archival, and extractor provenance;
 - structured `timeline_entries` with stable IDs and the same provenance;
-- terminal `archival_ledger` tombstones containing only the minimum identity needed to preserve idempotency and audit continuity.
+- terminal `archival_ledger` tombstones containing the minimum identity needed for idempotency and audit continuity plus modern kind/ID/payload-fingerprint commitments when available;
+- schema `"2"` Artifact Evidence references and the exact Source Turn dependency closure required to resolve them.
 
-It does not export pending/processing work, the raw idempotency key, detailed attempt history, `safe_summary`, or full artifact manifests. MemoryPack exports terminal identities as tombstones even when the local full receipt is still inside its retention window; imported tombstones are intentionally compacted receipts. Because this provenance is relationship-bound, a Pack carrying it cannot be remapped to another `Agent × User` scope.
+It does not export pending/processing work, the raw idempotency key, detailed attempt history, `safe_summary`, or the full operational receipt. MemoryPack exports terminal identities as tombstones even when the local full receipt is still inside its retention window; imported tombstones are intentionally compacted receipts. The compact `artifact_commitments` contain no artifact text, but every packed schema `"2"` MemoryNode or Timeline entry must match one by kind, stable ID, and recomputed canonical-payload SHA-256 before the first target write. Because this provenance is relationship-bound, a Pack carrying it cannot be remapped to another `Agent × User` scope.
 
 ### Legacy `remember()` remains available
 
@@ -728,7 +750,7 @@ Keep `remember()` only where compatibility with the earlier Prompt/JSON pipeline
 
 ## Automatic Relationship Processing: from Source Turn to Event, Reflection, and Consolidation
 
-`0.4.0a7` provides the default path from one completed Source Turn to authoritative relationship history:
+`0.4.0a7` introduced the default path from one completed Source Turn to authoritative relationship history; `0.4.0a8` retains it and enforces per-message delivery authority:
 
 ```text
 completed Source Turn
@@ -883,6 +905,10 @@ Possible durable meanings include:
 - `failed`: relationship processing could not produce the required authoritative result.
 
 A legal `no_relationship_event` is not a memory archival `no_memory`: the archival channel may still preserve a MemoryNode or Timeline entry. Conversely, a relationship event may be accepted even if the archival channel produces no long-term retrieval artifact.
+
+For a Turn delivered as `overridden` or `shown_unreviewed`, an Agent message remains truthful history but is quarantined as automatic relationship authority. Every candidate that cites it ends normally as `rejected` with reason `continuity_exception_agent_evidence_quarantined`; it creates no Relationship Event, state change, Promise, Open Loop, Persona Reflection, or Growth input. Independent User-only candidates in the same frozen batch continue through ordinary adjudication. A candidate that depends on a quarantined candidate receives the normal rejected-dependency outcome, and an all-quarantined batch completes as `no_accepted_events`, not as a technical failure. In a8, `historical_reprocessing` does not bypass this rule automatically.
+
+This rule is disposition-based, not sentiment-based. A refusal, angry response, boundary, distancing choice, or hurtful statement that passed the normal review path and was delivered as `shown` remains an ordinary Source Turn. a8 does not equate gentleness with correctness; v0.5 will add append-only consequence and exception-resolution workflows without rewriting the a8 rejection.
 
 ### 3. Query runs, reflections, consolidation, and the Source Turn outcome
 
@@ -1565,7 +1591,7 @@ Do not let an LLM decide `state_delta` directly.
 
 ### Send Untrusted Model Candidates Through Evidence-Based Adjudication
 
-The `0.4.x` compatibility interface lets the model propose candidates and then submits a full transient Source Turn with those candidates to the kernel:
+The `0.4.x` compatibility interface lets the model propose candidates and submit a complete Source Turn with them. The call itself does not create or replace a durable Turn Record:
 
 ```python
 result = engine.adjudicate_relationship_candidates(
@@ -1610,7 +1636,7 @@ for receipt in result.receipts:
     print(receipt.candidate_key, receipt.outcome, receipt.reason_codes)
 ```
 
-For new integrations, the durable Turn Record is the canonical source identity and `process_relationship_turn()` is the default automatic path. The raw `source_turn` argument above is retained for compatibility and quotation validation; it does not create or replace a Turn Record. The compatibility candidate may still contain the historical `persona_reflection` field, but automatic `RelationshipEventExtractorV1` output must not contain it—formal reflection now runs independently after event acceptance.
+For new integrations, the durable Turn Record is the canonical source identity and `process_relationship_turn()` is the default automatic path. When the supplied `turn_id` already identifies a completed Turn in the same relationship, `adjudicate_relationship_candidates()` requires the revision, message IDs, roles, contents, and occurrence times to match the persisted transcript exactly. The resulting receipt uses `relationship-turn-adjudication-v1` and derives exceptional-Agent quarantine from that Turn. A mismatch fails closed. When no persisted Turn exists, the call remains a truly transient Legacy path; once that transient Turn ID has been used for adjudication, `begin_turn()` and `record_turn()` will not let it be registered later as a canonical Turn to acquire authority retroactively. Prefer `adjudicate_turn_candidates(..., source_turn_id, candidates, extractor_version=...)` when a Turn is already durable. The compatibility candidate may still contain the historical `persona_reflection` field, but automatic `RelationshipEventExtractorV1` output must not contain it—formal reflection now runs independently after event acceptance.
 
 The adjudicator verifies that each quotation actually exists in the specified message, then uses versioned rules to map qualitative signals to bounded state changes. Model confidence cannot bypass those rules.
 
@@ -1643,7 +1669,7 @@ context = engine.recall(
 )
 ```
 
-The return value is already-rendered Markdown that can be placed directly in the model's system context. For compatibility, this legacy interface reinforces the selected MemoryNodes. It does not automatically include the complete new relationship and persona model.
+The return value is already-rendered Markdown that can be placed directly in the model's system context. The compatibility interface delegates to the same authority classifier, selector, hard-budget assembly, and renderer as structured recall. It still requests reinforcement, but only final, budgeted `ordinary` MemoryNodes are reinforced; Legacy and Quarantined content never is. To preserve the historical `set_core_memory()` behavior, this compatibility call adds that Core Memory as a `legacy_context` candidate after dynamic `top_k` selection. The Core does not consume a dynamic slot, but it is still subject to the hard cost budget and gains no modern persona or provenance authority. `recall_structured()` has no such extra slot. Compatibility recall does not automatically include the complete new relationship and persona model.
 
 ### Recommended Mode: `recall_structured()`
 
@@ -1680,7 +1706,15 @@ The structured result is serializable and includes:
 - budget usage, omissions, and the reinforcement report;
 - audience-safe notices.
 
-`reinforce=False` by default, so reading does not alter memory. When it is explicitly set to `True`, only MemoryNodes that survive audience filtering and budget selection are reinforced.
+Each selected memory exposes `authority_tier` so a host or frontend can show its provenance status explicitly:
+
+- `ordinary`: complete modern message-level evidence whose cited messages remain eligible under the delivery-authority rules;
+- `legacy_context`: pre-a8 or schema `"1"` context whose modern message provenance cannot be reconstructed, but which has no proven exceptional source;
+- `quarantined_history`: history tied to a modern exceptional Turn without enough message-role evidence to prove User-only authority.
+
+Agent-private generation excludes Quarantined content and renders Ordinary and Legacy content in separate `Verified Memories` and `Legacy Context - provenance incomplete` sections. Public generation excludes both Legacy and Quarantined content. MemoryNodes receive one upstream keyword/vector RRF and dynamic-effective-weight order; the authority selector preserves that order, classifies authority before applying `max_per_type`, and does not run a second lexical relevance sort. A high-ranked Legacy item therefore cannot consume an Ordinary type quota before the pools are separated. For structured recall, `top_k` is the combined dynamic projection limit: Legacy fills unused slots, and when Ordinary already fills a limit of at least two, at most one relevant Legacy item may replace the lowest-ranked Ordinary item. With `top_k=1`, Ordinary wins. Exact UTF-8 content duplicates keep the Ordinary projection. The compatibility-only Core behavior described above remains outside this dynamic count while still obeying the hard budget.
+
+`reinforce=False` by default, so reading does not alter memory. When it is explicitly set to `True`, only final `ordinary` MemoryNodes that survive audience filtering, authority selection, and the hard budget are reinforced.
 
 ### Always Choose the Audience Explicitly
 
@@ -1836,6 +1870,8 @@ This is appropriate for:
 
 `0.4.0a7` migrates schema v5 to v6, adding durable relationship processing runs, reflection decisions, and formal reflection records. Existing events and legacy metadata remain intact and readable through the compatibility path; they are not converted into incomplete formal reflections.
 
+`0.4.0a8` uses SQLite Schema v9. Migrations v7-v9 add bounded recent-Timeline reads, canonical UTC ordering keys, and stable ordering for equal instants. Turn v2 review data and archival evidence remain inside their relationship-scoped aggregates and receive the same transactional round-trip behavior.
+
 FileStorage remains the default in the current release. To select SQLite, explicitly pass a `SQLiteStorage` instance. Neither storage implementation is a multi-tenant authorization boundary, and both store data in plaintext by default.
 
 ## MemoryPack: Backup, Migration, and User Data Portability
@@ -1864,7 +1900,7 @@ engine.import_memory(
 )
 ```
 
-MemoryPack `0.4.0a7` carries:
+MemoryPack `0.4.0a8` carries:
 
 - Core Memory, MemoryNodes, and the legacy Experiential Timeline;
 - provenance-complete structured `timeline_entries`;
@@ -1872,22 +1908,25 @@ MemoryPack `0.4.0a7` carries:
 - append-only Relationship Events, direct-event journal order, and evidence-based adjudication;
 - persona compilation Proposals, the Persona Manifest, and persona growth Proposals;
 - Promises, Open Loops, condition confirmations, and resolution events;
-- the root `turn_records` collection, including complete visible Source Transcripts and terminal state.
-- terminal reliable archival identities as compact `archival_ledger` tombstones;
+- the root `turn_records` collection, including complete visible Source Transcripts, modern Review/Delivery records, Voice Activation Traces, and terminal state;
+- terminal reliable archival identities as compact `archival_ledger` tombstones, including modern kind/ID/canonical-payload SHA-256 commitments;
+- schema `"2"` Artifact Evidence references and their exact Source Turn dependency closure;
 - formal Persona Reflection Records and explicit reflection/no-reflection decision identity;
-- all durable Relationship Processing runs, including recoverable non-terminal/partial phases, frozen decisions, source/processing identity, and legal zero-result outcomes.
+- all durable Relationship Processing runs, including recoverable non-terminal/partial phases, frozen decisions, source/processing identity, legal zero-result outcomes, and candidate-level exceptional-Agent rejection receipts.
 
-The processing ledger does not duplicate the complete prompt, persona source, Source Transcript, model reasoning, or growing relationship history. The canonical transcript remains in `turn_records`; each run keeps its bounded frozen decision, two direct-event/adjudication journal high-water marks, a complete baseline fingerprint, and the identities required to resume after migration. Export and exact-identity import hold the same relationship-processing guard as the coordinator, so a Pack cannot capture a half-finished transition and import cannot interleave a foreign journal prefix with online processing. Import never guesses prior history from wall-clock `recorded_at`: it replays frozen candidates through the production adjudicator against the frozen journal prefixes, considering only the head of each journal so both journals retain their own FIFO order. Before ordinary memory fields are written, import preflights the complete immutable Relationship/Blueprint identity, exact Source Turns, stable Timeline identities, canonical run identity and versions, target decision conflicts, the union of target and incoming temporal history, every complete receipt/Event result, and each formal reflection's unique accepted source against its Evidence, baseline, relationship-bound Manifest, approved growth, and genuinely prior history. The per-run baseline metadata remains constant-size.
+The processing ledger does not duplicate the complete prompt, persona source, Source Transcript, model reasoning, or growing relationship history. The canonical transcript remains in `turn_records`; each run keeps its bounded frozen decision, two direct-event/adjudication journal high-water marks, a complete baseline fingerprint, and the identities required to resume after migration. Export and exact-identity import hold the same relationship-processing guard as the coordinator, so a Pack cannot capture a half-finished transition and import cannot interleave a foreign journal prefix with online processing. Import never guesses prior history from wall-clock `recorded_at`: it replays `relationship-processing-v1` frozen candidates through the production adjudicator against the frozen journal prefixes, considering only the head of each journal so both journals retain their own FIFO order. Before ordinary memory fields are written, import preflights the complete immutable Relationship/Blueprint identity, exact Source Turns, stable Timeline identities, canonical run identity and versions, target decision conflicts, the union of target and incoming temporal history, every replayable processing receipt/Event result, and each formal reflection's unique accepted source against its Evidence, baseline, relationship-bound Manifest, approved growth, and genuinely prior history. For every modern archival artifact it recomputes the canonical immutable commit-payload fingerprint and matches the tombstone commitment, then recomputes the resolved message role, message hash, Unicode range, and Evidence ID from the packed Source Turn. The per-run baseline metadata remains constant-size.
 
-This preflight establishes structural and causal self-consistency; it does not authenticate who created the Pack. Journal counts and fingerprints are unkeyed data inside the same file, so someone able to rewrite the entire Pack can recompute them. Use a host-managed signature or MAC, encryption where confidentiality is required, and appropriate authorization and key management for product deployments.
+Direct adjudication has a deliberately narrower portable claim because it does not persist the original frozen candidate. A `relationship-turn-adjudication-v1` receipt is checked against its exact completed Source Turn, Evidence identity, and the rule that exceptional Agent evidence must remain a non-pivotal rejection with no Event. Merely downgrading the receipt's contract does not bypass this check while its matching Turn remains in the Pack. E.R.I.I. does not claim to fully replay an ordinary accepted direct Event without the missing candidate. Old truly transient records remain Legacy-readable and are not assigned a canonical Turn by import.
+
+This preflight establishes structural and causal self-consistency; it does not authenticate who created the Pack. Journal counts, contract labels, commitments, and fingerprints are unkeyed data inside the same file, so someone able to rewrite the entire Pack can recompute them, remove a Turn, or coherently downgrade related records. Use a host-managed signature or MAC, encryption where confidentiality is required, and appropriate authorization and key management for product deployments.
 
 Episode and Relationship Chapter are intentionally absent because they are rebuildable projections over imported Relationship Events.
 
 Because `turn_records` contain relationship-private, verbatim conversation history, and archival/relationship-processing provenance is bound to its original sources, a Pack containing any of it can only be restored to its exact original `agent_id`, `user_id`, and relationship identity. Supplying different host IDs is rejected, and `overwrite=True` does not bypass that rule. To move the same relationship between machines or storage adapters, preserve its original IDs.
 
-MemoryPacks from `0.4.0a6` and earlier have no a7 reflection/relationship-processing ledger. They remain readable, and missing provenance or zero-result decisions are not fabricated. Packs from `0.4.0a5` and earlier also have no structured a6 archival ledger; packs from `0.4.0a4` and earlier have no `turn_records` and retain their historical remapping behavior for the older payload, subject to persona, relationship, and reference-integrity checks. That compatibility path is not permission to remap a Pack containing a Source Transcript, archival provenance, formal reflection, or relationship-processing ledger.
+MemoryPacks from `0.4.0a7` and earlier may lack a8 Turn review records, message-level archival evidence, authority classification inputs, and exceptional-Agent rejection receipts. They remain readable through explicit Legacy paths, and missing provenance, review success, role, or zero-result decisions are never fabricated. Packs from `0.4.0a6` and earlier additionally have no a7 reflection/relationship-processing ledger; packs from `0.4.0a5` and earlier have no structured a6 archival ledger; packs from `0.4.0a4` and earlier have no `turn_records` and retain their historical remapping behavior for the older payload, subject to persona, relationship, and reference-integrity checks. That compatibility path is not permission to remap a Pack containing a Source Transcript, archival provenance, formal reflection, or relationship-processing ledger.
 
-The portable `archival_ledger` is deliberately not the live operational queue. It includes only terminal compact tombstones: no pending/processing job, raw idempotency key, attempt details, `safe_summary`, or artifact manifest is exported. Derived MemoryNodes and structured Timeline entries remain usable after a FileStorage-to-SQLiteStorage or SQLiteStorage-to-FileStorage move, and their Source Turn/extractor provenance stays intact.
+The portable `archival_ledger` is deliberately not the live operational queue. It includes only terminal compact tombstones: no pending/processing job, raw idempotency key, attempt details, `safe_summary`, or full operational receipt is exported. Modern tombstones do retain content-free `artifact_commitments` containing kind, stable ID, and canonical-payload SHA-256. Derived MemoryNodes and structured Timeline entries remain usable after a FileStorage-to-SQLiteStorage or SQLiteStorage-to-FileStorage move only when their Source Turn/evidence closure and, for schema `"2"`, the matching commitment remain intact.
 
 Before importing, note the following:
 
@@ -1896,9 +1935,11 @@ Before importing, note the following:
 - Import is rejected if the existing relationship's persona or premise does not match.
 - Import is rejected when temporal-event references are missing, cross relationships, or have invalid ordering.
 - Import is rejected before other target writes when an incoming decision ID conflicts with an existing adjudication record.
-- An a7 processing-ledger import requires the target's two relationship journals and the incoming journals to be prefix-compatible; import does not merge divergent history branches.
+- An a7-or-later processing-ledger import requires the target's two relationship journals and the incoming journals to be prefix-compatible; import does not merge divergent history branches.
 - Even when both journals are prefix-compatible, their target-plus-incoming union must form one valid temporal lifecycle, and a complete reflection must still have exactly one accepted source decision.
-- Bound Packs require the complete immutable relationship/Blueprint identity and exact a7 Source Turn records; structured Timeline IDs cannot silently reuse different content.
+- Bound Packs require the complete immutable relationship/Blueprint identity and exact Source Turn records; structured Timeline IDs cannot silently reuse different content.
+- Modern Artifact Evidence must resolve inside the packed relationship and Source Turn closure, and each schema `"2"` artifact must match its tombstone's kind/ID/payload-fingerprint commitment; a dangling, cross-Turn, wrong-role, wrong-hash, wrong-range, same-ID rewrite, or forged artifact identity rejects the import before any target write.
+- Persisted-Turn direct adjudication is rechecked for exact Evidence/quarantine semantics even if its contract field is downgraded while the matching Turn remains present; this does not provide full accepted-Event replay without a frozen candidate.
 - Import is rejected before any target write when a formal reflection's provenance does not exactly match the packed adjudication and persona context.
 - A Pack containing `turn_records` or archival provenance cannot be imported across `Agent × User` identities, even when overwrite is requested.
 - Before processing important data, copy the original storage file and test the operation in a separate directory.

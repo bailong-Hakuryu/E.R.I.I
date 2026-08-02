@@ -21,6 +21,12 @@ from erii.models.archival import (
     TimelineCandidate,
     TimelineEntry,
 )
+from erii.models.archival_evidence import (
+    ARCHIVAL_EVIDENCE_CITATION_VERSION,
+    ARTIFACT_EVIDENCE_REFERENCE_VERSION,
+    ArchivalEvidenceCitation,
+    ArtifactEvidenceReference,
+)
 from erii.models.provenance import ArtifactProvenanceState, ExtractorDescriptor
 from erii.models.adjudication import (
     AdjudicationBatchResult,
@@ -164,6 +170,7 @@ from erii.models.recall import (
     PersonaRecallContext,
     PersonaRecallProjection,
     RecallAudience,
+    RecallAuthorityTier,
     RecallBudget,
     RecallNotice,
     RecallNoticeSeverity,
@@ -255,6 +262,8 @@ from erii.models.turn_context import (
 )
 
 __all__ = [
+    "ARCHIVAL_EVIDENCE_CITATION_VERSION",
+    "ARTIFACT_EVIDENCE_REFERENCE_VERSION",
     "CONTINUITY_EVALUATION_RESULT_VERSION",
     "CONTINUITY_EVIDENCE_REF_VERSION",
     "VOICE_ACTIVATION_TRACE_VERSION",
@@ -265,6 +274,7 @@ __all__ = [
     "ArchivalCapabilityError",
     "ArchivalConflictError",
     "ArchivalDrainReport",
+    "ArchivalEvidenceCitation",
     "ArchivalNoMemoryDecision",
     "ArchivalOutcomeCode",
     "ArchivalPhase",
@@ -273,6 +283,7 @@ __all__ = [
     "ArchivalStatus",
     "ArchivalSubmissionError",
     "ArchivalTombstone",
+    "ArtifactEvidenceReference",
     "ArtifactProvenanceState",
     "ExtractorDescriptor",
     "MemoryCandidate",
@@ -395,6 +406,7 @@ __all__ = [
     "PromiseSpec",
     "PromiseSpecCandidate",
     "RecallAudience",
+    "RecallAuthorityTier",
     "RecallBudget",
     "RecallNotice",
     "RecallNoticeSeverity",

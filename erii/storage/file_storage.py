@@ -637,6 +637,11 @@ class FileStorage(BaseStorage):
                     in {ArchivalStatus.COMPLETED, ArchivalStatus.FAILED}
                 ):
                     tombstone = ArchivalTombstone.from_record(record)
+                    existing = by_id.get(tombstone.archival_id)
+                    if existing is not None:
+                        tombstone = existing.prefer_stronger_commitment(
+                            tombstone
+                        )
                     by_id[tombstone.archival_id] = tombstone
         return list(by_id.values())
 
@@ -781,10 +786,15 @@ class FileStorage(BaseStorage):
                     continue
                 tombstone = ArchivalTombstone.from_record(record)
                 existing = tombstones.get(tombstone.archival_id)
-                if existing is not None and existing != tombstone:
-                    raise ArchivalConflictError(
-                        "archival tombstone conflicts with terminal receipt"
-                    )
+                if existing is not None:
+                    try:
+                        tombstone = existing.prefer_stronger_commitment(
+                            tombstone
+                        )
+                    except ArchivalConflictError as exc:
+                        raise ArchivalConflictError(
+                            "archival tombstone conflicts with terminal receipt"
+                        ) from exc
                 tombstones[tombstone.archival_id] = tombstone
                 compacted += 1
             if compacted:

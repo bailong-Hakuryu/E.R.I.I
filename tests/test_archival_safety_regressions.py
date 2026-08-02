@@ -11,10 +11,13 @@ import time
 import unittest
 
 from erii import (
+    ArchivalArtifactReference,
     ArchivalArtifactsDecision,
     ArchivalConflictError,
     ArchivalNoMemoryDecision,
     ArchivalOutcomeCode,
+    ArchivalPhase,
+    ArchivalReceipt,
     ArchivalStatus,
     ERIIConfig,
     ERIIEngine,
@@ -24,6 +27,7 @@ from erii import (
     MemoryType,
     SQLiteStorage,
 )
+from erii.models.archival import ArchivalRecord
 
 
 AGENT_ID = "agent_erii"
@@ -42,12 +46,24 @@ def _visible_exchange_delivery_exception():
     }
 
 
-def _artifact_decision():
+def _artifact_decision(request):
+    user_message = request.transcript.user_message
     return ArchivalArtifactsDecision(
         memories=(
             MemoryCandidate(
                 node_type=MemoryType.EVENT,
                 content="We promised to meet at the arcade again.",
+                evidence=(
+                    {
+                        "citation_version": "archival-evidence-citation/v1",
+                        "kind": "message_span",
+                        "source_id": user_message.message_id,
+                        "source_revision": request.source_revision,
+                        "quote": user_message.content,
+                        "start": 0,
+                        "end": len(user_message.content),
+                    },
+                ),
                 tags=("arcade", "promise"),
                 base_importance=0.8,
             ),
@@ -59,7 +75,7 @@ class AlwaysSlowExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="tests.always-slow-extractor",
         extractor_version="1.0",
-        extraction_schema_version="1",
+        extraction_schema_version="2",
     )
 
     def __init__(self, delay_seconds=0.08):
@@ -78,7 +94,7 @@ class BlockingFirstExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="tests.blocking-first-extractor",
         extractor_version="1.0",
-        extraction_schema_version="1",
+        extraction_schema_version="2",
     )
 
     def __init__(self):
@@ -101,7 +117,7 @@ class ImmediateArtifactExtractor:
     descriptor = ExtractorDescriptor(
         extractor_id="tests.immediate-artifact-extractor",
         extractor_version="1.0",
-        extraction_schema_version="1",
+        extraction_schema_version="2",
     )
 
     def __init__(self):
@@ -109,7 +125,7 @@ class ImmediateArtifactExtractor:
 
     def extract(self, request):
         self.calls.append(request)
-        return _artifact_decision()
+        return _artifact_decision(request)
 
 
 class ArchivalSafetyRegressionTests(unittest.TestCase):
@@ -396,6 +412,7 @@ class ArchivalSafetyRegressionTests(unittest.TestCase):
                     conflicting = replace(
                         original,
                         outcome_code=ArchivalOutcomeCode.NO_MEMORY,
+                        artifact_commitments=None,
                         request_fingerprint=(
                             "0" * 64
                             if original.request_fingerprint != "0" * 64
@@ -410,6 +427,8 @@ class ArchivalSafetyRegressionTests(unittest.TestCase):
                         )
                     portable = engine.export_memory(AGENT_ID, USER_ID)
                     portable.core_memory = "must not be partially imported"
+                    portable.nodes = []
+                    portable.timeline_entries = []
                     portable.archival_ledger = [conflicting]
                     with self.assertRaises(ArchivalConflictError):
                         engine.import_memory(portable, overwrite=True)
@@ -443,6 +462,128 @@ class ArchivalSafetyRegressionTests(unittest.TestCase):
                     )
                 finally:
                     engine.close()
+
+    def test_legacy_tombstone_is_enriched_without_allowing_downgrade(self):
+        """A missing a7-era commitment is compatible but never authoritative."""
+        with tempfile.TemporaryDirectory() as root:
+            source = ERIIEngine(
+                storage_driver=FileStorage(os.path.join(root, "source")),
+                memory_extractor=ImmediateArtifactExtractor(),
+                config=ERIIConfig(async_archival=False),
+            )
+            try:
+                self._record_source_turn(source, "turn-tombstone-upgrade")
+                receipt = source.archive_turn(
+                    AGENT_ID,
+                    USER_ID,
+                    "turn-tombstone-upgrade",
+                    idempotency_key="archive-tombstone-upgrade",
+                )
+                committed = next(
+                    item
+                    for item in source.export_memory(
+                        AGENT_ID,
+                        USER_ID,
+                    ).archival_ledger
+                    if item.archival_id == receipt.archival_id
+                )
+            finally:
+                source.close()
+
+            legacy = replace(committed, artifact_commitments=None)
+            for name, make_storage in self._storage_factories(
+                os.path.join(root, "targets")
+            ):
+                with self.subTest(storage=name):
+                    target = ERIIEngine(storage_driver=make_storage())
+                    try:
+                        profile = target.initialize_relationship(
+                            AGENT_ID,
+                            USER_ID,
+                            "A gentle character learning to live an ordinary life.",
+                        )
+                        scoped_committed = replace(
+                            committed,
+                            relationship_id=profile.relationship_id,
+                        )
+                        scoped_legacy = replace(
+                            legacy,
+                            relationship_id=profile.relationship_id,
+                        )
+                        live_legacy_manifest = tuple(
+                            ArchivalArtifactReference(
+                                kind=item.kind,
+                                artifact_id=item.artifact_id,
+                            )
+                            for item in scoped_committed.artifact_commitments
+                        )
+                        target.storage.atomic_archival_store_v1().create_archival_record(
+                            ArchivalRecord(
+                                receipt=ArchivalReceipt(
+                                    archival_id=scoped_legacy.archival_id,
+                                    relationship_id=profile.relationship_id,
+                                    agent_id=AGENT_ID,
+                                    user_id=USER_ID,
+                                    source_turn_id=scoped_legacy.source_turn_id,
+                                    source_revision=scoped_legacy.source_revision,
+                                    status=ArchivalStatus.COMPLETED,
+                                    phase=ArchivalPhase.COMMIT,
+                                    extractor_descriptor=ExtractorDescriptor(
+                                        extractor_id="tests.legacy-live-receipt",
+                                        extractor_version="1",
+                                        extraction_schema_version="1",
+                                    ),
+                                    submitted_at=scoped_legacy.terminal_at,
+                                    updated_at=scoped_legacy.terminal_at,
+                                    outcome_code=(
+                                        ArchivalOutcomeCode.ARTIFACTS_COMMITTED
+                                    ),
+                                    retryable=False,
+                                    completed_at=scoped_legacy.terminal_at,
+                                    artifact_manifest=live_legacy_manifest,
+                                ),
+                                idempotency_fingerprint=(
+                                    scoped_legacy.idempotency_fingerprint
+                                ),
+                                request_fingerprint=(
+                                    scoped_legacy.request_fingerprint
+                                ),
+                            )
+                        )
+                        target.storage.import_archival_tombstones(
+                            profile.relationship_id,
+                            [scoped_legacy],
+                        )
+                        imported = target.storage.list_archival_tombstones(
+                            profile.relationship_id
+                        )[0]
+                        self.assertIsNone(imported.artifact_commitments)
+
+                        target.storage.import_archival_tombstones(
+                            profile.relationship_id,
+                            [scoped_committed],
+                        )
+                        enriched = target.storage.list_archival_tombstones(
+                            profile.relationship_id
+                        )[0]
+                        self.assertEqual(
+                            enriched.artifact_commitments,
+                            scoped_committed.artifact_commitments,
+                        )
+
+                        target.storage.import_archival_tombstones(
+                            profile.relationship_id,
+                            [scoped_legacy],
+                        )
+                        retained = target.storage.list_archival_tombstones(
+                            profile.relationship_id
+                        )[0]
+                        self.assertEqual(
+                            retained.artifact_commitments,
+                            scoped_committed.artifact_commitments,
+                        )
+                    finally:
+                        target.close()
 
 
 if __name__ == "__main__":

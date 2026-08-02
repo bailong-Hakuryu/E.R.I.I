@@ -10,6 +10,7 @@ from typing import List, Optional, Union
 import uuid
 
 from erii._version import __version__
+from erii.core.archival_evidence import ArchivalEvidenceResolver
 from erii.models.archival import (
     ArchivalArtifactsDecision,
     ArchivalCapabilityError,
@@ -93,6 +94,7 @@ class ArchivalCoordinator:
         self._state_condition = threading.Condition()
         self._processing_lock = threading.Lock()
         self._host_descriptor = self._validate_extractor(memory_extractor)
+        self._evidence_resolver = ArchivalEvidenceResolver()
 
     @property
     def available(self) -> bool:
@@ -161,6 +163,14 @@ class ArchivalCoordinator:
     ) -> Union[ArchivalReceipt, ArchivalTombstone]:
         """Accepts one canonical Source Turn and optionally processes it inline."""
         store = self._require_capability()
+        descriptor = self._host_descriptor
+        if (
+            descriptor is None
+            or descriptor.extraction_schema_version != "2"
+        ):
+            raise ArchivalSubmissionError(
+                "extractor_schema_upgrade_required: archival requires extraction schema 2"
+            )
         with self._state_condition:
             if not self._accepting:
                 raise ArchivalCapabilityError(
@@ -180,7 +190,6 @@ class ArchivalCoordinator:
             raise ArchivalSubmissionError("idempotency_key exceeds 256 characters")
         self.compact_expired()
 
-        descriptor = self._host_descriptor
         request_payload = {
             "relationship_id": profile.relationship_id,
             "source_turn_id": source_turn.turn_id,
@@ -361,6 +370,21 @@ class ArchivalCoordinator:
     def _process_claimed(self, record: ArchivalRecord) -> ArchivalReceipt:
         current = record
         try:
+            if (
+                current.receipt.phase == ArchivalPhase.EXTRACTION
+                and current.receipt.extractor_descriptor.extraction_schema_version
+                != "2"
+            ):
+                return self._record_failure(
+                    current,
+                    outcome=(
+                        ArchivalOutcomeCode.EXTRACTOR_SCHEMA_UPGRADE_REQUIRED
+                    ),
+                    retryable=False,
+                    safe_summary=(
+                        "the pending archival requires extraction schema 2"
+                    ),
+                )
             if current.recovered_expired_lease:
                 return self._record_failure(
                     current,
@@ -433,15 +457,37 @@ class ArchivalCoordinator:
             interaction_context=turn.interaction_context,
         )
         raw_decision, record = self._extract_with_heartbeat(record, request)
-        decision = archival_decision_from_value(raw_decision)
+        host_descriptor = self._host_descriptor
+        if host_descriptor is None:
+            raise ArchivalCapabilityError(
+                "archival_capability_unavailable: configure MemoryExtractorV1"
+            )
+        decision = archival_decision_from_value(
+            raw_decision,
+            extraction_schema_version=(
+                host_descriptor.extraction_schema_version
+            ),
+        )
         if (
             isinstance(decision, ArchivalArtifactsDecision)
             and len(decision.memories) > self.max_memory_candidates
         ):
             raise ValueError("configured Memory Candidate limit exceeded")
 
+        timeline_evidence = ()
+        memory_evidence = ()
+        if isinstance(decision, ArchivalArtifactsDecision):
+            timeline_evidence = tuple(
+                self._evidence_resolver.resolve(turn, candidate.evidence)
+                for candidate in decision.timeline
+            )
+            memory_evidence = tuple(
+                self._evidence_resolver.resolve(turn, candidate.evidence)
+                for candidate in decision.memories
+            )
+
         processed_at = utc_now()
-        descriptor = self._host_descriptor.for_processing(
+        descriptor = host_descriptor.for_processing(
             erii_version=__version__,
             processed_at=processed_at,
         )
@@ -464,6 +510,7 @@ class ArchivalCoordinator:
                     source_archival_id=record.receipt.archival_id,
                     provenance_state=ArtifactProvenanceState.COMPLETE,
                     extractor_descriptor=descriptor,
+                    evidence_references=timeline_evidence[index],
                 )
                 for index, candidate in enumerate(decision.timeline)
             )
@@ -487,6 +534,7 @@ class ArchivalCoordinator:
                     source_archival_id=record.receipt.archival_id,
                     provenance_state=ArtifactProvenanceState.COMPLETE,
                     extractor_descriptor=descriptor,
+                    evidence_references=memory_evidence[index],
                     created_at=processed_at,
                     last_accessed_at=datetime.fromisoformat(processed_at).strftime(
                         "%Y-%m-%d %H:%M:%S"

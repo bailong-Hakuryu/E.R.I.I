@@ -22,6 +22,7 @@ from erii.core.budget import MemoryBudgetManager
 from erii.core.decay import MemoryDecayEvaluator
 from erii.core.retriever import MemoryRetriever
 from erii.core.adjudication import (
+    PERSISTED_TURN_CONTRACT_VERSION,
     RULE_VERSION as RELATIONSHIP_ADJUDICATION_RULE_VERSION,
     RelationshipAdjudicator,
     list_complete_relationship_events,
@@ -41,6 +42,8 @@ from erii.core.continuity_evidence import (
     ContinuityEvidenceRefValue,
     ContinuityEvidenceResolver,
 )
+from erii.core.evidence_authority import quarantined_agent_source_ids
+from erii.core.memory_pack_evidence import validate_memory_pack_archival_evidence
 from erii.core.persona_context import (
     PersonaManifestRequiredError,
     validate_persona_premise_binding,
@@ -116,6 +119,8 @@ from erii.models.persona import (
     VoicePatternConditionType,
 )
 from erii.models.recall import (
+    RecallAudience,
+    RecallOptions,
     RecallRequest,
     RecallResult,
 )
@@ -400,60 +405,32 @@ class ERIIEngine:
         Returns:
             Formatted Markdown context string ready for prompt injection.
         """
-        # This facade intentionally keeps the pre-a3 lifecycle and Markdown
-        # contract. Structured recall is exposed separately by
-        # ``recall_structured`` and must not silently change existing callers.
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
-
-        if self.config.enable_security_sanitizer:
-            query = SecuritySanitizer.sanitize_text(query)
-
-        nodes = [
-            node
-            for node in self.storage.load_nodes(clean_agent, clean_user)
-            if node.node_type != MemoryType.INSTRUCTION
-        ]
-        nodes = self.decay_evaluator.sweep_nodes(nodes)
-        selected_nodes = self.retriever.retrieve_relevant_nodes(
-            query=query,
-            all_nodes=nodes,
-            top_k=top_k,
-            vector_store=self.vector_store,
-            embedding_provider=self.embedding_provider,
-        )
-        if selected_nodes:
-            self.storage.save_nodes(clean_agent, clean_user, nodes)
-
-        core_memory = self.storage.get_core_memory(clean_agent, clean_user)
-        timeline_entries = self.storage.get_recent_timeline(
-            clean_agent,
-            clean_user,
-            limit=4,
-        )
-        dynamic_lines = []
-        for idx, node in enumerate(selected_nodes, 1):
-            weight = self.decay_evaluator.evaluate_node(node)
-            type_tag = f"[{node.node_type.value.upper()}]"
-            time_prefix = f"[{node.created_at}] " if node.created_at else ""
-            dynamic_lines.append(
-                f"{idx}. {time_prefix}{type_tag} {node.content} "
-                f"(weight: {weight:.2f})"
+        stored_nodes = self.storage.load_nodes(clean_agent, clean_user)
+        if stored_nodes:
+            self.storage.save_nodes(
+                clean_agent,
+                clean_user,
+                self.decay_evaluator.sweep_nodes(stored_nodes),
             )
-
-        budgeted = self.budget_manager.allocate_memory_context(
-            core_memory=core_memory,
-            timeline_entries=timeline_entries,
-            dynamic_nodes_formatted="\n".join(dynamic_lines),
+        request = RecallRequest(
+            agent_id=clean_agent,
+            user_id=clean_user,
+            query=query,
+            audience=RecallAudience.AGENT_PRIVATE,
+            options=RecallOptions(
+                top_k=top_k,
+                reinforce=True,
+            ),
         )
-        sections = []
-        if budgeted["core_memory"]:
-            sections.append(f"# Core Persona Memory\n{budgeted['core_memory']}")
-        if budgeted["dynamic_memory"]:
-            sections.append(f"# Relevant Memories\n{budgeted['dynamic_memory']}")
-        if budgeted["timeline_context"]:
-            sections.append(f"# Experiential Timeline\n{budgeted['timeline_context']}")
-        return "\n\n".join(sections)
+        result = self.recall_assembler.assemble(
+            request,
+            legacy_compat=True,
+        )
+        return MarkdownRecallRenderer(
+            audience=RecallAudience.AGENT_PRIVATE,
+        ).render(result)
 
     def recall_structured(
         self,
@@ -611,12 +588,16 @@ class ERIIEngine:
         """Persists the exact visible user message and opens a source turn."""
         profile = self._require_relationship(agent_id, user_id, "beginning a turn")
         host_context = self._host_observed_context(interaction_context)
-        return self.turn_ledger.open(
-            profile,
-            user_message,
-            turn_id=turn_id,
-            interaction_context=host_context,
-        )
+        stable_turn_id = turn_id or str(uuid.uuid4())
+        with self.storage.relationship_processing_guard(
+            profile.relationship_id
+        ):
+            return self.turn_ledger.open(
+                profile,
+                user_message,
+                turn_id=stable_turn_id,
+                interaction_context=host_context,
+            )
 
     def get_turn(
         self,
@@ -764,20 +745,24 @@ class ERIIEngine:
     ) -> SourceTurnReceipt:
         """Atomically records an exchange whose visible messages already exist."""
         profile = self._require_relationship(agent_id, user_id, "recording a turn")
-        return self.turn_ledger.record(
-            profile,
-            user_message,
-            agent_message,
-            turn_id=turn_id,
-            continuity_assessment=continuity_assessment,
-            delivery_exception=delivery_exception,
-            delivery_disposition=delivery_disposition,
-            processing_channels=(
-                processing_channels
-                if processing_channels is not None
-                else self._default_source_processing_channels()
-            ),
-        )
+        stable_turn_id = turn_id or str(uuid.uuid4())
+        with self.storage.relationship_processing_guard(
+            profile.relationship_id
+        ):
+            return self.turn_ledger.record(
+                profile,
+                user_message,
+                agent_message,
+                turn_id=stable_turn_id,
+                continuity_assessment=continuity_assessment,
+                delivery_exception=delivery_exception,
+                delivery_disposition=delivery_disposition,
+                processing_channels=(
+                    processing_channels
+                    if processing_channels is not None
+                    else self._default_source_processing_channels()
+                ),
+            )
 
     def archive_turn(
         self,
@@ -1951,11 +1936,86 @@ class ERIIEngine:
         validated_batch = RelationshipCandidateBatch.model_validate(
             {"candidates": list(candidates)}
         )
-        return self.relationship_adjudicator.adjudicate(
-            profile,
-            validated_turn,
-            validated_batch,
-        )
+        with self.storage.relationship_processing_guard(
+            profile.relationship_id
+        ):
+            # The persisted/transient classification and the resulting journal
+            # commit share one relationship guard.  Otherwise a canonical Turn
+            # could be created in between these operations and silently inherit
+            # a transient decision contract.
+            persisted_turn = self._persisted_turn_for_direct_adjudication(
+                profile,
+                validated_turn,
+            )
+            if persisted_turn is not None:
+                validated_turn = validated_turn.model_copy(
+                    update={"contract_version": PERSISTED_TURN_CONTRACT_VERSION}
+                )
+            elif validated_turn.contract_version in {
+                PERSISTED_TURN_CONTRACT_VERSION,
+                "relationship-processing-v1",
+            }:
+                raise ValueError(
+                    "transient direct adjudication cannot claim a reserved "
+                    "persisted contract_version"
+                )
+            return self.relationship_adjudicator.adjudicate(
+                profile,
+                validated_turn,
+                validated_batch,
+                quarantined_source_ids=(
+                    quarantined_agent_source_ids(persisted_turn)
+                    if persisted_turn is not None
+                    else ()
+                ),
+            )
+
+    def _persisted_turn_for_direct_adjudication(
+        self,
+        profile: RelationshipProfile,
+        source_turn: SourceTurn,
+    ) -> Optional[TurnRecord]:
+        """Binds the legacy direct API to persisted delivery authority when present."""
+        try:
+            record = self.storage.get_turn_record(
+                profile.relationship_id,
+                source_turn.turn_id,
+            )
+        except (AttributeError, LookupError, NotImplementedError):
+            return None
+        if record.status != TurnStatus.COMPLETED:
+            raise ValueError(
+                "direct adjudication cannot reuse an incomplete persisted Turn"
+            )
+        if record.source_revision != source_turn.revision:
+            raise ValueError(
+                "direct adjudication Source Turn revision does not match persisted data"
+            )
+
+        persisted_messages = [record.transcript.user_message]
+        if record.transcript.agent_message is not None:
+            persisted_messages.append(record.transcript.agent_message)
+        supplied_by_id = {message.source_id: message for message in source_turn.messages}
+        if (
+            len(supplied_by_id) != len(source_turn.messages)
+            or len(supplied_by_id) != len(persisted_messages)
+        ):
+            raise ValueError(
+                "direct adjudication Source Turn does not match persisted messages"
+            )
+        for message in persisted_messages:
+            supplied = supplied_by_id.get(message.message_id)
+            if (
+                supplied is None
+                or supplied.revision != record.source_revision
+                or supplied.role.value != message.role.value
+                or supplied.content != message.content
+                or supplied.occurred_at != message.recorded_at
+            ):
+                raise ValueError(
+                    "direct adjudication Source Turn does not match persisted messages"
+                )
+        return record
 
     def adjudicate_turn_candidates(
         self,
@@ -2000,7 +2060,7 @@ class ERIIEngine:
                 if message is not None
             ],
             extractor_version=extractor_version,
-            contract_version="0.4.0a5",
+            contract_version=PERSISTED_TURN_CONTRACT_VERSION,
         )
         validated_batch = RelationshipCandidateBatch.model_validate(
             {"candidates": list(candidates)}
@@ -2009,6 +2069,7 @@ class ERIIEngine:
             profile,
             source_turn,
             validated_batch,
+            quarantined_source_ids=quarantined_agent_source_ids(record),
         )
 
     def list_relationship_adjudications(
@@ -2417,6 +2478,14 @@ class ERIIEngine:
             persona_reflection_decisions=persona_reflection_decisions,
         )
 
+        validate_memory_pack_archival_evidence(pack)
+        self._validate_persisted_turn_adjudication_pack(
+            pack,
+            clean_agent,
+            clean_user,
+            relationship,
+        )
+
         if export_path:
             with open(export_path, "w", encoding="utf-8") as f:
                 f.write(pack.to_json())
@@ -2555,6 +2624,7 @@ class ERIIEngine:
                 "Agent x User scope"
             )
         self._validate_turn_pack(pack, clean_agent, clean_user)
+        validate_memory_pack_archival_evidence(pack)
         existing_target_profile = self.storage.get_relationship(
             clean_agent,
             clean_user,
@@ -2583,6 +2653,12 @@ class ERIIEngine:
         )
         self._validate_relationship_adjudication_import_conflicts(
             pack,
+            existing_target_profile,
+        )
+        self._validate_persisted_turn_adjudication_pack(
+            pack,
+            clean_agent,
+            clean_user,
             existing_target_profile,
         )
         self._validate_relationship_processing_pack(
@@ -3566,6 +3642,156 @@ class ERIIEngine:
                     "the target decision journal"
                 )
 
+    @staticmethod
+    def _validate_persisted_turn_adjudication_pack(
+        pack: MemoryPack,
+        target_agent: str,
+        target_user: str,
+        existing_profile: Optional[RelationshipProfile],
+    ) -> None:
+        """Revalidates a8 direct adjudications against their portable Source Turns."""
+        turns = {
+            (turn.turn_id, turn.source_revision): turn
+            for turn in pack.turn_records
+        }
+        if len(turns) != len(pack.turn_records):
+            raise ValueError(
+                "MemoryPack persisted-Turn adjudications contain duplicate Source Turns"
+            )
+        records = tuple(
+            record
+            for record in pack.relationship_adjudications
+            if (
+                record.receipt.contract_version
+                == PERSISTED_TURN_CONTRACT_VERSION
+                or (
+                    record.receipt.contract_version
+                    != "relationship-processing-v1"
+                    and (
+                        record.receipt.source_turn_id,
+                        record.receipt.source_revision,
+                    )
+                    in turns
+                )
+            )
+        )
+        if not records:
+            return
+        relationship = pack.relationship
+        if relationship is None:
+            raise ValueError(
+                "MemoryPack persisted-Turn adjudications require a relationship profile"
+            )
+        if (
+            pack.agent_id != target_agent
+            or pack.user_id != target_user
+            or relationship.agent_id != target_agent
+            or relationship.user_id != target_user
+            or (
+                existing_profile is not None
+                and existing_profile.relationship_id
+                != relationship.relationship_id
+            )
+        ):
+            raise ValueError(
+                "MemoryPack persisted-Turn adjudications require exact relationship restore"
+            )
+
+        quarantine_reason = (
+            "continuity_exception_agent_evidence_quarantined",
+        )
+        for record in records:
+            receipt = record.receipt
+            if receipt.relationship_id != relationship.relationship_id:
+                raise ValueError(
+                    "MemoryPack persisted-Turn adjudication crosses relationship boundaries"
+                )
+            turn = turns.get((receipt.source_turn_id, receipt.source_revision))
+            if turn is None or turn.status != TurnStatus.COMPLETED:
+                raise ValueError(
+                    "MemoryPack persisted-Turn adjudication requires its exact "
+                    "completed Source Turn"
+                )
+            messages = [turn.transcript.user_message]
+            if turn.transcript.agent_message is not None:
+                messages.append(turn.transcript.agent_message)
+            messages_by_id = {message.message_id: message for message in messages}
+            if len(messages_by_id) != len(messages):
+                raise ValueError(
+                    "MemoryPack persisted-Turn adjudication has ambiguous source messages"
+                )
+
+            evidence_ids = set()
+            for evidence in receipt.evidence:
+                message = messages_by_id.get(evidence.source_id)
+                if (
+                    message is None
+                    or evidence.source_revision != turn.source_revision
+                    or evidence.role.value != message.role.value
+                    or evidence.message_sha256
+                    != hashlib.sha256(message.content.encode("utf-8")).hexdigest()
+                    or not 0 <= evidence.start < evidence.end <= len(message.content)
+                    or message.content[evidence.start : evidence.end]
+                    != evidence.quote
+                    or evidence.occurred_at != message.recorded_at
+                ):
+                    raise ValueError(
+                        "MemoryPack persisted-Turn adjudication evidence does not "
+                        "match its Source Turn"
+                    )
+                expected_evidence_id = str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        (
+                            f"erii:{relationship.relationship_id}:evidence:"
+                            f"{evidence.source_id}:{evidence.source_revision}:"
+                            f"{evidence.message_sha256}:{evidence.start}:{evidence.end}"
+                        ),
+                    )
+                )
+                if (
+                    evidence.evidence_id != expected_evidence_id
+                    or evidence.evidence_id in evidence_ids
+                ):
+                    raise ValueError(
+                        "MemoryPack persisted-Turn adjudication evidence identity "
+                        "is invalid"
+                    )
+                evidence_ids.add(evidence.evidence_id)
+
+            if (
+                receipt.outcome
+                in (DecisionOutcome.ACCEPTED, DecisionOutcome.CORROBORATED)
+                and not receipt.evidence
+            ):
+                raise ValueError(
+                    "MemoryPack accepted persisted-Turn adjudication requires evidence"
+                )
+            quarantined_ids = quarantined_agent_source_ids(turn)
+            cites_quarantined_agent = any(
+                evidence.source_id in quarantined_ids
+                for evidence in receipt.evidence
+            )
+            if cites_quarantined_agent and not (
+                receipt.outcome == DecisionOutcome.REJECTED
+                and tuple(receipt.reason_codes) == quarantine_reason
+                and not receipt.event_ids
+                and not record.events
+                and not receipt.pivotal_eligible
+            ):
+                raise ValueError(
+                    "MemoryPack persisted-Turn adjudication with quarantined Agent "
+                    "evidence must retain its a8 rejection"
+                )
+            if (
+                tuple(receipt.reason_codes) == quarantine_reason
+                and not cites_quarantined_agent
+            ):
+                raise ValueError(
+                    "MemoryPack persisted-Turn adjudication quarantine reason lacks "
+                    "quarantined Agent evidence"
+                )
+
     def _validate_relationship_processing_pack(
         self,
         pack: MemoryPack,
@@ -4092,6 +4318,9 @@ class ERIIEngine:
                                     baseline_adjudications
                                 ),
                                 timestamp_hints=actual_records,
+                                quarantined_source_ids=(
+                                    quarantined_agent_source_ids(source_turn)
+                                ),
                             )
                         )
                     except ValueError as exc:
