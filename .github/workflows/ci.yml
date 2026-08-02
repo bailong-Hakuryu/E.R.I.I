@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - "**"
+      - "!codex/release-v*"
   pull_request:
 
 permissions:
