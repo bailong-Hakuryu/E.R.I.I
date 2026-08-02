@@ -79,6 +79,19 @@ from erii.storage.turn_context import (
 )
 from erii.models.turn_context import TurnContextBaseline
 
+
+def _windows_extended_path(path: str) -> str:
+    """Makes one internal absolute path independent of legacy MAX_PATH."""
+    if os.name != "nt":
+        return path
+    absolute = os.path.abspath(path)
+    if absolute.startswith("\\\\?\\"):
+        return absolute
+    if absolute.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolute[2:]
+    return "\\\\?\\" + absolute
+
+
 def _turn_context_snapshot_writer(method):
     """Runs a FileStorage writer outside every finer-grained storage lock."""
 
@@ -101,7 +114,8 @@ class FileStorage(BaseStorage):
         """
         super().__init__()
         self.root_dir = os.path.abspath(root_dir)
-        os.makedirs(self.root_dir, exist_ok=True)
+        self._io_root_dir = _windows_extended_path(self.root_dir)
+        os.makedirs(self._io_root_dir, exist_ok=True)
         self._recover_persona_approval_transactions()
 
     def _get_user_dir(self, agent_id: str, user_id: str) -> str:
@@ -124,7 +138,7 @@ class FileStorage(BaseStorage):
         safe_agent_dir = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', clean_agent)}_{agent_hash}"
         safe_user_dir = f"{re.sub(r'[^a-zA-Z0-9_-]', '_', clean_user)}_{user_hash}"
 
-        path = os.path.join(self.root_dir, safe_agent_dir, safe_user_dir)
+        path = os.path.join(self._io_root_dir, safe_agent_dir, safe_user_dir)
         os.makedirs(path, exist_ok=True)
         return path
 
@@ -141,65 +155,65 @@ class FileStorage(BaseStorage):
         return os.path.join(self._get_user_dir(agent_id, user_id), "relationship.json")
 
     def _get_identity_registry_path(self) -> str:
-        return os.path.join(self.root_dir, "_relationship_identities.json")
+        return os.path.join(self._io_root_dir, "_relationship_identities.json")
 
     def _get_relationship_events_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
-        directory = os.path.join(self.root_dir, "_relationship_events")
+        directory = os.path.join(self._io_root_dir, "_relationship_events")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
 
     def _get_relationship_adjudications_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
-        directory = os.path.join(self.root_dir, "_relationship_adjudications")
+        directory = os.path.join(self._io_root_dir, "_relationship_adjudications")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
 
     def _get_persona_growth_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
-        directory = os.path.join(self.root_dir, "_persona_growth")
+        directory = os.path.join(self._io_root_dir, "_persona_growth")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
 
     def _get_turn_records_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
-        directory = os.path.join(self.root_dir, "_turn_records")
+        directory = os.path.join(self._io_root_dir, "_turn_records")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
 
     def _get_reply_attempts_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
-        directory = os.path.join(self.root_dir, "_reply_attempts")
+        directory = os.path.join(self._io_root_dir, "_reply_attempts")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
 
     def _get_archival_state_path(self) -> str:
-        return os.path.join(self.root_dir, "_archival_state.json")
+        return os.path.join(self._io_root_dir, "_archival_state.json")
 
     def _get_relationship_processing_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
-        directory = os.path.join(self.root_dir, "_relationship_processing")
+        directory = os.path.join(self._io_root_dir, "_relationship_processing")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
 
     def _get_turn_lock_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
-        directory = os.path.join(self.root_dir, "_turn_locks")
+        directory = os.path.join(self._io_root_dir, "_turn_locks")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.lock")
 
     def _get_relationship_history_lock_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
-        directory = os.path.join(self.root_dir, "_relationship_history_locks")
+        directory = os.path.join(self._io_root_dir, "_relationship_history_locks")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.lock")
 
     def _get_turn_context_snapshot_lock_path(self) -> str:
-        return os.path.join(self.root_dir, "_turn_context_snapshot.lock")
+        return os.path.join(self._io_root_dir, "_turn_context_snapshot.lock")
 
     def _get_relationship_processing_lock_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
-        directory = os.path.join(self.root_dir, "_relationship_processing_locks")
+        directory = os.path.join(self._io_root_dir, "_relationship_processing_locks")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.lock")
 
@@ -277,12 +291,12 @@ class FileStorage(BaseStorage):
 
     def _get_persona_compilation_path(self, blueprint_id: str) -> str:
         digest = hashlib.sha256(blueprint_id.encode("utf-8")).hexdigest()
-        directory = os.path.join(self.root_dir, "_persona_compilations")
+        directory = os.path.join(self._io_root_dir, "_persona_compilations")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
 
     def _get_persona_approval_journal_dir(self) -> str:
-        directory = os.path.join(self.root_dir, "_persona_approval_transactions")
+        directory = os.path.join(self._io_root_dir, "_persona_approval_transactions")
         os.makedirs(directory, exist_ok=True)
         return directory
 
@@ -301,20 +315,21 @@ class FileStorage(BaseStorage):
     def _write_json_atomic(file_path: str, data: Any) -> None:
         """Writes JSON via replace so readers never observe a partial document."""
         temp_path = f"{file_path}.{uuid.uuid4().hex}.tmp"
+        temp_io_path = _windows_extended_path(temp_path)
         try:
-            with open(temp_path, "w", encoding="utf-8") as file_obj:
+            with open(temp_io_path, "w", encoding="utf-8") as file_obj:
                 json.dump(data, file_obj, ensure_ascii=False, indent=2)
                 file_obj.flush()
                 os.fsync(file_obj.fileno())
-            os.replace(temp_path, file_path)
+            os.replace(temp_io_path, file_path)
         except Exception as exc:
             raise StorageWriteError(
                 f"failed to atomically write {os.path.basename(file_path)}"
             ) from exc
         finally:
-            if os.path.exists(temp_path):
+            if os.path.exists(temp_io_path):
                 try:
-                    os.remove(temp_path)
+                    os.remove(temp_io_path)
                 except OSError:
                     pass
 
@@ -2330,7 +2345,7 @@ class FileStorage(BaseStorage):
 
     def get_persona_manifest(self, manifest_id: str) -> Optional[PersonaManifest]:
         """Loads a Persona Manifest by scanning compact Blueprint aggregates."""
-        directory = os.path.join(self.root_dir, "_persona_compilations")
+        directory = os.path.join(self._io_root_dir, "_persona_compilations")
         if not os.path.isdir(directory):
             return None
         with self.lock_manager.lock("__persona_manifest__", manifest_id):

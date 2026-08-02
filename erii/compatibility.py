@@ -32,6 +32,7 @@ class CompatibilityCatalog:
     file_storage: FormatCompatibility
     memory_pack: FormatCompatibility
     lifecycle_backup: FormatCompatibility
+    lifecycle_plan: FormatCompatibility
 
 
 SQLITE_FORMAT = FormatCompatibility(
@@ -65,6 +66,11 @@ LIFECYCLE_BACKUP_FORMAT = FormatCompatibility(
     current_version="1",
     readable_versions=("1",),
 )
+LIFECYCLE_PLAN_FORMAT = FormatCompatibility(
+    format_id="erii.lifecycle-plan",
+    current_version="3",
+    readable_versions=("1", "2", "3"),
+)
 
 COMPATIBILITY_CATALOG = CompatibilityCatalog(
     package_version=__version__,
@@ -74,6 +80,7 @@ COMPATIBILITY_CATALOG = CompatibilityCatalog(
     file_storage=FILE_STORAGE_FORMAT,
     memory_pack=MEMORY_PACK_FORMAT,
     lifecycle_backup=LIFECYCLE_BACKUP_FORMAT,
+    lifecycle_plan=LIFECYCLE_PLAN_FORMAT,
 )
 
 MEMORY_PACK_METADATA_FIELDS = frozenset({"version", "agent_id", "user_id", "exported_at"})
@@ -204,6 +211,7 @@ __all__ = [
     "FILE_STORAGE_FORMAT",
     "FormatCompatibility",
     "LIFECYCLE_BACKUP_FORMAT",
+    "LIFECYCLE_PLAN_FORMAT",
     "MEMORY_PACK_FORMAT",
     "MEMORY_PACK_METADATA_FIELDS",
     "MEMORY_PACK_ROOT_FIELDS",

@@ -70,7 +70,7 @@ from erii.models.turn_context import TurnContextBaseline
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.compatibility import SQLITE_FORMAT
 from erii.data_lifecycle import read_sqlite_schema_version
-from erii.errors import UnsupportedFormatError
+from erii.errors import MigrationRequiredError, UnsupportedFormatError
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage, cross_process_file_lock
 from erii.storage.errors import StorageIntegrityError
@@ -106,7 +106,16 @@ class SQLiteStorage(BaseStorage):
         """
         super().__init__()
         self.db_path = db_path
-        read_sqlite_schema_version(self.db_path, immutable=False)
+        schema_version = read_sqlite_schema_version(self.db_path, immutable=False)
+        if (
+            schema_version is not None
+            and schema_version < self.CURRENT_SCHEMA_VERSION
+        ):
+            raise MigrationRequiredError(
+                f"{SQLITE_FORMAT.format_id} schema {schema_version} must be "
+                f"upgraded explicitly to schema {self.CURRENT_SCHEMA_VERSION} "
+                "before SQLiteStorage can open it"
+            )
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:

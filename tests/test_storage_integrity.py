@@ -1,6 +1,7 @@
 """Fail-closed storage integrity contracts for the v0.4 Beta lifecycle."""
 
 from contextlib import closing
+import os
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -28,6 +29,23 @@ def memory_node(content: str = "A valid memory.") -> MemoryNode:
 
 
 class FileStorageIntegrityTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows extended-length path contract")
+    def test_atomic_write_supports_temp_path_beyond_legacy_max_path(self) -> None:
+        with tempfile.TemporaryDirectory() as root_dir:
+            long_root = Path(root_dir) / ("x" * 130)
+            storage = FileStorage(str(long_root))
+            core_path = Path(storage._get_core_path(AGENT_ID, USER_ID))
+
+            self.assertLess(len(str(core_path)), 260)
+            self.assertGreaterEqual(len(str(core_path)) + 37, 260)
+
+            storage.save_core_memory(AGENT_ID, USER_ID, "long path value")
+
+            self.assertEqual(
+                storage.get_core_memory(AGENT_ID, USER_ID),
+                "long path value",
+            )
+
     def test_missing_legacy_files_keep_their_documented_empty_state(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
             storage = FileStorage(root_dir)

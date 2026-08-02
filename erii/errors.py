@@ -17,6 +17,10 @@ class UnsupportedFormatError(ValueError):
     """Stored data uses a format version this reader cannot safely interpret."""
 
 
+class MigrationRequiredError(StorageError):
+    """Stored data is supported but must be upgraded through the lifecycle API."""
+
+
 class LifecycleError(RuntimeError):
     """Base error for a data-lifecycle operation that could not finish safely."""
 
@@ -46,6 +50,7 @@ __all__ = [
     "LifecycleError",
     "LifecyclePlanError",
     "LifecycleVerificationError",
+    "MigrationRequiredError",
     "StaleLifecyclePlanError",
     "StorageError",
     "StorageIntegrityError",

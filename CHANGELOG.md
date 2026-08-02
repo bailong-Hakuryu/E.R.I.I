@@ -4,28 +4,55 @@
 
 ## [Unreleased]
 
+以下内容是截至 2026-08-03 已完成实现、等待最终验收与不可移动发布的
+`0.4.0b1` 候选。仓库当前最新已发布版本仍是 `0.4.0a8`；在 b1 tag、构建产物与
+发布验证完成前，本节不能被解读为 b1 已经发布。
+
 ### Added
 
-- Linux CI 与 prerelease 验证现在覆盖 Python 3.11 和 3.14，并在 Windows 3.11/3.14 上额外验证文件、SQLite、归档与宿主生命周期路径。
-- 新增公开 `StorageIntegrityError` 与 `StorageWriteError`，让宿主能够区分损坏/不一致的持久数据和未能发布的写入。
-- 新增独立 `COMPATIBILITY_CATALOG` 与只读 `LifecycleInspector`：它们分别识别 Package、Python、SQLite、FileStorage、MemoryPack 与 Lifecycle Backup 版本，并以不含聊天正文的状态、版本、文件数量和内容指纹报告本地数据源；检查不会实例化 Storage、创建路径、切换 SQLite journal mode 或写入 FileStorage manifest。
-- 新增公开 `UnsupportedFormatError`，让宿主把“不受支持的未来格式”与损坏、缺失和普通输入错误分开处理。
-- 新增公开 `DataLifecycleCoordinator`、`BackupRequest` 与 `RestoreRequest`：三种本地格式的完整逻辑数据现在可以通过可序列化的不可变计划生成严格 Lifecycle Backup v1，并幂等恢复到缺失目标；FileStorage 的 `_turn_context_snapshot.lock`，以及 `_turn_locks/`、`_relationship_history_locks/`、`_relationship_processing_locks/` 中的 `<64hex>.lock` 不进入 payload，其他 `.lock` 文件仍会保留，遗留 `.tmp`、链接或其他非普通文件则失败关闭；执行会重检来源与目标父目录身份、验证完整 payload 与逐文件 SHA-256、通过原子 no-replace 同级发布，并在发布后最终校验失败时保留可见目标，避免误删其他宿主的新写入。POSIX 目录同步失败会失败关闭；Windows 只对已知不支持目录同步的错误采用 best-effort，文件内容刷新与 no-replace 仍然成立。当前 Beta 会在检查、捕获与验证期间把整包物化到内存，后续 B1 将增加有界内存的分块流式路径。
+- 新增机器可读 `COMPATIBILITY_CATALOG`、公开 `LifecycleInspector` 与统一的 `DataLifecycleCoordinator.inspect → plan → execute` 深 Module。只读检查区分 missing、empty、current 与 migration-required，只返回版本、文件数、警告和内容指纹，不返回聊天、人设或记忆正文。
+- 新增严格 Lifecycle Backup v1：FileStorage、SQLite 与 MemoryPack 可以创建完整、逐文件验证的备份，并幂等恢复到缺失目标。计划绑定来源、目标父目录和策略；发布使用 no-replace，损坏、不稳定来源、链接、遗留临时文件和未知未来格式失败关闭。
+- 新增 backup-first、源保留的并排升级：FileStorage `legacy → 1`、SQLite schema `6 → 9`，以及版本目录中每一个旧的可读 MemoryPack → `0.4.0a8`。历史合成 fixture、Unicode/时区、语义图校验、失败恢复和精确重试均进入测试。
+- 新增 `MemoryPackImportRequest`：把 current 或 declared-readable Pack 在隔离 staging 中通过生产校验后，原子发布为全新 FileStorage v1 或 SQLite v9；不向已有在线 Storage 合并。
+- 新增 backup-first `EraseRequest`，覆盖 relationship、Source Turn、Relationship Event 和 complete-user 四种严格范围；从剩余权威历史确定性重建关系状态、Current Belief、Episode 与 Chapter。`RebuildRequest` 可在不删除权威事件的前提下重建一段关系。
+- Source Turn / Relationship Event 删除沿冻结 journal 前缀撤销依赖的处理 Run、Event、Reflection、Growth 与归档记忆，并传递到依赖它们的后续 Run；selector 外的原始聊天仍保留，失去可证明历史上下文的现代 Turn 显式降级为 Legacy，而不会伪造重新审查。
+- 擦除/重建的 staging 只有在受影响关系通过生产 MemoryPack 导出并导入全新同类型 Storage 的语义往返后才允许发布；“文件能打开”不再等同于可携带。
+- 删除/重建报告只携带 selector、ID、摘要与聚合计数，并把工作区分为 `deleted`、`rebuilt`、`delegated` 和 `unverified_external`；不会把被删正文复制到报告，也不会谎称已经删除预删除备份、向量索引或外部副本。
+- 新增三条原创固定长期轨迹：单关系 128 轮、双关系交错各 72 轮、纠正/冲突/成长 120 轮；FileStorage 与 SQLite 六组完整基线覆盖重启、重试、双向携带、重复导入、正/负召回、来源权威、关系隔离、删除和重建，硬指标零失败。
+- 新增流式文件/目录复制与稳定摘要。单块不超过 1 MiB；SQLite 语义摘要流式遍历规范行。生命周期为 MemoryPack、需物化 transform 与 backup manifest 分别设置 256 MiB、512 MiB 与 16 MiB 上限。
+- 新增公开 `StorageIntegrityError`、`StorageWriteError`、`UnsupportedFormatError` 与 `MigrationRequiredError`，让宿主区分损坏、发布失败、未知格式和显式迁移要求。
 
 ### Changed
 
-- `main` 进入 `0.4.0b1.dev0` 开发阶段；最低 Python 版本提高到 3.11，Ruff 语法基线同步提高到 `py311`。MemoryPack 当前格式仍保持 `0.4.0a8`，SQLite Schema 仍保持 v9，避免把独立版本生命周期混为一次全局替换。
-- 包许可证元数据改用 PEP 639/SPDX `Apache-2.0`，构建后端最低版本提高到 Setuptools 77，消除旧 license table/classifier 的发布弃用路径。
-- prerelease 工作流使用版本中立的 Release 标题，不再把后续 Beta 错标为 a8 的连续性审计发布。
-- `remember()` 与接收 transient Source Turn 的 `adjudicate_relationship_candidates()` 现在发出带替代 Interface 和计划删除版本的 `DeprecationWarning`；持久历史数据本身不受弃用影响。
-- SQLite 生命周期指纹现在只绑定静止主数据库的规范逻辑名称，不把文件名或 `-shm` 等运行时 sidecar 写入持久内容身份，因此同一已验证数据库可以恢复到不同文件名。生命周期执行保留不含用户正文的稳定目标锁文件，以维持跨进程排他域。
+- 最低 Python 提高到 3.11，支持/CI 范围为 3.11–3.14；`0.4.0a8` 保持为最后一个 Python 3.9 发布。
+- Lifecycle Plan 当前 writer 升级为 v3，reader 严格兼容 v1–v3；v1/v2 保留各自历史字段和摘要规则，不能声明 v3 selector/operation。
+- SQLiteStorage 不再在构造时静默原地升级旧 schema；旧数据库失败关闭。b1 只承诺
+  schema `6 → 9` 的显式 lifecycle 升级，其他可识别旧 schema 不因可读/可检查而获得
+  升级承诺。
+- `remember()` 与接收 transient Source Turn 的 `adjudicate_relationship_candidates()` 发出带替代 Interface 的 `DeprecationWarning`，计划在 v0.5 删除；持久数据和旧 Pack 的可读性不受影响。
+- 包许可证元数据采用 PEP 639/SPDX `Apache-2.0`，Ruff 目标调整为 `py311`，构建和发布验证覆盖 wheel/sdist 干净安装。
+- v0.4 在 b1 进入功能冻结；下一阶段是 `0.4.0rc1` 的缺陷、兼容、文档与发布收口。关系后果和角色内在审视仍属于 v0.5。
 
 ### Fixed
 
-- 归档心跳分别调度 Processing Lease 与 Consumer Lease，使用存储观察时间和单调时钟，避免慢持久化把刚续租的尝试写成已经过期；Commit Binding 之后由精确 Commit Permit 负责发布授权，旧尝试仍会被 fencing 拒绝。
-- 发布恢复分支不再同时触发普通 CI 与 prerelease 恢复工作流，避免同一提交留下重复且互相矛盾的检查结果。
-- FileStorage 的旧 `nodes.json`、`core_memory.json` 与 `timeline.json` 路径改用 flush、fsync 和原子替换；损坏 JSON、非法记录或读取失败不再被伪装为空数据，也不能被后续默认写入静默覆盖。SQLite MemoryNode/Timeline 解码同样失败关闭，不再跳过损坏行后返回不完整集合。
-- SQLiteStorage 在初始化和迁移前拒绝高于 v9 的 Schema；只读检查要求静止的 WAL/journal 并验证 migration history 连续性与 `quick_check`。MemoryPack Reader 现在要求完整 metadata、拒绝根级/metadata 未知字段、重复 JSON 字段和未声明格式版本，并在构造任何嵌套领域对象之前完成这些检查。
+- FileStorage 核心 JSON 使用 flush、fsync 与原子替换；损坏 JSON/非法记录不再伪装为空数据。SQLite 损坏行、未来 schema 与不连续 migration history 同样失败关闭。
+- Windows 上 FileStorage 的内部 I/O 根使用 extended-length path；当公开配置路径本身有效、但哈希文件名或原子临时后缀把内部路径推过传统 `MAX_PATH` 时，不再以 `StorageWriteError` 失败。对外 `root_dir` 与磁盘布局不变。
+- MemoryPack 在构造领域对象前严格拒绝重复/未知字段、非法集合成员、未知版本与不自洽来源图；导入不接受 `INSTRUCTION` 节点，也不会让普通记忆中的角色原话因关键词过滤而被破坏。
+- REST 参考服务默认回环监听且未配置访问控制时拒绝业务请求；owner key 至少 32 UTF-8 字节，重复/缺失/错误 `X-API-Key` 被拒绝。请求体限制 8 MiB，MemoryPack 集合设置项数上限，内部异常不再泄露路径、SQL 或密钥。
+- 关系裁决来源必须引用已持久化且 completed 的 Source Turn；客户端不能伪造完整对话来获得现代权威。
+- 完整时间历史验证移除 O(n²) 路径，并提前拒绝重复承诺、开放事项和条件终结记录。
+
+### Compatibility
+
+- Package `0.4.0b1`、SQLite schema 9、FileStorage format 1、MemoryPack `0.4.0a8`、Lifecycle Backup v1 与 Lifecycle Plan v3 是独立身份。
+- Backup/restore 保持原格式；upgrade 改变格式；fresh import 把 Pack 语义写入新 Storage。三者不能互相冒充，也不提供任意原地覆盖或 downgrade。
+- checked longitudinal baseline 位于 `benchmarks/baselines/v0.4.0b1-longitudinal.json`；性能值是单机回归观测，不是 SLA。
+
+### Security
+
+- Lifecycle digest 和 MemoryPack commitment 只检测损坏/漂移，不是签名、MAC 或来源认证；所有内置持久格式仍默认明文。
+- 跨进程锁只协调可信宿主，不提供身份认证、对象授权、租户隔离或对抗性同机文件系统边界。
+- 删除成功不自动清理预删除 Lifecycle Backup、外部向量库、导出 Pack、日志、云副本或远程模型服务；宿主必须执行自己的留存与删除策略。
 
 ## [0.4.0a8] - 2026-08-02
 

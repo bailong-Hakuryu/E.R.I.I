@@ -10,6 +10,7 @@ from unittest import mock
 
 import erii
 import erii.data_lifecycle as lifecycle_module
+import erii.lifecycle_streaming as lifecycle_streaming_module
 from erii import FileStorage, MemoryPack, SQLiteStorage
 from erii.data_lifecycle import (
     BackupRequest,
@@ -534,12 +535,15 @@ class LifecycleBackupRestoreTests(unittest.TestCase):
             original_bytes = source_file.read_bytes()
             original_stat = source_file.stat()
             displaced = root / "displaced-core-memory.json"
-            real_scan = lifecycle_module._scan_directory_entries
+            real_scan = lifecycle_streaming_module._scan_tree_entries
             replaced = False
 
-            def replace_after_first_scan(scan_root, *, label):
+            def replace_after_first_scan(scan_root, *, exclude_relative_name):
                 nonlocal replaced
-                result = real_scan(scan_root, label=label)
+                result = real_scan(
+                    scan_root,
+                    exclude_relative_name=exclude_relative_name,
+                )
                 if Path(scan_root) == source_path and not replaced:
                     replaced = True
                     source_file.replace(displaced)
@@ -551,7 +555,7 @@ class LifecycleBackupRestoreTests(unittest.TestCase):
                 return result
 
             with mock.patch(
-                "erii.data_lifecycle._scan_directory_entries",
+                "erii.lifecycle_streaming._scan_tree_entries",
                 side_effect=replace_after_first_scan,
             ):
                 with self.assertRaises(StorageIntegrityError):

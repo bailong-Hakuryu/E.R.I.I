@@ -1,324 +1,219 @@
-# 0.4.0b1 executable implementation contract
+# v0.4.0b1 Implementation Contract
 
-This document turns the `0.4.0b1` section of `ROADMAP.md` into an ordered
-engineering contract. It does not declare Beta complete. The package remains a
-development build until every exit gate in this document and the roadmap passes.
+Status (2026-08-03): implemented and awaiting the final `0.4.0b1` acceptance
+gate. This document describes candidate behavior, not a proposal, but b1 is not
+an immutable release until its tag, artifacts and release checks exist. The
+latest immutable release remains `0.4.0a8`. Historical alpha contracts and ADRs
+remain immutable records of the decisions that led here.
 
-## Release and format identities
+## Release boundary
 
-The version axes are independent:
+`0.4.0b1` is the v0.4 feature-complete Beta candidate. After this point v0.4 accepts
+compatibility, migration, performance, documentation and defect fixes; it does
+not add another character-domain model. The next planned domain work—lasting
+consequences of a character's choices and character-centred inner review—remains
+in v0.5.
 
-| Axis | Development value at Beta start | Rule |
+The version axes are deliberately independent:
+
+| Axis | b1 value | Meaning |
 | --- | --- | --- |
-| Package Version | `0.4.0b1.dev0` | becomes `0.4.0b1` only on the release commit |
-| Python support | `3.11` through current stable `3.14` | minimum and latest stable are Required CI |
-| SQLite Schema Version | `9` | changes only when the physical schema changes |
-| MemoryPack Format Version | `0.4.0a8` | changes only when its wire format or reader contract changes |
-| Lifecycle Backup Format | `1` | changes only when the verified backup bundle contract changes |
-| Extractor, evaluator and policy versions | their existing feature-local values | never follow the package version implicitly |
+| Package | `0.4.0b1` candidate | intended Python distribution and Git tag; not immutable until published |
+| Python | `3.11`–`3.14` | supported interpreter range |
+| SQLite schema | `9` | physical SQLite layout |
+| FileStorage format | `1` | `.erii-store.json` identity; legacy remains readable for lifecycle upgrade |
+| MemoryPack format | `0.4.0a8` | portable relationship wire format |
+| Lifecycle Backup | `1` | verified backup bundle format |
+| Lifecycle Plan | writer `3`, readers `1`–`3` | immutable operation plan contract |
 
-No global search-and-replace may advance these values together. The immutable
-`v0.4.0a8` tag, release artifacts and documentation remain unchanged.
+A package release does not silently advance the other axes. In particular,
+publishing b1 does not rename an a8 MemoryPack or rewrite schema 9 as “b1”.
 
-## Current implementation status
+## Public module boundary
 
-The current development tree has completed B1.0 and the B1.1 fail-closed
-storage slice. The read-only part of B1.2 is also implemented: an independent
-compatibility catalog and `LifecycleInspector` identify FileStorage, SQLite and
-MemoryPack sources without opening a Storage driver or writing a manifest,
-future SQLite schemas and undeclared MemoryPack formats fail explicitly, and
-MemoryPack envelope validation precedes nested model construction. The first
-B1.3 slice is also complete: `DataLifecycleCoordinator` now creates and
-inspects versioned backup bundles for FileStorage, SQLite and MemoryPack,
-serializes immutable plans, rejects stale sources, restores byte-preserving
-payloads to missing targets and makes both operations idempotent across a
-process restart.
-
-B1.2's final auto-migration cutover is deliberately conditional on B1.3. Until
-an explicit upgrade transformation exists, opening an older supported SQLite
-database still uses the historical in-place migration behavior. FileStorage v1
-is currently a readable target manifest identity; backup and restore preserve
-the detected source format byte-for-byte and do not publish that manifest.
-Upgrade, overwrite restore, semantic migration validation, atomic MemoryPack
-import, B1.4 deletion/rebuild and B1.5-B1.6 gates remain unimplemented.
-
-## Scope and non-goals
-
-Beta completes the v0.4 data lifecycle:
-
-- fail-closed local storage reads and atomic legacy JSON writes;
-- read-only format inspection and explicit future-version rejection;
-- verifiable backup, dry-run, migration, validation and restoration;
-- scoped deletion and deterministic rebuilding of derived projections;
-- fixed longitudinal evaluations and measured performance baselines;
-- freeze of the public Python Interface, REST `/api/v1`, SQLite Schema and
-  MemoryPack Format.
-
-Beta does not add relationship-consequence, continuity-exception resolution,
-User/Persona stance, narrative-tension or character inner-review semantics.
-Those remain `0.5.0a1` work. Authentication, authorization, encryption and
-multi-tenant isolation remain v0.6 work.
-
-## Non-negotiable invariants
-
-1. **Inspection is zero-write.** It must not create directories, switch SQLite
-   journal mode, create tables, recover transactions or run migrations.
-2. **Corruption is not absence.** Missing data, malformed data, an I/O failure
-   and an unsupported future format are distinct outcomes. None may silently
-   become an empty collection.
-3. **Every mutation is planned.** A plan is immutable and binds the storage
-   kind, source location, source format identities and a content fingerprint.
-4. **Execution rechecks the source.** If data differs from the planned
-   fingerprint, execution fails before backup or mutation.
-5. **Backup precedes publication.** State-changing execution writes and
-   verifies a backup before staging the target result.
-6. **Publication is atomic.** SQLite uses a transaction or verified database
-   replacement; FileStorage uses a staging tree and atomic file/directory
-   replacement. Readers never observe a half-migrated graph.
-7. **Failure preserves recoverability.** A failed execution leaves the source
-   unchanged or automatically restores the verified backup. It never reports
-   success merely because some records were written.
-8. **Authority remains scoped.** Migration, restore, deletion and rebuild never
-   move relationship authority across the original `Agent × User` and
-   `relationship_id` identity.
-9. **Reports contain no conversation text.** Reports may contain versions,
-   counts, stable record identities, digests, actions, warnings and external
-   cleanup obligations, but not Source Transcript, persona source or memory
-   content.
-10. **Derived records do not outrank history.** Rebuild folds remaining
-    authoritative history into Current Belief, Relationship State, State Reason,
-    Episode, Relationship Chapter and Recall Projection. It never reconstructs
-    deleted evidence from a later summary.
-
-## Data Lifecycle deep Module
-
-### Chosen Interface
-
-The external seam is a three-entry `DataLifecycleCoordinator` Interface:
+All lifecycle mutations use one deep-module interface:
 
 ```python
-assessment = lifecycle.inspect(target)
-plan = lifecycle.plan(
-    BackupRequest(source=assessment, destination=backup_target)
-)
-report = lifecycle.execute(plan)
+assessment = lifecycle.inspect(target)  # read-only
+plan = lifecycle.plan(request)          # zero-write dry-run
+report = lifecycle.execute(plan)        # mutate, then terminally verify
 ```
 
-```python
-class DataLifecycleCoordinator:
-    def inspect(self, target: LifecycleTarget) -> LifecycleAssessment: ...
-    def plan(self, request: LifecycleRequest) -> LifecyclePlan: ...
-    def execute(self, plan: LifecyclePlan) -> LifecycleReport: ...
-```
+`DataLifecycleCoordinator` owns orchestration. `LifecycleRequest` is a closed
+typed union of `BackupRequest`, `RestoreRequest`, `UpgradeRequest`,
+`MemoryPackImportRequest`, `EraseRequest` and `RebuildRequest`. Plans are strict,
+canonical JSON credentials: they bind the observed source, destination parent,
+strategy, optional backup target and selector. Reports contain identities,
+counts, digests and disposition groups, never conversation, persona, event or
+memory bodies.
 
-`LifecycleRequest` is a closed, typed union. The implemented vocabulary is
-currently `backup | restore`; `upgrade`, `delete` and `rebuild` will extend the
-same union without adding another orchestration method. `execute()` includes
-final verification; a successful `LifecycleReport` is therefore a verified
-terminal result, not a progress flag.
+Plan v3 is the current writer because erase/rebuild and import need a durable
+selector. The reader preserves exact v1 backup/restore and v2
+backup/restore/upgrade rules and digests. Older contracts cannot claim newer
+operations or carry v3 selectors.
 
-The Interface includes these ordering and error rules:
+## Delivered operation matrix
 
-- `plan()` accepts only a complete, supported assessment and freezes its source
-  fingerprint, format versions, operation scope and backup destination;
-- state-changing requests without a safe backup destination fail during
-  planning;
-- `execute()` accepts only a plan produced by the same major coordinator
-  contract and re-inspects every source before acting;
-- unsupported future formats raise `UnsupportedFormatError`; malformed or
-  unreadable data raises `StorageIntegrityError`; changed sources raise
-  `StaleLifecyclePlanError`; failed verification raises
-  `LifecycleVerificationError` with recovery status;
-- retries return or resume the same operation identity and cannot widen a
-  deletion scope or select a different migration result.
+| Operation | Source | Destination/result | Backup-first | Publication rule |
+| --- | --- | --- | --- | --- |
+| inspect | FileStorage, SQLite, MemoryPack, Backup | no-content assessment | no | no write |
+| backup | FileStorage, SQLite, MemoryPack | Lifecycle Backup v1 | n/a | missing target, no-replace |
+| restore | Lifecycle Backup v1 | original live format | n/a | missing target, no-replace |
+| upgrade | FileStorage `legacy` | FileStorage v1 sibling | yes | source-preserving, missing target |
+| upgrade | SQLite schema 6 | SQLite schema 9 sibling | yes | source-preserving, missing target |
+| upgrade | every declared older readable MemoryPack | MemoryPack `0.4.0a8` sibling | yes | source-preserving, missing target |
+| import | current or declared readable MemoryPack | fresh FileStorage v1 or SQLite v9 | no existing target to preserve | isolated staging, then no-replace |
+| erase | current FileStorage v1 or SQLite v9 | protected replacement of the same live target | yes | verified staged transform and recoverable cutover |
+| rebuild | current FileStorage v1 or SQLite v9 | rebuilt projections for one relationship | yes | verified staged transform and recoverable cutover |
 
-`LifecycleTargetKind.BACKUP` is a first-class inspectable target. A v1 bundle
-contains a strict no-content manifest plus a complete payload. The manifest
-binds the plan digest, source format identity, source content fingerprint,
-canonical relative file list, byte counts and per-file SHA-256 digests. It does
-not contain the source's absolute path or any conversation/persona text. These
-unkeyed digests detect damage and plan drift; they do not authenticate who
-created a bundle. Signatures, MACs, encryption and authorization remain v0.6.
+Upgrade is intentionally side-by-side. b1 does not expose arbitrary in-place
+schema migration, overwrite restore, merge import into an online storage, or a
+generic downgrade. Rollback means restoring the verified pre-change backup to a
+missing location and performing an explicit host cutover.
 
-### Why this shape
+## Upgrade and import semantics
 
-Three alternatives were considered:
+- FileStorage `legacy → 1` retains all logical source files and adds the
+  canonical format manifest.
+- SQLite `6 → 9` is the only verified SQLite lifecycle upgrade route. It runs an
+  explicit historical transformation and validates the resulting semantic
+  database identity. Merely opening any old SQLite database no longer counts as
+  a supported upgrade workflow: old schemas fail closed, and schemas other than
+  6 must not be represented as upgradeable merely because inspection can
+  identify them.
+- Every older MemoryPack version listed by `MEMORY_PACK_FORMAT.readable_versions`
+  has an explicit route to `0.4.0a8`. The transformation validates the complete
+  semantic graph and does not invent missing modern evidence, review authority
+  or relationship facts.
+- Fresh MemoryPack import performs production import validation inside an
+  isolated missing FileStorage or SQLite target, verifies the semantic result,
+  and publishes only after success. Exact retries are idempotent. This is not an
+  atomic merge into a live destination.
+- Optional Agent/User remapping remains subject to MemoryPack's own authority
+  rules. A pack bound by Source Turns, relationship history or other identity
+  evidence cannot be remapped merely because IDs were supplied.
 
-1. one generic `run(command)` method is smaller syntactically, but hides the
-   crucial inspect/plan/execute ordering and makes dry-run hard to prove;
-2. a public pluggable pipeline with separate backup, migration, validation,
-   publication and recovery ports is flexible, but exposes implementation
-   ordering and creates a shallow Interface before third-party demand exists;
-3. a stateful migration session makes the common path convenient, but makes
-   durable plans, process restarts and audit serialization harder.
+Historical fixtures are synthetic and contain no user or copyrighted character
+data. They retain producer version/commit metadata and checksums. Tests cover
+Unicode, time zones, stable identities, source closure and failure recovery.
 
-The chosen hybrid keeps the ordering visible while hiding backup mechanics,
-staging, transactions, graph validation and recovery. This gives callers high
-leverage and keeps migration knowledge local to one Module.
+## Erasure and deterministic rebuild
 
-### Adapters and seam placement
+`EraseRequest` supports exactly four selectors:
 
-The implementation owns internal `FileLifecycleAdapter`,
-`SQLiteLifecycleAdapter` and `MemoryPackLifecycleAdapter` seams. They are
-local-substitutable dependencies and are currently exercised by generated
-temporary stores and targeted compatibility cases. Frozen v0.3.1 and relevant
-v0.4-alpha historical fixtures remain a B1.3 follow-up. The adapters are not
-added to `BaseStorage`, and lifecycle methods are not added to the already broad
-`ERIIEngine` Interface.
+1. complete relationship (`agent_id + user_id + relationship_id`);
+2. one Source Turn in that relationship;
+3. one Relationship Event in that relationship;
+4. complete user (`user_id + user_identity_id`) across matching local
+   relationships.
 
-The first-party CLI may present conveniences such as `erii data inspect` and
-`erii data migrate --dry-run`, but those commands delegate to the same three
-Interface entries. A CLI command is not a second lifecycle implementation.
+Selectors are strict: ambiguous, missing or cross-boundary identities fail
+during planning. The operation first publishes and verifies a Lifecycle Backup,
+transforms an isolated staging copy, rebuilds affected projections from the
+remaining authoritative history with the production projector/consolidator and
+temporal validator, verifies the staged store, and only then performs the
+protected replacement. For every surviving affected relationship, verification
+also requires a production MemoryPack export followed by import into a fresh
+store of the same adapter. Physical readability alone is not publication proof.
 
-## Delivery order
+Source Turn and Relationship Event erasure follows the frozen-journal authority
+graph rather than deleting one row in isolation. A processing run is revoked
+when its direct-event or adjudication prefix included removed authority; its
+decisions, events, reflections, growth records, archival artifacts and
+transitively dependent later runs are removed as well. Source transcripts not
+selected for erasure remain. If a surviving modern Turn's
+`TurnContextBaseline` included the removed prefix, it is converted to an
+explicit legacy `turn-record/v1` record without continuity-assessment authority.
+This preserves what was said while refusing to invent a historical re-review.
+Re-deriving later long-term memory requires an explicit future historical
+reprocessing operation; erasure does not resample a model.
 
-### B1.0 — Development and compatibility baseline
+`RebuildRequest` currently accepts a relationship selector only. It does not
+delete authoritative events; it recomputes Current Belief, relationship state,
+state reasons, Episodes and Chapters from the authoritative relationship
+history. The report includes content-free rebuild digests and counts.
 
-- use Package Version `0.4.0b1.dev0` until release closeout;
-- require Python 3.11 and verify Python 3.11/3.14 on Linux and Windows;
-- keep SQLite v9 and MemoryPack `0.4.0a8` identities unchanged until their
-  formats actually change;
-- make prerelease automation version-neutral;
-- emit real `DeprecationWarning` from `remember()` and the transient Source Turn
-  adjudication entry, naming replacements and planned v0.5 removal;
-- record every post-a8 change under `CHANGELOG.md` `[Unreleased]`.
+An erasure report distinguishes `deleted`, `rebuilt`, `delegated` and
+`unverified_external` inventory. The lifecycle backup itself still contains the
+pre-erasure data, and configured vector stores, uploaded MemoryPacks, copied
+databases, logs, remote model providers and other external copies are not
+silently deleted. The host must apply its retention policy to those locations.
+Consequently, success means “the selected data was removed from this verified
+live store and its local projections were rebuilt,” not “every copy everywhere
+has been cryptographically erased.”
 
-### B1.1 — Fail-closed storage integrity
+## I/O, resource and failure contract
 
-- route legacy FileStorage JSON writes through flush, fsync and atomic replace;
-- distinguish missing files from malformed JSON, invalid records and I/O
-  failures;
-- never overwrite a malformed `nodes.json`, `core_memory.json` or
-  `timeline.json` with an empty/default result;
-- make SQLite record decoding fail explicitly instead of returning a partial
-  collection after skipping a damaged row;
-- add fault-injection tests for interrupted writes, malformed JSON, invalid row
-  payloads and recovery behavior.
+- `inspect()` and `plan()` do not create targets, manifests, SQLite sidecars or
+  storage objects.
+- File/tree hashing and byte-preserving copying use bounded chunks (at most
+  1 MiB per stream chunk). SQLite identity is computed by streaming canonical
+  rows rather than loading the database file as one byte string.
+- A MemoryPack handled by the lifecycle module is limited to 256 MiB. A
+  transformation that must materialize semantic JSON is limited to 512 MiB.
+  A backup manifest is limited to 16 MiB. These are rejection boundaries, not
+  recommendations for ordinary deployments.
+- Source paths must be quiescent. Cross-process locks coordinate cooperating
+  E.R.I.I. hosts; they do not defend a directory writable by an adversarial
+  process.
+- Links, reparse points, hard links, non-regular files, unstable SQLite
+  WAL/journal state and incomplete temporary files fail closed.
+- Destination names are no-replace. A stale source or changed parent identity
+  aborts execution. An exact plan retry returns `already_complete` only when all
+  expected artifacts match.
+- A verified pre-change backup is retained if later transformation or
+  publication fails. If a newly visible target cannot pass final verification,
+  the coordinator preserves it for manual inspection rather than risk deleting
+  writes made after publication.
+- POSIX directory synchronization failures fail closed. Python cannot provide
+  an equivalent portable directory-handle flush on Windows; content flushing
+  and no-replace still apply, but equal power-loss durability is not claimed.
 
-### B1.2 — Version catalog and read-only inspection
+## Longitudinal and performance evidence
 
-- name Package, SQLite, FileStorage and MemoryPack versions in a dedicated
-  compatibility catalog;
-- inspect SQLite without instantiating `SQLiteStorage` or setting write PRAGMAs;
-- inspect FileStorage without creating any path; legacy stores are recognized by
-  a complete scan, and a manifest is written only by a successful migration;
-- make MemoryPack readers require valid metadata and reject unknown fields or
-  unsupported future versions before model construction;
-- reject SQLite Schema versions newer than the reader rather than opening them
-  as if they were current;
-- once explicit migration is available, opening an older store reports
-  `MigrationRequiredError` instead of silently mutating user data.
+The repository contains three original synthetic trajectories—128 ordinary
+single-relationship turns, two interleaved 72-turn relationships, and a
+120-turn correction/conflict/growth trajectory—run against both FileStorage and
+SQLite. The six full scenario/adapter reports cover restarts, retries,
+File↔SQLite portability, duplicate import, positive/negative structured recall,
+relationship isolation, provenance, corrections and deterministic lifecycle
+operations. The checked baseline reports zero failed hard metrics.
 
-### B1.3 — Backup, migration, validation and restore
+The frozen JSON baseline is
+[`benchmarks/baselines/v0.4.0b1-longitudinal.json`](../benchmarks/baselines/v0.4.0b1-longitudinal.json)
+(46,143 bytes). On the maintainer's recorded run, full-scale erase/rebuild
+observations were approximately 0.60–1.87 seconds with about 2.05–4.42 MiB peak
+traced Python memory. These numbers describe one machine and dataset; they are
+regression observations, not an SLA or a general capacity promise. Run
+`python benchmarks/run_longitudinal.py --adapter both --scenario all` on the
+deployment hardware before choosing budgets.
 
-- **Implemented first slice:** strict lifecycle-backup v1 inspection; deterministic
-  `BackupRequest` and `RestoreRequest` plans; plan JSON round-trip and digest
-  validation; stable logical-data capture for FileStorage while excluding its
-  known runtime locks (`_turn_context_snapshot.lock` and `<64hex>.lock` files
-  below `_turn_locks/`, `_relationship_history_locks/`, and
-  `_relationship_processing_locks/`), plus quiescent SQLite and MemoryPack;
-  verified same-parent staging and atomic publication; restore only
-  to a missing target; exact-plan retries returning `already_complete`; and
-  non-sensitive persistent destination lock files used for cross-process
-  exclusion. Plans bind the destination parent's resolved path and filesystem
-  identity; publication is atomic no-replace. A failed post-publication check
-  preserves the visible target for manual inspection instead of risking the
-  deletion of writes made by another host.
-- **Deliberately not claimed by that slice:** format upgrade, overwrite restore,
-  arbitrary rollback, semantic graph migration validation, and atomic import
-  into an existing online Storage. Inspection, capture and verification also
-  materialize the full payload in process memory; bounded-memory streaming is a
-  later B1 delivery, not a current large-store guarantee.
-- Directory synchronization failures fail closed on POSIX. Windows file bytes
-  are flushed, but CPython has no portable directory-handle flush, so power-loss
-  persistence of the published directory entry remains a host/filesystem
-  responsibility rather than a portable B1.3 guarantee.
-- Cross-process locking coordinates cooperating hosts. B1.3 paths must live in
-  trusted local directories; the lock is not authorization or an adversarial
-  same-host filesystem boundary.
-- freeze real fixtures for v0.3.1 and every relevant v0.4 alpha storage format;
-- preserve full legacy Timeline history; export limits used for display or
-  recall must never truncate backups;
-- create and verify backup manifests before target publication;
-- execute migrations on a staging copy or in one atomic transaction;
-- validate identity, counts, causal references, Unicode ranges, temporal order,
-  authority tiers and artifact commitments before publication;
-- make MemoryPack import globally atomic rather than a sequence of visible
-  partial writes;
-- prove repeated migration, restart and restore are idempotent.
-- replace whole-payload memory materialization with chunked, bounded-memory
-  capture and verification while retaining stable-source detection, canonical
-  manifest commitments and atomic publication.
+## Security and non-goals
 
-### B1.4 — Deletion and deterministic rebuild
+Lifecycle hashes detect corruption and plan drift; they are not signatures,
+MACs or provenance authentication. Storage, packs and backups are plaintext.
+The module assumes a trusted, quiescent host and trusted local parent
+directories. It does not provide user authentication, object authorization,
+encryption, tenant isolation, adversarial same-host filesystem safety, TLS,
+rate limiting or deletion of unregistered external copies. Product deployment
+must add those controls outside the kernel; the planned complete boundary is
+tracked for v0.6.
 
-- support relationship, Source Turn, Relationship Event and complete user-data
-  deletion plans;
-- enumerate authoritative records, derived projections, queue payloads,
-  receipts, backups and external copies affected by the scope;
-- rebuild from remaining append-only authority with the production projector and
-  consolidator Modules, not duplicate algorithms in lifecycle code;
-- return a no-content deletion report separating deleted, rebuilt, delegated and
-  unverified external copies;
-- require exact relationship scope at planning and execution time.
+## Release evidence and change control
 
-### B1.5 — Longitudinal and performance gates
+The b1 acceptance gate includes complete tests on the minimum and maximum supported Python
+versions, Ruff, `compileall`, wheel/sdist builds, clean artifact installation,
+contract snapshots, historical fixtures, lifecycle fault injection and the full
+longitudinal suite. Exact counts can change when a regression test is added, so
+the release claim is “all committed gates pass,” not a hand-maintained test
+count.
 
-- implement the three original synthetic trajectories specified in the roadmap;
-- checkpoint restarts, export/import, duplicate import, positive recall,
-  should-not-answer, cross-relationship leakage, correction and causal growth;
-- measure recall, relationship projection, consolidation, export, import,
-  deletion and rebuild at increasing data sizes;
-- retain small deterministic replays in pull-request CI and run large trajectories
-  in scheduled CI;
-- optimize only after a baseline exists, without changing authoritative history,
-  relationship scope or deterministic output.
+Public Python exports, REST OpenAPI, compatibility catalog and storage/wire
+snapshots are frozen for the v0.4 Beta line. A change that alters an authority
+rule, public field, schema or wire identity must update its own version and
+migration path; it cannot be hidden inside a documentation or patch-only edit.
 
-### B1.6 — Freeze and release closeout
-
-- publish a machine-checked stable root Interface list and classify advanced or
-  internal module paths separately;
-- snapshot REST OpenAPI and supported Storage/MemoryPack contracts;
-- run clean wheel and sdist installation on every required Python/platform lane;
-- close all known P0/P1 data-loss, cross-relationship, duplicate-write and
-  unrecoverable-migration defects;
-- change Package Version from `0.4.0b1.dev0` to `0.4.0b1` only after every exit
-  condition passes.
-
-## Implementation slice record
-
-The current development tree has completed the first B1.1–B1.3 safety loop.
-Its public observable tests prove:
-
-1. missing legacy JSON still yields the documented empty/default state, while
-   malformed FileStorage JSON and malformed SQLite rows fail closed without
-   replacing the original bytes;
-2. `LifecycleInspector` performs read-only inspection of FileStorage, SQLite,
-   MemoryPack and Lifecycle Backup v1, and rejects unknown future formats before
-   constructing nested domain models;
-3. all three live formats can be captured into a strict Lifecycle Backup v1 and
-   restored byte-for-byte to a missing target through the same
-   `inspect → plan → execute` contract;
-4. plans are immutable and serializable, bind source fingerprints and target
-   parent identity, and use a persistent cross-process lock plus atomic
-   no-replace publication;
-5. FileStorage excludes only the exact documented runtime-lock paths; unknown
-   `.lock` files remain payload, while stale `.tmp`, symlink/reparse, hard-link
-   and other non-regular inputs fail closed;
-6. a final verification failure after publication preserves the visible target
-   and reports `published_target_preserved_manual_cleanup_required` instead of
-   deleting the only published copy.
-
-The 2026-08-02 verification snapshot is 474 `unittest` tests with 3 skips and
-471 passing `pytest` tests with 3 skips; Ruff, `compileall`, wheel/sdist builds,
-clean-package import smoke tests and the runnable backup/restore example also
-pass. CI additionally exercises the process-safety lifecycle path on the
-supported Windows lanes.
-
-This record does not claim that B1 is complete. The next slice must add
-historical format fixtures and a real `UpgradeRequest`, followed by migration
-dry-run, protected overwrite recovery and semantic validation. It must not reuse
-byte-preserving restore and call that operation a migration. The current
-implementation also materializes the complete payload in memory, coordinates
-cooperating trusted hosts rather than adversarial same-host writers, and treats
-known unsupported Windows directory-sync errors as best-effort.
+Operational examples and recovery guidance are in
+[`data-lifecycle.md`](data-lifecycle.md). Security boundaries are in
+[`../SECURITY.md`](../SECURITY.md), and format-level support is in
+[`compatibility.md`](compatibility.md).

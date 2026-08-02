@@ -1,10 +1,23 @@
-"""Example 02: 1-Line Custom Callable LLM Adapter Integration.
+"""Example 02: Custom Callable LLM Host Integration.
 
 Demonstrates how to pass any custom LLM function into E.R.I.I. Engine.
 """
 
 import json
-from erii import ERIIEngine
+from erii import ERIIConfig, ERIIEngine
+
+
+if __package__:
+    from ._shared import (
+        CallableJSONMemoryExtractor,
+        record_and_archive_visible_exchange,
+    )
+else:
+    from _shared import (  # type: ignore[import-not-found]
+        CallableJSONMemoryExtractor,
+        record_and_archive_visible_exchange,
+    )
+
 
 def my_custom_llm_function(prompt: str) -> str:
     """Custom LLM function wrapper (e.g. OpenAI, Ollama, vLLM, custom HTTP API)."""
@@ -24,33 +37,47 @@ def my_custom_llm_function(prompt: str) -> str:
     })
 
 def main():
-    # Pass custom function directly to llm parameter!
-    engine = ERIIEngine(
+    # The same callable can serve normal generation and an explicit host extractor.
+    config = ERIIConfig(
         storage_dir="./example_custom_llm_memory",
-        llm=my_custom_llm_function
+        async_archival=False,
     )
+    extractor = CallableJSONMemoryExtractor(my_custom_llm_function)
 
     agent_id = "agent_coder"
     user_id = "user_dev"
 
-    engine.remember(
-        agent_id=agent_id,
-        user_id=user_id,
-        user_message="I always set my editor to dark mode with solarized dark theme.",
-        bot_reply="Dark mode is essential for night coding sessions!"
-    )
-    engine.process_pending()
+    with ERIIEngine(
+        config=config,
+        llm=my_custom_llm_function,
+        memory_extractor=extractor,
+    ) as engine:
+        engine.initialize_relationship(
+            agent_id,
+            user_id,
+            "Coder is a practical assistant who enjoys helping with software tools.",
+        )
+        record_and_archive_visible_exchange(
+            engine,
+            agent_id=agent_id,
+            user_id=user_id,
+            user_message=(
+                "I always set my editor to dark mode with solarized dark theme."
+            ),
+            agent_message="Dark mode is essential for night coding sessions!",
+            turn_id="custom-llm-dark-mode-turn",
+            actor_id="examples.custom-llm-host",
+        )
 
-    context = engine.recall(
-        agent_id=agent_id,
-        user_id=user_id,
-        query="editor theme preference"
-    )
+        context = engine.recall(
+            agent_id=agent_id,
+            user_id=user_id,
+            query="editor theme preference",
+        )
 
-    print("\n--- Recalled Context ---")
-    print(context)
+        print("\n--- Recalled Context ---")
+        print(context)
 
-    engine.close()
 
 if __name__ == "__main__":
     main()

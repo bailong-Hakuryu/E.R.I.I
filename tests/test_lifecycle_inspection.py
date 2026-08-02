@@ -37,11 +37,13 @@ class CompatibilityCatalogTests(unittest.TestCase):
     def test_package_and_data_format_versions_are_independent(self) -> None:
         catalog = COMPATIBILITY_CATALOG
 
-        self.assertEqual(catalog.package_version, "0.4.0b1.dev0")
+        self.assertEqual(catalog.package_version, "0.4.0b1")
         self.assertEqual(catalog.sqlite.current_version, "9")
         self.assertEqual(catalog.file_storage.current_version, "1")
         self.assertEqual(catalog.memory_pack.current_version, "0.4.0a8")
         self.assertEqual(catalog.lifecycle_backup.current_version, "1")
+        self.assertEqual(catalog.lifecycle_plan.current_version, "3")
+        self.assertEqual(catalog.lifecycle_plan.readable_versions, ("1", "2", "3"))
         self.assertEqual(catalog.python_requires, ">=3.11")
         self.assertEqual(catalog.python_tested_through, "3.14")
 

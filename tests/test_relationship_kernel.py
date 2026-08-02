@@ -2,6 +2,7 @@
 
 from contextlib import closing
 import os
+from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from erii import (
     BeliefUpdate,
     ERIIEngine,
     FileStorage,
+    MigrationRequiredError,
     PersonaConflictError,
     RelationshipEventType,
     SQLiteStorage,
@@ -282,7 +284,7 @@ class TestSQLiteRelationshipKernel(RelationshipKernelContract, unittest.TestCase
     def make_storage(self, root_dir):
         return SQLiteStorage(db_path=os.path.join(root_dir, "memory.db"))
 
-    def test_existing_database_is_migrated_without_losing_legacy_memory(self):
+    def test_schema0_database_requires_explicit_upgrade_without_data_loss(self):
         with tempfile.TemporaryDirectory() as root_dir:
             db_path = os.path.join(root_dir, "legacy.db")
             with closing(sqlite3.connect(db_path)) as connection:
@@ -305,16 +307,19 @@ class TestSQLiteRelationshipKernel(RelationshipKernelContract, unittest.TestCase
                     ("agent_lumi", "user_chen", "旧版核心记忆", "2026-07-24 00:00:00"),
                 )
                 connection.commit()
+            before = Path(db_path).read_bytes()
 
-            reopened = SQLiteStorage(db_path=db_path)
-            with ERIIEngine(storage_driver=reopened) as engine:
-                engine.initialize_relationship("agent_lumi", "user_chen", "新的关系人设快照")
+            with self.assertRaisesRegex(MigrationRequiredError, "schema 0"):
+                SQLiteStorage(db_path=db_path)
 
-                self.assertEqual(
-                    reopened.get_core_memory("agent_lumi", "user_chen"),
-                    "旧版核心记忆",
-                )
-                self.assertGreaterEqual(reopened.schema_version, 1)
+            self.assertEqual(Path(db_path).read_bytes(), before)
+            with closing(sqlite3.connect(db_path)) as connection:
+                content = connection.execute(
+                    "SELECT content FROM core_memories "
+                    "WHERE agent_id = ? AND user_id = ?",
+                    ("agent_lumi", "user_chen"),
+                ).fetchone()[0]
+            self.assertEqual(content, "旧版核心记忆")
 
 
 class TestRelationshipPortability(unittest.TestCase):

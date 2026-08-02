@@ -132,11 +132,11 @@ jobs:
       - name: Install package and development tools
         run: python -m pip install -e ".[dev]"
       - name: Static checks
-        run: ruff check erii tests examples
+        run: ruff check erii tests examples benchmarks scripts
       - name: Unit tests
         run: python -m unittest discover -s tests -v
       - name: Compile sources
-        run: python -m compileall -q erii examples tests
+        run: python -m compileall -q erii examples tests benchmarks scripts
 
   package:
     needs: [preflight, verify]
@@ -198,8 +198,39 @@ jobs:
           python -c "import os, tempfile; from fastapi.testclient import TestClient; from erii.server.app import app, configure_engine, configure_server_access; directory = tempfile.TemporaryDirectory(); engine = configure_engine(directory.name); configure_server_access('release-smoke-key-' + 'x' * 32); client = TestClient(app); response = client.get('/api/v1/health'); assert response.status_code == 200, response.text; assert response.json()['version'] == os.environ['RELEASE_VERSION']; client.close(); engine.close(); directory.cleanup()"
           erii --help
 
+  smoke-windows:
+    needs: [preflight, package]
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.11"
+            artifact-pattern: "*.whl"
+          - python-version: "3.14"
+            artifact-pattern: "*.tar.gz"
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist-${{ needs.preflight.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install and verify the immutable artifact on Windows
+        env:
+          ARTIFACT_PATTERN: ${{ matrix.artifact-pattern }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          $artifact = Get-ChildItem -Path dist -Filter $env:ARTIFACT_PATTERN | Select-Object -First 1
+          if ($null -eq $artifact) { throw "release artifact is missing" }
+          $installSpec = "$($artifact.FullName)[server]"
+          python -m pip install $installSpec httpx
+          python -c "import erii, os; assert erii.__version__ == os.environ['RELEASE_VERSION']"
+          erii --help
+
   publish:
-    needs: [preflight, smoke]
+    needs: [preflight, smoke, smoke-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

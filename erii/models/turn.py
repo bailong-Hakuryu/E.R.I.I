@@ -965,6 +965,43 @@ class TurnRecord:
         raise ValueError("unsupported modern delivery disposition")
 
     def to_dict(self) -> Dict[str, Any]:
+        if self.turn_format_version == LEGACY_TURN_RECORD_FORMAT_VERSION:
+            legacy_summary = (
+                self.review_record.legacy_summary
+                if self.review_record is not None
+                else None
+            )
+            return {
+                "turn_id": self.turn_id,
+                "relationship_id": self.relationship_id,
+                "status": self.status.value,
+                "transcript": self.transcript.to_dict(),
+                "interaction_context": [
+                    signal.to_dict() for signal in self.interaction_context
+                ],
+                "source_revision": self.source_revision,
+                "record_version": self.record_version,
+                "opened_at": self.opened_at,
+                "continuity_assessment": (
+                    legacy_summary.to_dict() if legacy_summary is not None else None
+                ),
+                "delivery_disposition": (
+                    self.delivery_disposition.value
+                    if self.delivery_disposition is not None
+                    else None
+                ),
+                "processing_plan": (
+                    self.processing_plan.to_dict()
+                    if self.processing_plan is not None
+                    else None
+                ),
+                "processing_outcomes": [
+                    outcome.to_dict() for outcome in self.processing_outcomes
+                ],
+                "completed_at": self.completed_at,
+                "abandoned_at": self.abandoned_at,
+                "abandonment_reason": self.abandonment_reason,
+            }
         return {
             "turn_id": self.turn_id,
             "relationship_id": self.relationship_id,

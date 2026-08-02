@@ -1,0 +1,143 @@
+{
+  "metadata": {
+    "version": "0.4.0a7",
+    "agent_id": "fixture_agent",
+    "user_id": "fixture_user",
+    "exported_at": "2026-08-02 22:48:25"
+  },
+  "core_memory": "角色记得和用户在雨夜交换过一张手写书签。",
+  "nodes": [],
+  "timeline": [
+    {
+      "timestamp": "2026-07-29 22:10:00+08:00",
+      "content": "我们在雨声里读完了同一篇故事。 ☔"
+    }
+  ],
+  "timeline_entries": [
+    {
+      "timeline_entry_id": "debe2dee-ff49-5f72-81f6-07fd33ba27ef",
+      "relationship_id": "9f6ea411-9ab8-4ed5-b5c1-0e1cc001425c",
+      "agent_id": "fixture_agent",
+      "user_id": "fixture_user",
+      "content": "我们在雨声里读完了同一篇故事。 ☔",
+      "recorded_at": null,
+      "legacy_timestamp": "2026-07-29 22:10:00+08:00",
+      "source_turn_id": null,
+      "source_archival_id": null,
+      "provenance_state": "legacy_unavailable",
+      "extractor_descriptor": null
+    }
+  ],
+  "archival_ledger": [],
+  "relationship": {
+    "relationship_id": "9f6ea411-9ab8-4ed5-b5c1-0e1cc001425c",
+    "persona_id": "2e88734f-8b50-4b4e-a89f-d8d0d3cdb9ba",
+    "agent_identity_id": "f4249d89-2b05-4fb7-ad1f-25a12dc5d84f",
+    "user_identity_id": "5d722b57-e124-4d5f-a91a-0fc7853c7e98",
+    "agent_id": "fixture_agent",
+    "user_id": "fixture_user",
+    "blueprint": {
+      "blueprint_id": "8a88f8f6-31ff-40a4-bddb-241bc9a363a3",
+      "source_text": "An original synthetic character who values patience and honest memory.",
+      "compiled": {},
+      "created_at": "2026-08-02T14:48:25.743338+00:00",
+      "revision": 1,
+      "source_sha256": "6478ab553ecb8486bea8d42691effa23b446515185d70bf201778266a05976f2",
+      "source_format": "text/plain",
+      "source_name": null
+    },
+    "created_at": "2026-08-02T14:48:25.743338+00:00",
+    "premise": {
+      "premise_id": "fresh",
+      "mode": "fresh",
+      "address_name": null,
+      "canonical_role": null,
+      "experiences": [],
+      "baseline_levels": {}
+    },
+    "baseline": {
+      "policy_version": "premise-v1",
+      "premise_mode": "fresh",
+      "qualitative_levels": {
+        "familiarity": "minimal",
+        "trust": "moderate",
+        "intimacy": "minimal",
+        "safety": "moderate",
+        "conflict_tension": "minimal"
+      },
+      "state": {
+        "familiarity": 0.0,
+        "trust": 0.5,
+        "intimacy": 0.0,
+        "safety": 0.5,
+        "conflict_tension": 0.0
+      },
+      "supporting_experience_ids": []
+    },
+    "manifest_id": null
+  },
+  "relationship_events": [
+    {
+      "event_id": "fixture-event-bookmark-a7",
+      "relationship_id": "9f6ea411-9ab8-4ed5-b5c1-0e1cc001425c",
+      "event_type": "shared_experience",
+      "content": "两个人在雨夜交换了手写书签。",
+      "temporal_payload": null,
+      "state_delta": {
+        "familiarity": 0.03
+      },
+      "belief_updates": [],
+      "metadata": {},
+      "occurred_at": "2026-07-29T22:12:00+08:00",
+      "recorded_at": "2026-08-02T14:48:25.767034+00:00"
+    }
+  ],
+  "relationship_direct_event_ids": [
+    "fixture-event-bookmark-a7"
+  ],
+  "relationship_adjudications": [],
+  "persona_growth_proposals": [],
+  "persona_compilation_proposals": [],
+  "persona_manifests": [],
+  "turn_records": [
+    {
+      "turn_id": "fixture-turn-rain-a7",
+      "relationship_id": "9f6ea411-9ab8-4ed5-b5c1-0e1cc001425c",
+      "status": "completed",
+      "transcript": {
+        "user_message": {
+          "message_id": "fixture-turn-rain-a7:user",
+          "role": "user",
+          "content": "这场雨会停吗？",
+          "recorded_at": "2026-08-02T14:48:25.758736+00:00"
+        },
+        "agent_message": {
+          "message_id": "fixture-turn-rain-a7:agent",
+          "role": "agent",
+          "content": "会停，但书签会替我们记得这一页。",
+          "recorded_at": "2026-08-02T14:48:25.758736+00:00"
+        }
+      },
+      "interaction_context": [],
+      "source_revision": "1",
+      "record_version": 1,
+      "opened_at": "2026-08-02T14:48:25.758736+00:00",
+      "continuity_assessment": {
+        "status": "not_evaluated",
+        "evaluator_version": null,
+        "verdict": null
+      },
+      "delivery_disposition": "shown",
+      "processing_plan": {
+        "channels": [],
+        "version": "source-processing-plan/v1"
+      },
+      "processing_outcomes": [],
+      "completed_at": "2026-08-02T14:48:25.758736+00:00",
+      "abandoned_at": null,
+      "abandonment_reason": null
+    }
+  ],
+  "relationship_processing_runs": [],
+  "persona_reflection_decisions": []
+}

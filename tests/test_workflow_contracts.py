@@ -33,9 +33,9 @@ class WorkflowTriggerContractTests(unittest.TestCase):
         )
 
 
-class BetaDevelopmentContractTests(unittest.TestCase):
+class BetaContractTests(unittest.TestCase):
     def test_package_and_memory_pack_versions_have_independent_lifecycles(self) -> None:
-        self.assertEqual(erii.__version__, "0.4.0b1.dev0")
+        self.assertEqual(erii.__version__, "0.4.0b1")
         self.assertEqual(MemoryPack.CURRENT_VERSION, "0.4.0a8")
 
     def test_python_support_contract_is_synchronized(self) -> None:

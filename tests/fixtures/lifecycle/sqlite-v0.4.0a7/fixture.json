@@ -1,0 +1,28 @@
+{
+  "fixture_format": "erii.lifecycle.sqlite-history-fixture",
+  "fixture_version": 1,
+  "producer": {
+    "package_version": "0.4.0a7",
+    "commit": "9693e6a52f6179789c16debf831f95674a1861bd",
+    "schema_version": 6
+  },
+  "database": {
+    "path": "schema6.sqlite3",
+    "size": 286720,
+    "sha256": "509f87e26b72043b3aa535d36b52ba839b2c9d7d44588c9ec529c5ce571255a3",
+    "semantic_digest": "fd2af1d538e20276354d13093b586414e769110c4bf3e942572645b95b067490"
+  },
+  "expected_upgrade": {
+    "schema_version": 9,
+    "semantic_digest": "7b999f32efeb4fbfbae805efd36cd6145a66fc726337b5528bc94916c9c86793"
+  },
+  "data_provenance": {
+    "kind": "synthetic",
+    "contains_user_data": false,
+    "contains_copyrighted_character_content": false,
+    "population_script": "synthetic-data.sql",
+    "relationships": 2,
+    "source_turns": 2,
+    "notes": "The schema was initialized by SQLiteStorage from the recorded commit, then populated only with this fixture's synthetic SQL."
+  }
+}

@@ -1,0 +1,1608 @@
+{
+  "passed": true,
+  "reports": [
+    {
+      "adapter_id": "file-storage/v1",
+      "counts": {
+        "expected_events": 5,
+        "expected_growth_proposals": 0,
+        "observed_events": 5,
+        "observed_growth_proposals": 0,
+        "ordinary_zero_artifact_turns": 123,
+        "restarts": 2,
+        "retries": 2,
+        "turns": 128
+      },
+      "final_observation_digest": "3f1d2b00a075e91fb8d10ba4901cef91597324943e5ae5f01bc263dc9441f2dd",
+      "metrics": [
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_memory_leaks",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_state_cross_talk",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "ungrounded_authority_writes",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "authority_acceptance_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "turn_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "event_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "decision_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "reflection_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_count_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "correction_projection_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "restart_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "retry_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_duplicate_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_positive_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_negative_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "peak_python_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_peak_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_verification_failures",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "performance": {
+        "lifecycle_operations": [
+          {
+            "elapsed_ms": 1237.05,
+            "final_storage_size_bytes": 16524,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "erase",
+            "passed": true,
+            "peak_python_memory_bytes": 2312782,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 1,
+            "scale_unit": "relationships",
+            "verified": true
+          },
+          {
+            "elapsed_ms": 1374.427,
+            "final_storage_size_bytes": 258724,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "rebuild",
+            "passed": true,
+            "peak_python_memory_bytes": 2236671,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 1,
+            "scale_unit": "relationships",
+            "verified": true
+          }
+        ],
+        "observations": [
+          {
+            "elapsed_ms": 4475.688,
+            "maximum_ms": 180000.0,
+            "operation": "turn_projection",
+            "passed": true,
+            "scale_count": 128,
+            "scale_unit": "turns"
+          },
+          {
+            "elapsed_ms": 31.299,
+            "maximum_ms": 60000.0,
+            "operation": "export",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 748.866,
+            "maximum_ms": 60000.0,
+            "operation": "import",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 227.786,
+            "maximum_ms": 60000.0,
+            "operation": "duplicate_import",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          }
+        ],
+        "resources": {
+          "final_storage_size_bytes": 258683,
+          "final_storage_size_maximum_bytes": 2147483648,
+          "peak_python_memory_bytes": 1045789,
+          "peak_python_memory_maximum_bytes": 1073741824
+        },
+        "scale": {
+          "events": 5,
+          "growth_proposals": 0,
+          "relationships": 1,
+          "turns": 128
+        },
+        "tier": "full"
+      },
+      "portability": {
+        "duplicate_imports": 1,
+        "exports": 1,
+        "fresh_imports": 1,
+        "observation_digest": "3f1d2b00a075e91fb8d10ba4901cef91597324943e5ae5f01bc263dc9441f2dd",
+        "target_adapter_id": "sqlite/v9"
+      },
+      "report_digest": "3de452ce90104d81b5c52fd70fa88aa8d03c2dc77b8beecb9e139920d7cc9607",
+      "report_version": "longitudinal-eval-report/v1",
+      "scenario_fingerprint": "77b509e62c4e170963ec8d769dec0802efddef9f74f3ab25cc7b5cc5ad563d57",
+      "scenario_id": "single-relationship-128/v1",
+      "structured_recall": {
+        "expected_matches": 2,
+        "forbidden_matches": 0,
+        "positive_matches": 2,
+        "probes": 2
+      }
+    },
+    {
+      "adapter_id": "sqlite/v9",
+      "counts": {
+        "expected_events": 5,
+        "expected_growth_proposals": 0,
+        "observed_events": 5,
+        "observed_growth_proposals": 0,
+        "ordinary_zero_artifact_turns": 123,
+        "restarts": 2,
+        "retries": 2,
+        "turns": 128
+      },
+      "final_observation_digest": "3f1d2b00a075e91fb8d10ba4901cef91597324943e5ae5f01bc263dc9441f2dd",
+      "metrics": [
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_memory_leaks",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_state_cross_talk",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "ungrounded_authority_writes",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "authority_acceptance_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "turn_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "event_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "decision_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "reflection_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_count_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "correction_projection_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "restart_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "retry_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_duplicate_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_positive_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_negative_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "peak_python_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_peak_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_verification_failures",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "performance": {
+        "lifecycle_operations": [
+          {
+            "elapsed_ms": 646.856,
+            "final_storage_size_bytes": 606208,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "erase",
+            "passed": true,
+            "peak_python_memory_bytes": 4417284,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 1,
+            "scale_unit": "relationships",
+            "verified": true
+          },
+          {
+            "elapsed_ms": 602.973,
+            "final_storage_size_bytes": 606208,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "rebuild",
+            "passed": true,
+            "peak_python_memory_bytes": 4424191,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 1,
+            "scale_unit": "relationships",
+            "verified": true
+          }
+        ],
+        "observations": [
+          {
+            "elapsed_ms": 2311.8,
+            "maximum_ms": 180000.0,
+            "operation": "turn_projection",
+            "passed": true,
+            "scale_count": 128,
+            "scale_unit": "turns"
+          },
+          {
+            "elapsed_ms": 48.102,
+            "maximum_ms": 60000.0,
+            "operation": "export",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 3035.434,
+            "maximum_ms": 60000.0,
+            "operation": "import",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 553.134,
+            "maximum_ms": 60000.0,
+            "operation": "duplicate_import",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          }
+        ],
+        "resources": {
+          "final_storage_size_bytes": 606208,
+          "final_storage_size_maximum_bytes": 2147483648,
+          "peak_python_memory_bytes": 1239385,
+          "peak_python_memory_maximum_bytes": 1073741824
+        },
+        "scale": {
+          "events": 5,
+          "growth_proposals": 0,
+          "relationships": 1,
+          "turns": 128
+        },
+        "tier": "full"
+      },
+      "portability": {
+        "duplicate_imports": 1,
+        "exports": 1,
+        "fresh_imports": 1,
+        "observation_digest": "3f1d2b00a075e91fb8d10ba4901cef91597324943e5ae5f01bc263dc9441f2dd",
+        "target_adapter_id": "file-storage/v1"
+      },
+      "report_digest": "a28055b863e9706a899b50e1b2b010fecd163345b723302126280b39b892299b",
+      "report_version": "longitudinal-eval-report/v1",
+      "scenario_fingerprint": "77b509e62c4e170963ec8d769dec0802efddef9f74f3ab25cc7b5cc5ad563d57",
+      "scenario_id": "single-relationship-128/v1",
+      "structured_recall": {
+        "expected_matches": 2,
+        "forbidden_matches": 0,
+        "positive_matches": 2,
+        "probes": 2
+      }
+    },
+    {
+      "adapter_id": "file-storage/v1",
+      "counts": {
+        "expected_events": 6,
+        "expected_growth_proposals": 0,
+        "observed_events": 6,
+        "observed_growth_proposals": 0,
+        "ordinary_zero_artifact_turns": 138,
+        "restarts": 2,
+        "retries": 2,
+        "turns": 144
+      },
+      "final_observation_digest": "90d9932acbd2abaa4f1ec90af67ee31066294906c2745cb579133324baf5169c",
+      "metrics": [
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_memory_leaks",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_state_cross_talk",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "ungrounded_authority_writes",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "authority_acceptance_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "turn_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "event_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "decision_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "reflection_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_count_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "correction_projection_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "restart_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "retry_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_duplicate_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_positive_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_negative_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "peak_python_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_peak_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_verification_failures",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "performance": {
+        "lifecycle_operations": [
+          {
+            "elapsed_ms": 1774.923,
+            "final_storage_size_bytes": 156557,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "erase",
+            "passed": true,
+            "peak_python_memory_bytes": 2195730,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 2,
+            "scale_unit": "relationships",
+            "verified": true
+          },
+          {
+            "elapsed_ms": 1869.568,
+            "final_storage_size_bytes": 296203,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "rebuild",
+            "passed": true,
+            "peak_python_memory_bytes": 2214359,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 2,
+            "scale_unit": "relationships",
+            "verified": true
+          }
+        ],
+        "observations": [
+          {
+            "elapsed_ms": 3983.653,
+            "maximum_ms": 180000.0,
+            "operation": "turn_projection",
+            "passed": true,
+            "scale_count": 144,
+            "scale_unit": "turns"
+          },
+          {
+            "elapsed_ms": 32.148,
+            "maximum_ms": 60000.0,
+            "operation": "export",
+            "passed": true,
+            "scale_count": 2,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 849.059,
+            "maximum_ms": 60000.0,
+            "operation": "import",
+            "passed": true,
+            "scale_count": 2,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 334.947,
+            "maximum_ms": 60000.0,
+            "operation": "duplicate_import",
+            "passed": true,
+            "scale_count": 2,
+            "scale_unit": "relationships"
+          }
+        ],
+        "resources": {
+          "final_storage_size_bytes": 296163,
+          "final_storage_size_maximum_bytes": 2147483648,
+          "peak_python_memory_bytes": 1044325,
+          "peak_python_memory_maximum_bytes": 1073741824
+        },
+        "scale": {
+          "events": 6,
+          "growth_proposals": 0,
+          "relationships": 2,
+          "turns": 144
+        },
+        "tier": "full"
+      },
+      "portability": {
+        "duplicate_imports": 2,
+        "exports": 2,
+        "fresh_imports": 2,
+        "observation_digest": "90d9932acbd2abaa4f1ec90af67ee31066294906c2745cb579133324baf5169c",
+        "target_adapter_id": "sqlite/v9"
+      },
+      "report_digest": "604ddc4f7bcdd60ff88c2d1ce6f7750b9f6bdfb586198258d123cfb89815a4c6",
+      "report_version": "longitudinal-eval-report/v1",
+      "scenario_fingerprint": "5eb6e39eee61d0f2a29d936fb3fb96bd623081519802ec68836ccbab74b67d92",
+      "scenario_id": "interleaved-two-by-72/v1",
+      "structured_recall": {
+        "expected_matches": 2,
+        "forbidden_matches": 0,
+        "positive_matches": 2,
+        "probes": 2
+      }
+    },
+    {
+      "adapter_id": "sqlite/v9",
+      "counts": {
+        "expected_events": 6,
+        "expected_growth_proposals": 0,
+        "observed_events": 6,
+        "observed_growth_proposals": 0,
+        "ordinary_zero_artifact_turns": 138,
+        "restarts": 2,
+        "retries": 2,
+        "turns": 144
+      },
+      "final_observation_digest": "90d9932acbd2abaa4f1ec90af67ee31066294906c2745cb579133324baf5169c",
+      "metrics": [
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_memory_leaks",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_state_cross_talk",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "ungrounded_authority_writes",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "authority_acceptance_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "turn_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "event_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "decision_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "reflection_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_count_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "correction_projection_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "restart_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "retry_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_duplicate_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_positive_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_negative_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "peak_python_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_peak_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_verification_failures",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "performance": {
+        "lifecycle_operations": [
+          {
+            "elapsed_ms": 739.75,
+            "final_storage_size_bytes": 647168,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "erase",
+            "passed": true,
+            "peak_python_memory_bytes": 3594445,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 2,
+            "scale_unit": "relationships",
+            "verified": true
+          },
+          {
+            "elapsed_ms": 713.141,
+            "final_storage_size_bytes": 647168,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "rebuild",
+            "passed": true,
+            "peak_python_memory_bytes": 3625533,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 2,
+            "scale_unit": "relationships",
+            "verified": true
+          }
+        ],
+        "observations": [
+          {
+            "elapsed_ms": 2988.574,
+            "maximum_ms": 180000.0,
+            "operation": "turn_projection",
+            "passed": true,
+            "scale_count": 144,
+            "scale_unit": "turns"
+          },
+          {
+            "elapsed_ms": 79.269,
+            "maximum_ms": 60000.0,
+            "operation": "export",
+            "passed": true,
+            "scale_count": 2,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 2582.652,
+            "maximum_ms": 60000.0,
+            "operation": "import",
+            "passed": true,
+            "scale_count": 2,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 424.22,
+            "maximum_ms": 60000.0,
+            "operation": "duplicate_import",
+            "passed": true,
+            "scale_count": 2,
+            "scale_unit": "relationships"
+          }
+        ],
+        "resources": {
+          "final_storage_size_bytes": 647168,
+          "final_storage_size_maximum_bytes": 2147483648,
+          "peak_python_memory_bytes": 1104719,
+          "peak_python_memory_maximum_bytes": 1073741824
+        },
+        "scale": {
+          "events": 6,
+          "growth_proposals": 0,
+          "relationships": 2,
+          "turns": 144
+        },
+        "tier": "full"
+      },
+      "portability": {
+        "duplicate_imports": 2,
+        "exports": 2,
+        "fresh_imports": 2,
+        "observation_digest": "90d9932acbd2abaa4f1ec90af67ee31066294906c2745cb579133324baf5169c",
+        "target_adapter_id": "file-storage/v1"
+      },
+      "report_digest": "eea4b985fa19a02641c2785866db3fc468013a4de202d59a97795ccc98145313",
+      "report_version": "longitudinal-eval-report/v1",
+      "scenario_fingerprint": "5eb6e39eee61d0f2a29d936fb3fb96bd623081519802ec68836ccbab74b67d92",
+      "scenario_id": "interleaved-two-by-72/v1",
+      "structured_recall": {
+        "expected_matches": 2,
+        "forbidden_matches": 0,
+        "positive_matches": 2,
+        "probes": 2
+      }
+    },
+    {
+      "adapter_id": "file-storage/v1",
+      "counts": {
+        "expected_events": 6,
+        "expected_growth_proposals": 1,
+        "observed_events": 6,
+        "observed_growth_proposals": 1,
+        "ordinary_zero_artifact_turns": 113,
+        "restarts": 2,
+        "retries": 2,
+        "turns": 120
+      },
+      "final_observation_digest": "bd02035c6468b8d0003db306685e95ceaa90f8a50540717d0c13d253fd8ac350",
+      "metrics": [
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_memory_leaks",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_state_cross_talk",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "ungrounded_authority_writes",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "authority_acceptance_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "turn_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "event_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "decision_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "reflection_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_count_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "correction_projection_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "restart_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "retry_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_duplicate_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_positive_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_negative_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "peak_python_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_peak_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_verification_failures",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "performance": {
+        "lifecycle_operations": [
+          {
+            "elapsed_ms": 1580.781,
+            "final_storage_size_bytes": 16524,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "erase",
+            "passed": true,
+            "peak_python_memory_bytes": 2057161,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 1,
+            "scale_unit": "relationships",
+            "verified": true
+          },
+          {
+            "elapsed_ms": 1759.472,
+            "final_storage_size_bytes": 251929,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "rebuild",
+            "passed": true,
+            "peak_python_memory_bytes": 2084651,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 1,
+            "scale_unit": "relationships",
+            "verified": true
+          }
+        ],
+        "observations": [
+          {
+            "elapsed_ms": 4264.444,
+            "maximum_ms": 180000.0,
+            "operation": "turn_projection",
+            "passed": true,
+            "scale_count": 120,
+            "scale_unit": "turns"
+          },
+          {
+            "elapsed_ms": 24.613,
+            "maximum_ms": 60000.0,
+            "operation": "export",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 708.396,
+            "maximum_ms": 60000.0,
+            "operation": "import",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 266.015,
+            "maximum_ms": 60000.0,
+            "operation": "duplicate_import",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          }
+        ],
+        "resources": {
+          "final_storage_size_bytes": 251888,
+          "final_storage_size_maximum_bytes": 2147483648,
+          "peak_python_memory_bytes": 975309,
+          "peak_python_memory_maximum_bytes": 1073741824
+        },
+        "scale": {
+          "events": 6,
+          "growth_proposals": 1,
+          "relationships": 1,
+          "turns": 120
+        },
+        "tier": "full"
+      },
+      "portability": {
+        "duplicate_imports": 1,
+        "exports": 1,
+        "fresh_imports": 1,
+        "observation_digest": "bd02035c6468b8d0003db306685e95ceaa90f8a50540717d0c13d253fd8ac350",
+        "target_adapter_id": "sqlite/v9"
+      },
+      "report_digest": "48a35417d68259779852412af29c572790403ccee527236592a6ba1931cd57ac",
+      "report_version": "longitudinal-eval-report/v1",
+      "scenario_fingerprint": "c9e6452036fdec62593a9163711a6011a793d34977e8d8e7aff429d5ad82ccd1",
+      "scenario_id": "correction-conflict-growth-120/v1",
+      "structured_recall": {
+        "expected_matches": 2,
+        "forbidden_matches": 0,
+        "positive_matches": 2,
+        "probes": 2
+      }
+    },
+    {
+      "adapter_id": "sqlite/v9",
+      "counts": {
+        "expected_events": 6,
+        "expected_growth_proposals": 1,
+        "observed_events": 6,
+        "observed_growth_proposals": 1,
+        "ordinary_zero_artifact_turns": 113,
+        "restarts": 2,
+        "retries": 2,
+        "turns": 120
+      },
+      "final_observation_digest": "bd02035c6468b8d0003db306685e95ceaa90f8a50540717d0c13d253fd8ac350",
+      "metrics": [
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_memory_leaks",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "relationship_state_cross_talk",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "ungrounded_authority_writes",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "authority_acceptance_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "turn_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "event_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "decision_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_identity_mismatches",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "reflection_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "growth_count_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "correction_projection_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "restart_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "retry_idempotency_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "portability_duplicate_import_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_positive_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_negative_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "structured_recall_provenance_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "peak_python_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_performance_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_peak_memory_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_storage_size_ceiling_failures",
+          "passed": true
+        },
+        {
+          "failures": 0,
+          "maximum": 0,
+          "name": "lifecycle_verification_failures",
+          "passed": true
+        }
+      ],
+      "passed": true,
+      "performance": {
+        "lifecycle_operations": [
+          {
+            "elapsed_ms": 670.508,
+            "final_storage_size_bytes": 593920,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "erase",
+            "passed": true,
+            "peak_python_memory_bytes": 3375896,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 1,
+            "scale_unit": "relationships",
+            "verified": true
+          },
+          {
+            "elapsed_ms": 735.19,
+            "final_storage_size_bytes": 593920,
+            "final_storage_size_maximum_bytes": 2147483648,
+            "maximum_ms": 240000.0,
+            "operation": "rebuild",
+            "passed": true,
+            "peak_python_memory_bytes": 3400138,
+            "peak_python_memory_maximum_bytes": 1073741824,
+            "scale_count": 1,
+            "scale_unit": "relationships",
+            "verified": true
+          }
+        ],
+        "observations": [
+          {
+            "elapsed_ms": 2667.019,
+            "maximum_ms": 180000.0,
+            "operation": "turn_projection",
+            "passed": true,
+            "scale_count": 120,
+            "scale_unit": "turns"
+          },
+          {
+            "elapsed_ms": 53.157,
+            "maximum_ms": 60000.0,
+            "operation": "export",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 3035.716,
+            "maximum_ms": 60000.0,
+            "operation": "import",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          },
+          {
+            "elapsed_ms": 598.781,
+            "maximum_ms": 60000.0,
+            "operation": "duplicate_import",
+            "passed": true,
+            "scale_count": 1,
+            "scale_unit": "relationships"
+          }
+        ],
+        "resources": {
+          "final_storage_size_bytes": 593920,
+          "final_storage_size_maximum_bytes": 2147483648,
+          "peak_python_memory_bytes": 1198149,
+          "peak_python_memory_maximum_bytes": 1073741824
+        },
+        "scale": {
+          "events": 6,
+          "growth_proposals": 1,
+          "relationships": 1,
+          "turns": 120
+        },
+        "tier": "full"
+      },
+      "portability": {
+        "duplicate_imports": 1,
+        "exports": 1,
+        "fresh_imports": 1,
+        "observation_digest": "bd02035c6468b8d0003db306685e95ceaa90f8a50540717d0c13d253fd8ac350",
+        "target_adapter_id": "file-storage/v1"
+      },
+      "report_digest": "f8977ab7d7e53cd4208b7a625dfabf5df4e796b055733be21ef566dfb15953c2",
+      "report_version": "longitudinal-eval-report/v1",
+      "scenario_fingerprint": "c9e6452036fdec62593a9163711a6011a793d34977e8d8e7aff429d5ad82ccd1",
+      "scenario_id": "correction-conflict-growth-120/v1",
+      "structured_recall": {
+        "expected_matches": 2,
+        "forbidden_matches": 0,
+        "positive_matches": 2,
+        "probes": 2
+      }
+    }
+  ],
+  "suite_version": "longitudinal-eval-suite/v1"
+}

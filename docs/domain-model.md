@@ -1,6 +1,10 @@
 # E.R.I.I. Domain Model
 
-本文记录 `0.4.0a8` 已实现的角色连续性与长期记忆领域结构。术语定义以根目录的 [`CONTEXT.md`](../CONTEXT.md) 为准；本文说明各层的权威关系与运行顺序。
+本文记录截至 2026-08-03 等待最终验收的 `0.4.0b1` 候选所实现的角色连续性、长期
+记忆与数据生命周期结构；最新不可移动发布仍是 `0.4.0a8`。角色领域语义仍以 a8
+已冻结能力为基础；b1 候选增加的是迁移、删除、重建和长期验证，不把 v0.5 的关系
+后果/内在审视规划冒充为已交付。术语定义以根目录的
+[`CONTEXT.md`](../CONTEXT.md) 为准；本文说明各层的权威关系与运行顺序。
 
 ## 一条不可跨越的关系边界
 
@@ -129,7 +133,12 @@ Agent-private Markdown 分别渲染 `Verified Memories` 与 `Legacy Context - pr
 
 ## Storage 与 MemoryPack
 
-FileStorage 与 SQLiteStorage 遵循相同的关系隔离、事件追加、处理运行、反思决定与幂等语义。SQLite `0.4.0a8` 使用 Schema v9；v7-v9 为最近 Timeline 增加有界读取、规范 UTC 排序键和稳定的等时刻顺序。旧数据库在打开时原地迁移，升级 alpha 前仍应保留备份。
+FileStorage 与 SQLiteStorage 遵循相同的关系隔离、事件追加、处理运行、反思决定与
+幂等语义。b1 候选的当前身份分别是 FileStorage format v1 与 SQLite schema v9；
+SQLite v7-v9 为最近 Timeline 增加有界读取、规范 UTC 排序键和稳定的等时刻顺序。
+旧 SQLite 不再在 Storage 构造时静默原地迁移，而是显式失败。生命周期只验证
+schema `6 → 9` 的 backup-first、并排升级；其他可识别旧 schema 不因能够 inspect
+就自动获得升级承诺。
 
 MemoryPack `0.4.0a8` 携带规范 Source Turn、现代审查/交付记录、归档 Artifact Evidence 与 tombstone commitments、Relationship Event、direct-event journal 顺序、Persona Reflection 与全部持久 Relationship Processing Run，包括冻结候选、候选级隔离回执、可恢复的非终态/partial 阶段和裁决日志高水位。现代 schema `"2"` 产物要求 Pack 同时包含精确 Source Turn 依赖闭包，以及匹配其类型、稳定 ID 和重新计算的规范载荷 SHA-256 commitment；导入必须在首次写入前重算产物指纹、消息角色、内容哈希、Unicode 范围与 Evidence ID。
 
@@ -138,3 +147,15 @@ MemoryPack `0.4.0a8` 携带规范 Source Turn、现代审查/交付记录、归�
 导出、精确身份导入和在线处理共用关系处理 guard；导入只在两本 journal 的队首之间解析因果依赖，因而保留各自 FIFO。写入普通记忆字段前，内核会核验完整不可变 Relationship/Blueprint 身份、精确 Source Turn、Timeline 稳定 ID、规范 run 身份/版本、两本 journal 的前缀兼容与合并时间生命周期，并按冻结 prefix 使用生产裁决器重放四种结果；Reflection Provenance 还必须在目标与 incoming 的合并裁决历史中保持唯一 accepted 来源，并继续匹配 Evidence、Baseline、关系绑定 Manifest、Approved Growth 与真正先前历史。run 不复制完整 Prompt、人设或 Source Transcript；Episode 与 Relationship Chapter 也不导出。包含这些关系来源的 Pack 只能恢复到原来的 `Agent × User` 与 `relationship_id`；`overwrite=True` 也不是跨关系搬运许可。a7 及更早 Pack 继续可读，但缺失的消息级来源、现代审查状态或权威层级不会被推测补造。
 
 FileStorage、SQLiteStorage 与 MemoryPack 都不是认证、授权、加密或多租户安全边界。Pack 内的未加密 contract 标签、commitment 与指纹只证明当前数据彼此可重算、自洽，不能证明文件来自可信导出者；攻击者若能整体改写 Pack，也能删除 Turn、同步降级相关记录并重算高水位与指纹。正式服务必须由宿主在内核外实现签名或 MAC、加密、授权、密钥管理与租户隔离。
+
+## Data Lifecycle 是运维边界，不是新的人格权威
+
+`DataLifecycleCoordinator` 以 `inspect → plan → execute` 统一备份、缺失目标恢复、
+并排升级、fresh MemoryPack 导入、四范围删除和关系投影重建。Plan writer 是 v3，
+reader 严格接受 v1–v3；fresh import 只发布到不存在的全新 FileStorage v1 或 SQLite
+v9，不能合并到在线/已有目标。Plan 绑定来源身份、策略、目标和 selector；Report
+只包含 ID、摘要、计数和 disposition，不复制正文。
+
+删除 Source Turn 或 Relationship Event 时，内核会一并删除依赖该权威来源的处理运行、裁决、反思、成长/归档产物，并从仍有效的权威事件历史重建 Current Belief、Relationship State、State Reason、Episode 与 Chapter。重建不会从剩余对话猜测新事件；删除派生投影也不能反向删除仍有效权威历史。
+
+删除是 backup-first，所以“live store 已验证删除”不等于“所有副本已消失”。预删除 Lifecycle Backup、外部 Vector Store、已导出 Pack、复制数据库、日志和远端服务属于单独留存边界，并以报告中的 `delegated` / `unverified_external` 明示。详细流程见 [`data-lifecycle.md`](data-lifecycle.md)。

@@ -1,0 +1,30 @@
+{
+  "fixture_contract": "1",
+  "storage_kind": "file_storage",
+  "producer": {
+    "package_version": "0.3.1",
+    "commit": "b2cae61663c8612cb804ce16a358a192d3dd6d53",
+    "interface": "erii.FileStorage"
+  },
+  "data_classification": "synthetic_non_user_data",
+  "expected_inspection": {
+    "format_id": "erii.file-storage",
+    "detected_version": "legacy",
+    "target_version": "1",
+    "file_count": 3
+  },
+  "source_files": [
+    {
+      "path": "fixture_agent_3074860a/fixture_user_47a7552d/core_memory.json",
+      "sha256": "8ca3eefedc7f5b60873d010e8dcbc9582607b288fe1f046e5d2db2fbec0b0610"
+    },
+    {
+      "path": "fixture_agent_3074860a/fixture_user_47a7552d/nodes.json",
+      "sha256": "e2fd064c25f37b43a236a76e0681d1aba7bef37ca764679e7e5989d4ce74e369"
+    },
+    {
+      "path": "fixture_agent_3074860a/fixture_user_47a7552d/timeline.json",
+      "sha256": "febe52b44dbb0d9c94f6df3a323e3ea3e0f320a6d705f85f292da6099099a222"
+    }
+  ]
+}

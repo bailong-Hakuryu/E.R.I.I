@@ -2,7 +2,9 @@
 
 **简体中文** · [English](USAGE.md)
 
-> 本手册跟随当前 `main`，其开发身份为 `0.4.0b1.dev0`。最新不可移动发布仍是 `v0.4.0a8`；如需该版本的精确 Python 与兼容契约，请阅读对应标签中的文档。两者都不应未经加固直接承担公开生产服务。
+> 本手册描述 `0.4.0b1` 源码树。在真正创建 `v0.4.0b1` 标签和 prerelease 之前，
+> GitHub 上最新不可移动发布仍是 `v0.4.0a8`；该版本的 Python 3.9 和兼容契约以
+> 标签内文档为准。两者都不是可直接公开部署的完整产品安全边界。
 
 E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长期记忆内核。它不负责生成聊天回复，也不绑定某一种模型；它负责保存角色与某个用户共同经历过什么、当前如何理解这些经历，以及哪些承诺和未完成事项仍值得被想起。
 
@@ -10,7 +12,7 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 
 ## 目录
 
-[开始路径](#你应该从哪条路径开始) · [安装](#安装) · [Beta 数据检查、备份与恢复](#beta-数据检查备份与恢复) · [当前限制](#当前限制)
+[开始路径](#你应该从哪条路径开始) · [安装](#安装) · [Beta 数据生命周期](#beta-数据生命周期) · [当前限制](#当前限制)
 
 ## 先理解四条规则
 
@@ -32,30 +34,36 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 | --- | --- |
 | 持久保存一轮实际可见的用户/Agent 交互，并给它稳定来源身份 | `begin_turn()` → `complete_turn()`，或原子的 `record_turn()` |
 | 从这轮交互可靠派生 MemoryNode 与结构化 Timeline | 配置 `MemoryExtractorV1` → `archive_turn()` → `process_pending()` / `drain()` |
-| 只想保存对话并召回一段 Prompt 上下文 | `remember()` → `process_pending()` → `recall()` |
+| 从规范对话可靠生成记忆并召回 Prompt 上下文 | Turn Recording → `archive_turn()` → `process_pending()` / `drain()` → `recall()` |
 | 需要独立的人设与用户关系 | `initialize_relationship()` → 关系事件 → `recall_structured()`；初期用 `full`，或先批准 Manifest |
 | 从 completed Turn 自动派生关系事件与人格反思 | 配置 `RelationshipEventExtractorV1` / `PersonaReflectionInterpreterV1` → `process_relationship_turn()` |
-| 为测试、纠错工具或高级流程手工提交关系候选 | `adjudicate_relationship_candidates()` |
+| 为测试、纠错工具或高级流程手工提交关系候选 | 保存 completed Turn → `adjudicate_turn_candidates()` |
 | 需要保存承诺或未完成事项 | `record_promise()` / `record_open_loop()` |
-| 需要搬家、备份或让用户带走数据 | `export_memory()` / `import_memory()` |
+| 需要备份、升级、删除、重建或 fresh import | `DataLifecycleCoordinator.inspect()` → `plan()` → `execute()` |
+| 需要让一段关系在宿主之间携带 | `export_memory()` / `import_memory()`；原子缺失目标导入使用 lifecycle fresh import |
 | 非 Python 宿主 | REST 参考服务，或自行封装 Python API |
 
-实际产品通常会组合使用这些路径：Turn Record 保存规范来源原文，旧式 MemoryNode 保存可检索印象，关系内核保存经过裁决的共同历史和当前关系投影。
+实际产品通常组合使用 Turn Recording、可靠归档和关系处理。已弃用的
+`remember()` 与 transient `adjudicate_relationship_candidates()` 在 b1 会发出
+`DeprecationWarning`，计划于 v0.5 删除。
 
 ## 安装
 
 ### 环境要求
 
-- 当前 `main` 要求 Python 3.11+，CI 验证最低版本 3.11 与当前最新稳定版本 3.14，并额外运行 Windows 存储冒烟；不可移动的 `v0.4.0a8` 是最后一个承诺支持 Python 3.9 的版本；
+- `0.4.0b1` 要求 Python 3.11+，CI 验证 3.11 与 3.14，并额外运行 Windows
+  存储和构建产物安装测试；不可移动的 `v0.4.0a8` 是最后一个承诺支持 Python 3.9
+  的版本；
 - 基础安装只依赖 Pydantic；
 - SQLite 使用 Python 标准库，无需单独安装数据库服务。
 
 ### 从 GitHub 安装当前版本
 
-请从不可移动的发布标签安装当前 alpha prerelease，避免后续 `main` 分支进入新版本后悄悄改变部署内容：
+如需当前 b1 源码，先克隆仓库；长期部署必须固定经过验证的 commit。真正发布不可移动
+`v0.4.0b1` 标签后，应优先从该标签安装：
 
 ```bash
-git clone --branch v0.4.0a8 --depth 1 https://github.com/bailong-Hakuryu/E.R.I.I.git
+git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
 cd E.R.I.I
 
 python -m venv .venv
@@ -99,9 +107,10 @@ python -m pip install -e ".[dev]"
 python -c "import erii; print(erii.__version__)"
 ```
 
-应输出 `0.4.0a8`。
+当前 b1 源码应输出 `0.4.0b1`。
 
-alpha 阶段用于长期环境时，应固定一个经过验证的 commit 或 release，不要让部署脚本无条件跟随 `main`。
+长期环境应固定经过验证的 commit 或不可移动 release，不要让部署脚本无条件跟随
+`main`。
 
 ## 十分钟跑通
 
@@ -719,7 +728,9 @@ MemoryPack `0.4.0a8` 携带的可靠归档部分包括：
 
 ### 旧 `remember()` 继续兼容
 
-`remember()` 仍支持既有 `llm=` / `BaseLLMAdapter` 集成和旧持久任务队列，但它不会创建规范 Turn Record、可靠回执、结构化来源或 a6 原子归档批次。新集成应采用：
+`remember()` 仍支持既有 `llm=` / `BaseLLMAdapter` 集成和旧持久任务队列，但 b1
+会发出 `DeprecationWarning`，并计划在 v0.5 删除这个 Python 入口。它不会创建规范
+Turn Record、可靠回执、结构化来源或现代原子归档批次。新集成应采用：
 
 ```text
 record_turn()（或 begin_turn() → complete_turn()）→ archive_turn()
@@ -1387,7 +1398,10 @@ result = engine.recall_structured(
 
 ## 保存普通对话记忆
 
-`remember()` 是从一轮交互提取普通可检索 MemoryNode 的兼容入口，它会创建持久归档任务：
+本节只用于迁移旧集成。`remember()` 在 b1 发出 `DeprecationWarning`，计划于 v0.5
+删除。新接入必须使用规范 Turn Recording 和
+[可靠归档](#可靠归档从-source-turn-生成长期记忆)中的
+`MemoryExtractorV1` / `archive_turn()` 流程。旧调用会创建持久归档任务：
 
 ```python
 engine.remember(
@@ -1821,7 +1835,7 @@ with ERIIEngine(storage_dir="./data/erii-memory") as engine:
 
 `0.4.0a7` 的关系处理运行、显式零产物决定、正式人格反思与最小来源也受同一个关系级文件锁保护。不同 FileStorage 实例并发追加时不会相互覆盖关系历史。
 
-从 `0.4.0b1.dev0` 开始，旧式 `nodes.json`、`core_memory.json` 与 `timeline.json` 也通过 flush、fsync 和原子替换写入。文件不存在仍保留原有的空值/默认语义；但 JSON 损坏、记录非法或读取失败会抛出 `StorageIntegrityError`，不再伪装成“没有数据”。发布失败会抛出 `StorageWriteError`，此前有效文件保持不变。不要捕获这些错误后立即写入空集合；应保留现场，交给检查或后续显式迁移/恢复工具处理。
+从 `0.4.0b1` 开始，旧式 `nodes.json`、`core_memory.json` 与 `timeline.json` 也通过 flush、fsync 和原子替换写入。文件不存在仍保留原有的空值/默认语义；但 JSON 损坏、记录非法或读取失败会抛出 `StorageIntegrityError`，不再伪装成“没有数据”。发布失败会抛出 `StorageWriteError`，此前有效文件保持不变。不要捕获这些错误后立即写入空集合；应保留现场，交给检查或后续显式迁移/恢复工具处理。
 
 ### SQLiteStorage
 
@@ -1847,15 +1861,19 @@ with ERIIEngine(storage_driver=storage) as engine:
 
 `0.4.0a7` 会把 Schema v5 迁移到 v6，增加持久 Relationship Processing Run、反思决定和正式反思记录。既有事件与旧 metadata 原样保留，并继续由兼容路径只读；不会把它们转换成字段不完整的正式反思。
 
-`0.4.0a8` 使用 SQLite Schema v9。v7-v9 增加有界最近 Timeline 读取、规范 UTC 排序键和相同时刻的稳定顺序。Turn v2 审查数据与归档证据仍保存在关系范围内的聚合中，并获得相同的事务往返语义。
+`0.4.0a8` 使用 SQLite Schema v9。它的历史迁移 v7-v9 增加有界最近 Timeline
+读取、规范 UTC 排序键和相同时刻的稳定顺序。b1 构造 `SQLiteStorage` 时不再执行这些
+旧迁移：旧 schema 会在打开 Storage 前抛出 `MigrationRequiredError`。b1 唯一经过
+验证的 SQLite lifecycle 升级是 schema `6 → 9`；schema `0–5`、`7`、`8` 可以被
+识别，但不能宣称已有 b1 升级路线。
 
-从 `0.4.0b1.dev0` 开始，损坏或身份字段不一致的 SQLite MemoryNode 与结构化 Timeline 行会抛出 `StorageIntegrityError`；集合读取不会再跳过损坏行后返回具有误导性的部分结果。
+从 `0.4.0b1` 开始，损坏或身份字段不一致的 SQLite MemoryNode 与结构化 Timeline 行会抛出 `StorageIntegrityError`；集合读取不会再跳过损坏行后返回具有误导性的部分结果。
 
 当前版本仍以 FileStorage 为默认；选择 SQLite 必须显式传入 `SQLiteStorage`。两者都不是多租户授权边界，也都默认以明文保存数据。
 
-## Beta 数据检查、备份与恢复
+## Beta 数据生命周期
 
-当前 `main` 开发树可以在迁移代码接触数据前，先识别一个 FileStorage
+`0.4.0b1` 可以在迁移代码接触数据前，先识别一个 FileStorage
 目录、SQLite 数据库或 MemoryPack：
 
 ```python
@@ -1893,9 +1911,21 @@ SQLite WAL/journal，或检查期间发生变化的数据源，会以
 改用可写 Storage 强行重试。`StorageIntegrityError` 表示数据源无法被一致地
 检查。missing 与 empty 是普通检查状态，不是异常。
 
+所有写操作都经过同一个深 Module：
+
+```python
+assessment = lifecycle.inspect(target)  # 只读
+plan = lifecycle.plan(request)          # 零写入 dry-run
+report = lifecycle.execute(plan)        # 执行并做终态验证
+```
+
+Plan writer v3 绑定来源/目标身份、策略、可选备份与类型化 selector；严格 reader 保留
+v1–v3 各自的历史规则，旧计划不能声明新操作。完整操作示例、重试和恢复说明统一维护在
+[`data-lifecycle.md`](data-lifecycle.md)。
+
 ### 创建可验证备份
 
-当前 `main` 已经可以把 FileStorage、SQLite 或 MemoryPack 中由 E.R.I.I. 管理的
+b1 已经可以把 FileStorage、SQLite 或 MemoryPack 中由 E.R.I.I. 管理的
 完整逻辑数据复制到独立的 Lifecycle Backup v1 包。FileStorage 中已知的运行时
 锁文件不会进入备份：根目录 `_turn_context_snapshot.lock`，以及
 `_turn_locks/<64hex>.lock`、`_relationship_history_locks/<64hex>.lock` 和
@@ -1962,10 +1992,46 @@ restore_plan = lifecycle.plan(
 restore_report = lifecycle.execute(restore_plan)
 ```
 
-当前切片只允许恢复到不存在的目标；目标父目录必须存在。已有目标即使只是空目录
+恢复只允许发布到不存在的目标；目标父目录必须存在。已有目标即使只是空目录
 也不会被覆盖。恢复保持源字节与检测到的格式身份：旧 SQLite/FileStorage 的备份
-恢复后仍是旧格式，不等于完成迁移。格式升级、覆盖恢复、删除和确定性重建仍未
-实现。
+恢复后仍是旧格式，不等于完成迁移。覆盖恢复仍不支持；升级、fresh import、删除和
+重建是彼此独立的显式操作。
+
+### 升级、fresh import、删除与重建
+
+b1 只支持以下升级路线：
+
+- FileStorage `legacy → 1`；
+- SQLite schema `6 → 9`；
+- 所有 declared-readable 旧 MemoryPack → `0.4.0a8`。
+
+升级要求缺失的并排目标和独立的缺失备份目标，并保留来源与备份。“可识别/可读”不
+代表已经有 SQLite 升级策略；b1 不升级 schema `0–5`、`7`、`8`。
+
+`MemoryPackImportRequest` 会在隔离 staging 中校验 current 或 declared-readable
+Pack，再发布到**不存在的全新** FileStorage v1 或 SQLite v9；它不是向已有在线
+Storage 做原子 merge。
+
+`EraseRequest` 在 current FileStorage v1 / SQLite v9 上支持 relationship、Source
+Turn、Relationship Event 和 complete-user 四种 selector。`RebuildRequest` 不删除
+权威事件，只重新计算一段关系的派生投影。两者都 backup-first；报告只包含 ID、计数、
+摘要和处置组，不复制被删聊天或人设正文。
+
+Source Turn / Relationship Event 删除会沿冻结的处理依赖传播。如果后续处理 Run 的
+direct/adjudication journal 前缀包含被删权威，该 Run 以及依赖它的 Event、Reflection、
+Growth、归档产物和继续依赖它的后续 Run 都会被撤销。selector 之外的原始 Source
+Transcript 仍保留；但如果一个仍存的现代 Turn 的 `TurnContextBaseline` 曾包含被删
+前缀，它会降级成没有 continuity-assessment 权威的显式 Legacy 记录。E.R.I.I. 不会
+伪造一次历史重审。以后若要重新形成对应长期记忆，必须由宿主发起显式 historical
+reprocessing；删除过程本身不会重新调用模型。
+
+擦除或重建的 staging 在替换 live target 前，还必须用生产 MemoryPack 路径导出受影响
+关系，并成功导入一个全新的同类型临时 Storage。数据库“物理上能打开”并不足以证明
+语义可携带。
+
+预变更 Lifecycle Backup 仍然包含被删数据。外部向量索引、导出 Pack、复制数据库、
+日志、云端留存和远程服务副本属于 delegated / unverified 工作，内核不会谎称已自动
+删除。
 
 执行会在目标同级保留一个不含用户内容的 `.erii-lifecycle.lock` 文件，作为不同
 进程共享的排他锁身份；不要在仍可能有生命周期操作运行时删除它。备份 payload
@@ -1989,10 +2055,9 @@ best effort。需要更强崩溃持久性保证的部署，应由宿主与文件
 权限”的另一进程的授权边界。来源、备份和目标父目录都应放在可信本地目录中；
 认证、租户隔离和同机对抗性路径处理仍属于后续产品安全边界。
 
-当前 Beta 在计算指纹和验证备份包时，会把完整来源与 payload 物化到进程内存；
-峰值内存会随数据量增长，因此这条路径暂不作为超大存储的受支持方案。后续 B1
-切片会加入有界内存的分块流式捕获与验证，同时继续保持稳定快照检查、manifest
-承诺和原子发布不变量。
+文件/目录摘要和复制使用不超过 1 MiB 的流式分块；SQLite 语义身份按规范行流式
+遍历。Lifecycle MemoryPack 上限 256 MiB，需要语义物化的 transform 上限 512 MiB，
+backup manifest 上限 16 MiB。这些是拒绝边界，不是容量或内存 SLA。
 
 ## MemoryPack：备份、迁移和用户数据携带
 
@@ -2131,7 +2196,7 @@ erii serve --host 127.0.0.1 --port 8000 --storage-dir ./data/rest-memory
 
 所有业务请求都必须在 `X-API-Key` 中发送该值。健康检查、Swagger UI 与 OpenAPI JSON 可直接读取；在 Swagger 的 **Authorize** 中填入同一个 Key 后即可调用接口。只做短时本机开发时，可显式使用 `--allow-unauthenticated-loopback`；它会拒绝非回环客户端。绝不能把这个无认证模式放在反向代理后面，因为远程流量可能因此在应用看来来自回环地址。绑定非回环地址还必须同时使用 `--allow-unsafe-network`、API Key、TLS 终止和可信授权层。
 
-`erii serve` 会显式创建 Engine，并在服务关闭时关闭它。它与 `configure_engine()` 都不会调用 `start()`，也不会启动可靠归档处理。单纯导入 `erii.server.app` 不会初始化存储或线程；直接以 ASGI 方式加载时，首个业务端点才会用默认 `./erii_memory` 延迟初始化，单独访问 `/health` 不会触发初始化。
+`erii serve` 会显式创建 Engine，并在服务关闭时关闭它。它与 `configure_engine()` 都不会调用 `start()`，也不会启动可靠归档处理。单纯导入 `erii.server.app` 不会初始化存储或线程；直接以 ASGI 方式加载时，首个业务端点才会用默认 `./erii_memory` 延迟初始化，单独访问 `/api/v1/health` 不会触发初始化。
 
 浏览器打开：
 

@@ -2,6 +2,15 @@
 
 E.R.I.I. 描述情感型 Agent 与用户如何分别形成共同历史、当前认知与关系人格。本文档规定项目统一使用的领域语言。
 
+> **实现状态（`0.4.0b1` 待验收候选，2026-08-03）：** 最新不可移动发布仍是
+> `0.4.0a8`。a8 的角色连续性、来源权威、关系处理、反思、召回与情感效价中立语义
+> 已经实现；当前 b1 候选增加 Data Lifecycle 与长期验证。本文中 `Consequence
+> Ledger`、连续性例外解除、双方立场、Narrative Tension Resolution、Character
+> Review Trigger、Reflection Sensitivity 等词描述已经接受但留给 v0.5 的领域方向，
+> 除非条目明确写明当前实现，否则不应据此调用不存在的 b1 API。权威交付边界见
+> [`docs/b1-implementation-contract.md`](docs/b1-implementation-contract.md) 与
+> [`ROADMAP.md`](ROADMAP.md)。
+
 ## 身份与人格
 
 **Character Blueprint（人设底色）**：

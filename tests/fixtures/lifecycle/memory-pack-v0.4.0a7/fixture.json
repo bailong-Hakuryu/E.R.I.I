@@ -1,0 +1,21 @@
+{
+  "fixture_contract": "1",
+  "storage_kind": "memory_pack",
+  "producer": {
+    "package_version": "0.4.0a7",
+    "commit": "52ec8b90082ae52462de5c00cbb582633dec9275",
+    "interface": "erii.ERIIEngine.export_memory"
+  },
+  "data_classification": "synthetic_non_user_data",
+  "source": {
+    "path": "source.erii",
+    "sha256": "f8bc8463c514843b4e396eb93aa833fb13d94d98e8eb7201330ce5ef72042000",
+    "size": 4685
+  },
+  "expected_inspection": {
+    "format_id": "erii.memory-pack",
+    "detected_version": "0.4.0a7",
+    "target_version": "0.4.0a8",
+    "file_count": 1
+  }
+}

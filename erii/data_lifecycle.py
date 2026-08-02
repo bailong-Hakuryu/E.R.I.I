@@ -1,6 +1,6 @@
-"""Inspection, durable planning, backup, and restore for the v0.4 Beta lifecycle."""
+"""Inspection, durable planning, backup, upgrade, and restore for v0.4 Beta."""
 
-from contextlib import closing, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 import ctypes
 from dataclasses import dataclass
 from enum import Enum
@@ -18,6 +18,7 @@ from typing import Any, Dict, TypeAlias
 from erii.compatibility import (
     FILE_STORAGE_FORMAT,
     LIFECYCLE_BACKUP_FORMAT,
+    LIFECYCLE_PLAN_FORMAT,
     MEMORY_PACK_FORMAT,
     SQLITE_FORMAT,
     FormatCompatibility,
@@ -33,11 +34,45 @@ from erii.errors import (
     StorageWriteError,
     UnsupportedFormatError,
 )
+from erii.models.pack import MemoryPack
+from erii.lifecycle_erasure_contracts import (
+    ErasureInventory,
+    ErasureScope,
+    ErasureSelectionError,
+    ErasureSelector,
+    ErasureStorageKind,
+    ErasureTransformResult,
+    RelationshipRebuildProof,
+)
+from erii.lifecycle_memory_pack_import_contracts import (
+    MemoryPackStagingAdapter,
+    MemoryPackStagingImportReport,
+)
+from erii.lifecycle_streaming import (
+    RegularFileIdentity,
+    copy_regular_file_exclusive,
+    stream_regular_file_identity,
+    stream_regular_tree_manifest,
+)
 
 
 FILE_STORAGE_MANIFEST = ".erii-store.json"
 LIFECYCLE_BACKUP_MANIFEST = "manifest.json"
-LIFECYCLE_PLAN_CONTRACT_VERSION = "1"
+LIFECYCLE_PLAN_CONTRACT_VERSION = LIFECYCLE_PLAN_FORMAT.current_version
+_READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS = frozenset(
+    LIFECYCLE_PLAN_FORMAT.readable_versions
+)
+_BACKUP_STRATEGY_ID = "backup-byte-preserving-v1"
+_RESTORE_STRATEGY_ID = "restore-byte-preserving-v1"
+_FILE_STORAGE_LEGACY_TO_V1_STRATEGY_ID = "file-storage-legacy-to-v1"
+_SQLITE_SCHEMA_6_TO_9_STRATEGY_ID = "sqlite-schema-6-to-9"
+_MEMORY_PACK_STRATEGY_PREFIX = "memory-pack-"
+_ERASE_STRATEGY_PREFIX = "erase-staged-"
+_REBUILD_STRATEGY_PREFIX = "rebuild-staged-"
+_IMPORT_STRATEGY_PREFIX = "memory-pack-import-to-"
+MAX_LIFECYCLE_MEMORY_PACK_BYTES = 256 * 1024 * 1024
+MAX_LIFECYCLE_TRANSFORM_BYTES = 512 * 1024 * 1024
+MAX_LIFECYCLE_BACKUP_MANIFEST_BYTES = 16 * 1024 * 1024
 _FILE_STORAGE_MANIFEST_FIELDS = frozenset({"format", "version"})
 _LEGACY_BASENAMES = frozenset(
     {
@@ -122,6 +157,10 @@ class LifecycleOperation(str, Enum):
 
     BACKUP = "backup"
     RESTORE = "restore"
+    UPGRADE = "upgrade"
+    ERASE = "erase"
+    REBUILD = "rebuild"
+    IMPORT = "import"
 
 
 class LifecycleOutcome(str, Enum):
@@ -232,7 +271,141 @@ class RestoreRequest:
             raise LifecyclePlanError("RestoreRequest destination must be live storage")
 
 
-LifecycleRequest: TypeAlias = BackupRequest | RestoreRequest
+@dataclass(frozen=True, slots=True)
+class UpgradeRequest:
+    """Requests a source-preserving upgrade with a verified pre-upgrade backup."""
+
+    source: LifecycleAssessment
+    destination: LifecycleTarget
+    backup_destination: LifecycleTarget
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, LifecycleAssessment):
+            raise TypeError("UpgradeRequest source must be a LifecycleAssessment")
+        if not isinstance(self.destination, LifecycleTarget):
+            raise TypeError("UpgradeRequest destination must be a LifecycleTarget")
+        if not isinstance(self.backup_destination, LifecycleTarget):
+            raise TypeError("UpgradeRequest backup_destination must be a LifecycleTarget")
+        if self.source.target.kind is LifecycleTargetKind.BACKUP:
+            raise LifecyclePlanError("UpgradeRequest source must be live storage")
+        if self.destination.kind is not self.source.target.kind:
+            raise LifecyclePlanError("UpgradeRequest destination kind must match its source")
+        if self.backup_destination.kind is not LifecycleTargetKind.BACKUP:
+            raise LifecyclePlanError(
+                "UpgradeRequest backup_destination must be a backup target"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class EraseRequest:
+    """Requests a backup-first, exact-scope erasure of current live storage."""
+
+    source: LifecycleAssessment
+    selector: ErasureSelector
+    backup_destination: LifecycleTarget
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, LifecycleAssessment):
+            raise TypeError("EraseRequest source must be a LifecycleAssessment")
+        if not isinstance(self.selector, ErasureSelector):
+            raise TypeError("EraseRequest selector must be an ErasureSelector")
+        if not isinstance(self.backup_destination, LifecycleTarget):
+            raise TypeError("EraseRequest backup_destination must be a LifecycleTarget")
+        if self.source.target.kind not in {
+            LifecycleTargetKind.FILE_STORAGE,
+            LifecycleTargetKind.SQLITE,
+        }:
+            raise LifecyclePlanError("EraseRequest source must be FileStorage or SQLite")
+        if self.backup_destination.kind is not LifecycleTargetKind.BACKUP:
+            raise LifecyclePlanError(
+                "EraseRequest backup_destination must be a backup target"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RebuildRequest:
+    """Requests backup-first deterministic projection rebuild for one relationship."""
+
+    source: LifecycleAssessment
+    selector: ErasureSelector
+    backup_destination: LifecycleTarget
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, LifecycleAssessment):
+            raise TypeError("RebuildRequest source must be a LifecycleAssessment")
+        if not isinstance(self.selector, ErasureSelector):
+            raise TypeError("RebuildRequest selector must be an ErasureSelector")
+        if not isinstance(self.backup_destination, LifecycleTarget):
+            raise TypeError("RebuildRequest backup_destination must be a LifecycleTarget")
+        if self.source.target.kind not in {
+            LifecycleTargetKind.FILE_STORAGE,
+            LifecycleTargetKind.SQLITE,
+        }:
+            raise LifecyclePlanError("RebuildRequest source must be FileStorage or SQLite")
+        if self.backup_destination.kind is not LifecycleTargetKind.BACKUP:
+            raise LifecyclePlanError(
+                "RebuildRequest backup_destination must be a backup target"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryPackImportOptions:
+    """No-content identity remapping parameters frozen into an import plan."""
+
+    target_agent_id: str | None = None
+    target_user_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.target_agent_id is None) != (self.target_user_id is None):
+            raise LifecyclePlanError(
+                "MemoryPack import target_agent_id and target_user_id are required together"
+            )
+        for label, value in (
+            ("target_agent_id", self.target_agent_id),
+            ("target_user_id", self.target_user_id),
+        ):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise LifecyclePlanError(f"MemoryPack import {label} must be non-empty")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryPackImportRequest:
+    """Requests atomic import of one inspected pack into missing fresh storage."""
+
+    source: LifecycleAssessment
+    destination: LifecycleTarget
+    target_agent_id: str | None = None
+    target_user_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, LifecycleAssessment):
+            raise TypeError("MemoryPackImportRequest source must be a LifecycleAssessment")
+        if not isinstance(self.destination, LifecycleTarget):
+            raise TypeError("MemoryPackImportRequest destination must be a LifecycleTarget")
+        if self.source.target.kind is not LifecycleTargetKind.MEMORY_PACK:
+            raise LifecyclePlanError("MemoryPackImportRequest source must be a MemoryPack")
+        if self.destination.kind not in {
+            LifecycleTargetKind.FILE_STORAGE,
+            LifecycleTargetKind.SQLITE,
+        }:
+            raise LifecyclePlanError(
+                "MemoryPackImportRequest destination must be FileStorage or SQLite"
+            )
+        MemoryPackImportOptions(
+            target_agent_id=self.target_agent_id,
+            target_user_id=self.target_user_id,
+        )
+
+
+LifecyclePlanSelector: TypeAlias = ErasureSelector | MemoryPackImportOptions
+LifecycleRequest: TypeAlias = (
+    BackupRequest
+    | RestoreRequest
+    | UpgradeRequest
+    | EraseRequest
+    | RebuildRequest
+    | MemoryPackImportRequest
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,10 +437,14 @@ class LifecyclePlan:
     destination: LifecycleAssessment
     destination_parent: LifecycleDirectoryIdentity
     content: LifecycleContentIdentity
+    strategy_id: str
+    backup_destination: LifecycleAssessment | None
+    backup_destination_parent: LifecycleDirectoryIdentity | None
     plan_digest: str
+    selector: LifecyclePlanSelector | None = None
 
     def __post_init__(self) -> None:
-        if self.contract_version != LIFECYCLE_PLAN_CONTRACT_VERSION:
+        if self.contract_version not in _READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS:
             raise LifecyclePlanError("unsupported lifecycle plan contract version")
         if not isinstance(self.operation, LifecycleOperation):
             raise LifecyclePlanError("lifecycle plan operation is invalid")
@@ -279,6 +456,21 @@ class LifecyclePlan:
             raise LifecyclePlanError("lifecycle plan destination parent identity is invalid")
         if not isinstance(self.content, LifecycleContentIdentity):
             raise LifecyclePlanError("lifecycle plan content identity is invalid")
+        if not isinstance(self.strategy_id, str) or not self.strategy_id:
+            raise LifecyclePlanError("lifecycle plan strategy identity is invalid")
+        if self.backup_destination is not None and not isinstance(
+            self.backup_destination, LifecycleAssessment
+        ):
+            raise LifecyclePlanError("lifecycle plan backup destination is invalid")
+        if self.backup_destination_parent is not None and not isinstance(
+            self.backup_destination_parent, LifecycleDirectoryIdentity
+        ):
+            raise LifecyclePlanError("lifecycle plan backup parent identity is invalid")
+        if self.selector is not None and not isinstance(
+            self.selector,
+            (ErasureSelector, MemoryPackImportOptions),
+        ):
+            raise LifecyclePlanError("lifecycle plan selector is invalid")
         _validate_plan_shape(self)
         expected_operation_id = _sha256_json(_plan_intent_dict(self))
         if self.operation_id != expected_operation_id:
@@ -314,6 +506,7 @@ class LifecycleReport:
     content_fingerprint: str
     artifact_fingerprint: str
     file_count: int
+    details: ErasureTransformResult | MemoryPackStagingImportReport | None = None
 
     def __post_init__(self) -> None:
         if not _is_sha256(self.operation_id) or not _is_sha256(self.plan_digest):
@@ -330,6 +523,24 @@ class LifecycleReport:
             or self.file_count < 0
         ):
             raise ValueError("lifecycle report file_count is invalid")
+        if self.details is not None and not isinstance(
+            self.details,
+            (ErasureTransformResult, MemoryPackStagingImportReport),
+        ):
+            raise ValueError("lifecycle report details are invalid")
+
+    def to_dict(self) -> Dict[str, object]:
+        """Returns a JSON-compatible report containing no durable content bodies."""
+        return {
+            "operation_id": self.operation_id,
+            "plan_digest": self.plan_digest,
+            "operation": self.operation.value,
+            "outcome": self.outcome.value,
+            "content_fingerprint": self.content_fingerprint,
+            "artifact_fingerprint": self.artifact_fingerprint,
+            "file_count": self.file_count,
+            "details": None if self.details is None else self.details.to_dict(),
+        }
 
 
 def _is_sha256(value: object) -> bool:
@@ -494,8 +705,47 @@ def _directory_identity_from_dict(value: object) -> LifecycleDirectoryIdentity:
     )
 
 
+def _selector_to_dict(
+    selector: LifecyclePlanSelector | None,
+) -> Dict[str, object] | None:
+    if selector is None:
+        return None
+    if isinstance(selector, ErasureSelector):
+        return selector.to_dict()
+    if isinstance(selector, MemoryPackImportOptions):
+        return {
+            "target_agent_id": selector.target_agent_id,
+            "target_user_id": selector.target_user_id,
+        }
+    raise LifecyclePlanError("lifecycle plan selector is invalid")
+
+
+def _selector_from_dict(
+    operation: LifecycleOperation,
+    value: object,
+) -> LifecyclePlanSelector | None:
+    if value is None:
+        return None
+    if operation in {LifecycleOperation.ERASE, LifecycleOperation.REBUILD}:
+        if not isinstance(value, dict):
+            raise LifecyclePlanError("lifecycle erasure selector is invalid")
+        try:
+            return ErasureSelector.from_dict(value)
+        except (TypeError, ValueError) as exc:
+            raise LifecyclePlanError("lifecycle erasure selector is invalid") from exc
+    if operation is LifecycleOperation.IMPORT:
+        fields = {"target_agent_id", "target_user_id"}
+        if not isinstance(value, dict) or set(value) != fields:
+            raise LifecyclePlanError("lifecycle MemoryPack import options are invalid")
+        return MemoryPackImportOptions(
+            target_agent_id=value["target_agent_id"],
+            target_user_id=value["target_user_id"],
+        )
+    raise LifecyclePlanError("this lifecycle operation cannot carry a selector")
+
+
 def _plan_intent_dict(plan: LifecyclePlan) -> Dict[str, object]:
-    return {
+    intent: Dict[str, object] = {
         "contract_version": plan.contract_version,
         "operation": plan.operation.value,
         "source": _assessment_to_dict(plan.source),
@@ -503,6 +753,25 @@ def _plan_intent_dict(plan: LifecyclePlan) -> Dict[str, object]:
         "destination_parent": _directory_identity_to_dict(plan.destination_parent),
         "content": _content_to_dict(plan.content),
     }
+    if plan.contract_version in {"2", "3"}:
+        intent.update(
+            {
+                "strategy_id": plan.strategy_id,
+                "backup_destination": (
+                    None
+                    if plan.backup_destination is None
+                    else _assessment_to_dict(plan.backup_destination)
+                ),
+                "backup_destination_parent": (
+                    None
+                    if plan.backup_destination_parent is None
+                    else _directory_identity_to_dict(plan.backup_destination_parent)
+                ),
+            }
+        )
+    if plan.contract_version == "3":
+        intent["selector"] = _selector_to_dict(plan.selector)
+    return intent
 
 
 def _plan_body_dict(plan: LifecyclePlan) -> Dict[str, object]:
@@ -514,7 +783,7 @@ def _plan_document_dict(plan: LifecyclePlan) -> Dict[str, object]:
 
 
 def _plan_from_document(value: object) -> LifecyclePlan:
-    fields = {
+    v1_fields = {
         "contract_version",
         "operation",
         "operation_id",
@@ -524,37 +793,252 @@ def _plan_from_document(value: object) -> LifecyclePlan:
         "content",
         "plan_digest",
     }
-    if not isinstance(value, dict) or set(value) != fields:
+    v2_fields = v1_fields | {
+        "strategy_id",
+        "backup_destination",
+        "backup_destination_parent",
+    }
+    v3_fields = v2_fields | {"selector"}
+    if not isinstance(value, dict):
         raise LifecyclePlanError("lifecycle plan fields are invalid")
+    contract_version = value.get("contract_version")
+    if contract_version == "1":
+        if set(value) != v1_fields:
+            raise LifecyclePlanError("lifecycle plan fields are invalid")
+    elif contract_version == "2":
+        if set(value) != v2_fields:
+            raise LifecyclePlanError("lifecycle plan fields are invalid")
+    elif contract_version == "3":
+        if set(value) != v3_fields:
+            raise LifecyclePlanError("lifecycle plan fields are invalid")
+    else:
+        raise LifecyclePlanError("unsupported lifecycle plan contract version")
+    operation = LifecycleOperation(value["operation"])
+    if contract_version == "1":
+        if operation not in {LifecycleOperation.BACKUP, LifecycleOperation.RESTORE}:
+            raise LifecyclePlanError(
+                "lifecycle plan contract v1 supports only backup and restore"
+            )
+        strategy_id = (
+            _BACKUP_STRATEGY_ID
+            if operation is LifecycleOperation.BACKUP
+            else _RESTORE_STRATEGY_ID
+        )
+        backup_destination = None
+        backup_destination_parent = None
+        selector = None
+    else:
+        strategy_id = value["strategy_id"]
+        raw_backup_destination = value["backup_destination"]
+        backup_destination = (
+            None
+            if raw_backup_destination is None
+            else _assessment_from_dict(raw_backup_destination)
+        )
+        raw_backup_parent = value["backup_destination_parent"]
+        backup_destination_parent = (
+            None
+            if raw_backup_parent is None
+            else _directory_identity_from_dict(raw_backup_parent)
+        )
+        selector = (
+            None
+            if contract_version == "2"
+            else _selector_from_dict(operation, value["selector"])
+        )
     return LifecyclePlan(
-        contract_version=value["contract_version"],
-        operation=LifecycleOperation(value["operation"]),
+        contract_version=contract_version,
+        operation=operation,
         operation_id=value["operation_id"],
         source=_assessment_from_dict(value["source"]),
         destination=_assessment_from_dict(value["destination"]),
         destination_parent=_directory_identity_from_dict(value["destination_parent"]),
         content=_content_from_dict(value["content"]),
+        strategy_id=strategy_id,
+        backup_destination=backup_destination,
+        backup_destination_parent=backup_destination_parent,
+        selector=selector,
         plan_digest=value["plan_digest"],
     )
+
+
+def _upgrade_strategy_id(source: LifecycleAssessment) -> str:
+    if (
+        source.target.kind is LifecycleTargetKind.FILE_STORAGE
+        and source.detected_version == "legacy"
+        and source.current_version == FILE_STORAGE_FORMAT.current_version
+    ):
+        return _FILE_STORAGE_LEGACY_TO_V1_STRATEGY_ID
+    if (
+        source.target.kind is LifecycleTargetKind.SQLITE
+        and source.status is LifecycleStatus.MIGRATION_REQUIRED
+        and source.detected_version == "6"
+        and source.current_version == SQLITE_FORMAT.current_version
+    ):
+        return _SQLITE_SCHEMA_6_TO_9_STRATEGY_ID
+    if (
+        source.target.kind is LifecycleTargetKind.MEMORY_PACK
+        and source.status is LifecycleStatus.MIGRATION_REQUIRED
+        and source.detected_version is not None
+        and source.current_version == MEMORY_PACK_FORMAT.current_version
+    ):
+        return (
+            f"{_MEMORY_PACK_STRATEGY_PREFIX}{source.detected_version}"
+            f"-to-{source.current_version}"
+        )
+    raise LifecyclePlanError(
+        "no verified lifecycle upgrade strategy exists for this source version"
+    )
+
+
+def _erasure_storage_kind(kind: LifecycleTargetKind) -> ErasureStorageKind:
+    if kind is LifecycleTargetKind.FILE_STORAGE:
+        return ErasureStorageKind.FILE_STORAGE
+    if kind is LifecycleTargetKind.SQLITE:
+        return ErasureStorageKind.SQLITE
+    raise LifecyclePlanError("lifecycle erasure requires FileStorage or SQLite")
+
+
+def _erasure_strategy_id(
+    operation: LifecycleOperation,
+    kind: LifecycleTargetKind,
+) -> str:
+    storage_kind = _erasure_storage_kind(kind)
+    prefix = (
+        _ERASE_STRATEGY_PREFIX
+        if operation is LifecycleOperation.ERASE
+        else _REBUILD_STRATEGY_PREFIX
+    )
+    return f"{prefix}{storage_kind.value}-v1"
+
+
+def _import_strategy_id(kind: LifecycleTargetKind) -> str:
+    if kind not in {LifecycleTargetKind.FILE_STORAGE, LifecycleTargetKind.SQLITE}:
+        raise LifecyclePlanError("MemoryPack import destination is unsupported")
+    return f"{_IMPORT_STRATEGY_PREFIX}{kind.value}-v1"
 
 
 def _validate_plan_shape(plan: LifecyclePlan) -> None:
     _validate_assessment(plan.source)
     _validate_assessment(plan.destination)
+    if plan.backup_destination is not None:
+        _validate_assessment(plan.backup_destination)
+    if plan.contract_version == "1" and (
+        plan.backup_destination is not None
+        or plan.backup_destination_parent is not None
+    ):
+        raise LifecyclePlanError("lifecycle plan contract v1 cannot bind a backup target")
+    if plan.contract_version != "3" and plan.selector is not None:
+        raise LifecyclePlanError("legacy lifecycle plans cannot carry a selector")
     if plan.operation is LifecycleOperation.BACKUP:
         if plan.source.target.kind is LifecycleTargetKind.BACKUP:
             raise LifecyclePlanError("backup plan source must be live storage")
         if plan.destination.target.kind is not LifecycleTargetKind.BACKUP:
             raise LifecyclePlanError("backup plan destination must be a backup bundle")
+        if plan.destination.status is not LifecycleStatus.MISSING:
+            raise LifecyclePlanError("backup plan destination must be missing")
         if plan.content != LifecycleContentIdentity.from_assessment(plan.source):
             raise LifecyclePlanError("backup plan content does not match its source")
-    else:
+        if plan.strategy_id != _BACKUP_STRATEGY_ID:
+            raise LifecyclePlanError("backup plan strategy identity is invalid")
+        if plan.backup_destination is not None or plan.backup_destination_parent is not None:
+            raise LifecyclePlanError("backup plan cannot bind a second backup target")
+        if plan.selector is not None:
+            raise LifecyclePlanError("backup plan cannot carry a selector")
+    elif plan.operation is LifecycleOperation.RESTORE:
         if plan.source.target.kind is not LifecycleTargetKind.BACKUP:
             raise LifecyclePlanError("restore plan source must be a backup bundle")
         if plan.destination.target.kind is LifecycleTargetKind.BACKUP:
             raise LifecyclePlanError("restore plan destination must be live storage")
+        if plan.destination.status is not LifecycleStatus.MISSING:
+            raise LifecyclePlanError("restore plan destination must be missing")
         if plan.content.kind is not plan.destination.target.kind:
             raise LifecyclePlanError("restore destination kind does not match backup content")
+        if plan.strategy_id != _RESTORE_STRATEGY_ID:
+            raise LifecyclePlanError("restore plan strategy identity is invalid")
+        if plan.backup_destination is not None or plan.backup_destination_parent is not None:
+            raise LifecyclePlanError("restore plan cannot bind a second backup target")
+        if plan.selector is not None:
+            raise LifecyclePlanError("restore plan cannot carry a selector")
+    elif plan.operation is LifecycleOperation.UPGRADE:
+        if plan.contract_version not in {"2", "3"}:
+            raise LifecyclePlanError("upgrade plans require lifecycle contract v2 or v3")
+        if plan.source.target.kind is LifecycleTargetKind.BACKUP:
+            raise LifecyclePlanError("upgrade plan source must be live storage")
+        if plan.source.status is not LifecycleStatus.MIGRATION_REQUIRED:
+            raise LifecyclePlanError("upgrade plan source must require migration")
+        if plan.destination.target.kind is not plan.source.target.kind:
+            raise LifecyclePlanError("upgrade destination kind does not match its source")
+        if plan.destination.status is not LifecycleStatus.MISSING:
+            raise LifecyclePlanError("upgrade plan destination must be missing")
+        if (
+            plan.content.kind is not plan.destination.target.kind
+            or plan.content.status is not LifecycleStatus.CURRENT
+            or plan.content.detected_version != plan.content.current_version
+        ):
+            raise LifecyclePlanError("upgrade plan result identity is invalid")
+        if plan.backup_destination is None or plan.backup_destination_parent is None:
+            raise LifecyclePlanError("upgrade plan requires a backup destination")
+        if (
+            plan.backup_destination.target.kind is not LifecycleTargetKind.BACKUP
+            or plan.backup_destination.status is not LifecycleStatus.MISSING
+        ):
+            raise LifecyclePlanError("upgrade plan backup destination must be missing")
+        if plan.strategy_id != _upgrade_strategy_id(plan.source):
+            raise LifecyclePlanError("upgrade plan strategy identity is invalid")
+        if plan.selector is not None:
+            raise LifecyclePlanError("upgrade plan cannot carry a selector")
+    elif plan.operation in {LifecycleOperation.ERASE, LifecycleOperation.REBUILD}:
+        if plan.contract_version != "3":
+            raise LifecyclePlanError("erase and rebuild plans require lifecycle contract v3")
+        if not isinstance(plan.selector, ErasureSelector):
+            raise LifecyclePlanError("erase and rebuild plans require an exact selector")
+        if plan.source.status is not LifecycleStatus.CURRENT:
+            raise LifecyclePlanError("erase and rebuild source must be current")
+        _erasure_storage_kind(plan.source.target.kind)
+        if plan.destination != plan.source:
+            raise LifecyclePlanError("erase and rebuild destination must be the live source")
+        if plan.content != LifecycleContentIdentity.from_assessment(plan.source):
+            raise LifecyclePlanError("erase and rebuild content must bind the source")
+        if plan.backup_destination is None or plan.backup_destination_parent is None:
+            raise LifecyclePlanError("erase and rebuild require a backup destination")
+        if (
+            plan.backup_destination.target.kind is not LifecycleTargetKind.BACKUP
+            or plan.backup_destination.status is not LifecycleStatus.MISSING
+        ):
+            raise LifecyclePlanError("erase and rebuild backup destination must be missing")
+        if plan.strategy_id != _erasure_strategy_id(
+            plan.operation,
+            plan.source.target.kind,
+        ):
+            raise LifecyclePlanError("erase or rebuild plan strategy identity is invalid")
+    elif plan.operation is LifecycleOperation.IMPORT:
+        if plan.contract_version != "3":
+            raise LifecyclePlanError("MemoryPack import plans require lifecycle contract v3")
+        if not isinstance(plan.selector, MemoryPackImportOptions):
+            raise LifecyclePlanError("MemoryPack import plan options are missing")
+        if plan.source.target.kind is not LifecycleTargetKind.MEMORY_PACK:
+            raise LifecyclePlanError("MemoryPack import plan source is invalid")
+        if plan.source.status not in {
+            LifecycleStatus.CURRENT,
+            LifecycleStatus.MIGRATION_REQUIRED,
+        }:
+            raise LifecyclePlanError("MemoryPack import source must be readable")
+        if plan.destination.target.kind not in {
+            LifecycleTargetKind.FILE_STORAGE,
+            LifecycleTargetKind.SQLITE,
+        }:
+            raise LifecyclePlanError("MemoryPack import destination is invalid")
+        if plan.destination.status is not LifecycleStatus.MISSING:
+            raise LifecyclePlanError("MemoryPack import destination must be missing")
+        if plan.content != LifecycleContentIdentity.from_assessment(plan.source):
+            raise LifecyclePlanError("MemoryPack import content must bind its source")
+        if plan.backup_destination is not None or plan.backup_destination_parent is not None:
+            raise LifecyclePlanError("fresh MemoryPack import cannot bind a backup target")
+        if plan.strategy_id != _import_strategy_id(plan.destination.target.kind):
+            raise LifecyclePlanError("MemoryPack import strategy identity is invalid")
+    else:  # pragma: no cover - Enum construction closes this branch.
+        raise LifecyclePlanError("lifecycle plan operation is unsupported")
 
 
 def _make_plan(
@@ -564,6 +1048,10 @@ def _make_plan(
     destination: LifecycleAssessment,
     destination_parent: LifecycleDirectoryIdentity,
     content: LifecycleContentIdentity,
+    strategy_id: str,
+    backup_destination: LifecycleAssessment | None = None,
+    backup_destination_parent: LifecycleDirectoryIdentity | None = None,
+    selector: LifecyclePlanSelector | None = None,
 ) -> LifecyclePlan:
     intent = {
         "contract_version": LIFECYCLE_PLAN_CONTRACT_VERSION,
@@ -572,6 +1060,18 @@ def _make_plan(
         "destination": _assessment_to_dict(destination),
         "destination_parent": _directory_identity_to_dict(destination_parent),
         "content": _content_to_dict(content),
+        "strategy_id": strategy_id,
+        "backup_destination": (
+            None
+            if backup_destination is None
+            else _assessment_to_dict(backup_destination)
+        ),
+        "backup_destination_parent": (
+            None
+            if backup_destination_parent is None
+            else _directory_identity_to_dict(backup_destination_parent)
+        ),
+        "selector": _selector_to_dict(selector),
     }
     operation_id = _sha256_json(intent)
     plan_digest = _sha256_json({**intent, "operation_id": operation_id})
@@ -583,6 +1083,10 @@ def _make_plan(
         destination=destination,
         destination_parent=destination_parent,
         content=content,
+        strategy_id=strategy_id,
+        backup_destination=backup_destination,
+        backup_destination_parent=backup_destination_parent,
+        selector=selector,
         plan_digest=plan_digest,
     )
 
@@ -811,10 +1315,16 @@ def _read_stable_bytes(
     path: Path,
     *,
     expected_signature: tuple[int, int, int, int, int, int] | None = None,
+    read_limit: int | None = None,
+    size_limit: int | None = None,
 ) -> bytes:
     label = f"lifecycle source file {path.name!r}"
     _assert_no_link_or_reparse_ancestors(path, label=label)
     before = _require_regular_file(path, label=label)
+    if size_limit is not None and before.st_size > size_limit:
+        raise StorageIntegrityError(
+            f"{label} exceeds the supported lifecycle size limit"
+        )
     if expected_signature is not None and _stat_signature(before) != expected_signature:
         raise StorageIntegrityError("lifecycle source changed before it was read")
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -828,7 +1338,14 @@ def _read_stable_bytes(
             raise StorageIntegrityError("lifecycle source changed before it was opened")
         chunks = bytearray()
         while True:
-            chunk = os.read(descriptor, 1024 * 1024)
+            if read_limit is not None:
+                remaining = read_limit - len(chunks)
+                if remaining <= 0:
+                    break
+                chunk_size = min(1024 * 1024, remaining)
+            else:
+                chunk_size = 1024 * 1024
+            chunk = os.read(descriptor, chunk_size)
             if not chunk:
                 break
             chunks.extend(chunk)
@@ -883,7 +1400,7 @@ def read_sqlite_schema_version(path_value: str, *, immutable: bool) -> int | Non
     if info.st_size == 0:
         return 0
     try:
-        if _read_stable_bytes(path)[:16] != b"SQLite format 3\x00":
+        if _read_stable_bytes(path, read_limit=16) != b"SQLite format 3\x00":
             raise StorageIntegrityError("SQLite lifecycle target has an invalid header")
         with closing(
             sqlite3.connect(_sqlite_uri(path, immutable=immutable), uri=True)
@@ -980,18 +1497,42 @@ class LifecycleInspector:
         if not _lexists(root):
             return _missing_assessment(target, FILE_STORAGE_FORMAT)
         _require_regular_directory(root, label="FileStorage lifecycle target")
-        content_by_name = cls._scan_file_storage(root)
-        for relative_name, content in content_by_name.items():
+        from erii.lifecycle_streaming import stream_regular_tree_manifest
+
+        streamed = stream_regular_tree_manifest(
+            root,
+            exclude_relative_name=_is_file_storage_runtime_lock,
+        )
+        relative_names = tuple(entry.relative_path for entry in streamed.files)
+        if any(PurePosixPath(name).name.endswith(".tmp") for name in relative_names):
+            raise StorageIntegrityError(
+                "FileStorage lifecycle target contains an incomplete temporary file"
+            )
+        manifest_content: bytes | None = None
+        for relative_name in relative_names:
             if not relative_name.endswith(".json"):
                 continue
+            content = _read_stable_bytes(
+                root.joinpath(*PurePosixPath(relative_name).parts),
+                size_limit=MAX_LIFECYCLE_TRANSFORM_BYTES,
+            )
             try:
                 json.loads(content.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise StorageIntegrityError(
                     f"FileStorage JSON document {Path(relative_name).name!r} is malformed"
                 ) from exc
+            if relative_name == FILE_STORAGE_MANIFEST:
+                manifest_content = content
+        final_streamed = stream_regular_tree_manifest(
+            root,
+            exclude_relative_name=_is_file_storage_runtime_lock,
+        )
+        if final_streamed != streamed:
+            raise StorageIntegrityError(
+                "FileStorage lifecycle target changed during inspection"
+            )
 
-        manifest_content = content_by_name.get(FILE_STORAGE_MANIFEST)
         warnings = ()
         if manifest_content is not None:
             try:
@@ -1012,14 +1553,14 @@ class LifecycleInspector:
                 if detected_version == FILE_STORAGE_FORMAT.current_version
                 else LifecycleStatus.MIGRATION_REQUIRED
             )
-        elif not content_by_name:
+        elif not relative_names:
             detected_version = None
             status = LifecycleStatus.EMPTY
         else:
             recognized = any(
                 Path(name).name in _LEGACY_BASENAMES
                 or Path(name).parts[0] in _LEGACY_TOP_LEVEL_DIRECTORIES
-                for name in content_by_name
+                for name in relative_names
             )
             if not recognized:
                 raise StorageIntegrityError(
@@ -1027,7 +1568,7 @@ class LifecycleInspector:
                 )
             detected_version = "legacy"
             status = LifecycleStatus.MIGRATION_REQUIRED
-            if any(not name.endswith(".json") for name in content_by_name):
+            if any(not name.endswith(".json") for name in relative_names):
                 warnings = ("unrecognized non-JSON files are included in the fingerprint",)
 
         return LifecycleAssessment(
@@ -1036,8 +1577,8 @@ class LifecycleInspector:
             format_id=FILE_STORAGE_FORMAT.format_id,
             detected_version=detected_version,
             current_version=FILE_STORAGE_FORMAT.current_version,
-            fingerprint=_fingerprint_files(content_by_name),
-            file_count=len(content_by_name),
+            fingerprint=streamed.tree_fingerprint,
+            file_count=streamed.file_count,
             warnings=warnings,
         )
 
@@ -1065,14 +1606,8 @@ class LifecycleInspector:
             item.name: _stat_signature(_require_regular_file(item, label="SQLite lifecycle file"))
             for item in observed
         }
-        before = {
-            item.name: _read_stable_bytes(
-                item,
-                expected_signature=initial_signatures[item.name],
-            )
-            for item in observed
-        }
         version = read_sqlite_schema_version(str(path), immutable=True)
+        main_size = initial_signatures[path.name][3]
         try:
             with closing(
                 sqlite3.connect(_sqlite_uri(path, immutable=True), uri=True)
@@ -1083,6 +1618,15 @@ class LifecycleInspector:
             raise StorageIntegrityError("SQLite integrity check could not be completed") from exc
         if quick_check != ["ok"]:
             raise StorageIntegrityError("SQLite quick integrity check failed")
+        semantic_fingerprint = None
+        if main_size:
+            # Imported lazily because the private migration support imports the
+            # public schema reader above.  SQLite identity is semantic: page
+            # layout and migration timestamps must not make a planned upgrade
+            # impossible to verify on a later execution.
+            from erii.lifecycle_sqlite_upgrade import _semantic_digest_from_path
+
+            semantic_fingerprint = _semantic_digest_from_path(path)
         observed_after = [path] + [
             Path(f"{path}{suffix}")
             for suffix in ("-wal", "-shm", "-journal")
@@ -1096,16 +1640,15 @@ class LifecycleInspector:
             for item in observed_after
         ):
             raise StorageIntegrityError("SQLite lifecycle target changed during inspection")
-        after = {
-            item.name: _read_stable_bytes(
-                item,
-                expected_signature=initial_signatures[item.name],
+        final_signatures = {
+            item.name: _stat_signature(
+                _require_regular_file(item, label="SQLite lifecycle file")
             )
             for item in observed_after
         }
-        if after != before:
+        if final_signatures != initial_signatures:
             raise StorageIntegrityError("SQLite lifecycle target changed during inspection")
-        if before[path.name] == b"":
+        if main_size == 0:
             return LifecycleAssessment(
                 target=target,
                 status=LifecycleStatus.EMPTY,
@@ -1126,7 +1669,7 @@ class LifecycleInspector:
             format_id=SQLITE_FORMAT.format_id,
             detected_version=detected_version,
             current_version=SQLITE_FORMAT.current_version,
-            fingerprint=_fingerprint_files({"database.sqlite3": before[path.name]}),
+            fingerprint=semantic_fingerprint,
             file_count=1,
         )
 
@@ -1136,7 +1679,10 @@ class LifecycleInspector:
         if not _lexists(path):
             return _missing_assessment(target, MEMORY_PACK_FORMAT)
         _require_regular_file(path, label="MemoryPack lifecycle target")
-        content = _read_stable_bytes(path)
+        content = _read_stable_bytes(
+            path,
+            size_limit=MAX_LIFECYCLE_MEMORY_PACK_BYTES,
+        )
         try:
             decoded = decode_memory_pack_json(content.decode("utf-8"))
         except UnsupportedFormatError:
@@ -1162,7 +1708,22 @@ class LifecycleInspector:
 @dataclass(frozen=True, slots=True)
 class _PayloadSnapshot:
     content: LifecycleContentIdentity
-    files: Dict[str, bytes]
+    files: Dict[str, bytes] | None = None
+    source_paths: Dict[str, str] | None = None
+    identities: Dict[str, RegularFileIdentity] | None = None
+
+    def __post_init__(self) -> None:
+        materialized = self.files is not None
+        streamed = self.source_paths is not None or self.identities is not None
+        if materialized == streamed:
+            raise ValueError(
+                "payload snapshot must be exactly one of materialized or streamed"
+            )
+        if streamed:
+            if self.source_paths is None or self.identities is None:
+                raise ValueError("streamed payload snapshot is incomplete")
+            if set(self.source_paths) != set(self.identities):
+                raise ValueError("streamed payload snapshot entries do not match")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1172,6 +1733,90 @@ class _BackupBundle:
     operation_id: str | None
     plan_digest: str | None
     snapshot: _PayloadSnapshot | None
+
+
+def _materialize_snapshot(source: _PayloadSnapshot) -> _PayloadSnapshot:
+    if source.files is not None:
+        return source
+    assert source.source_paths is not None and source.identities is not None
+    total_size = sum(identity.size for identity in source.identities.values())
+    limit = (
+        MAX_LIFECYCLE_MEMORY_PACK_BYTES
+        if source.content.kind is LifecycleTargetKind.MEMORY_PACK
+        else MAX_LIFECYCLE_TRANSFORM_BYTES
+    )
+    if total_size > limit:
+        raise StorageIntegrityError(
+            "lifecycle transform input exceeds its bounded materialization limit"
+        )
+    files: Dict[str, bytes] = {}
+    for relative_name in sorted(source.source_paths):
+        content = _read_stable_bytes(
+            Path(source.source_paths[relative_name]),
+            size_limit=limit,
+        )
+        identity = RegularFileIdentity(
+            size=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+        )
+        if identity != source.identities[relative_name]:
+            raise StaleLifecyclePlanError(
+                "lifecycle source changed while its transform was materialized"
+            )
+        files[relative_name] = content
+    return _PayloadSnapshot(content=source.content, files=files)
+
+
+def _snapshot_file_manifest(
+    snapshot: _PayloadSnapshot,
+) -> list[Dict[str, object]]:
+    if snapshot.files is not None:
+        return _payload_file_manifest(snapshot.files)
+    assert snapshot.identities is not None
+    return [
+        {
+            "path": relative_name,
+            "size": snapshot.identities[relative_name].size,
+            "sha256": snapshot.identities[relative_name].sha256,
+        }
+        for relative_name in sorted(snapshot.identities)
+    ]
+
+
+def _write_snapshot_file(
+    snapshot: _PayloadSnapshot,
+    relative_name: str,
+    destination: Path,
+) -> None:
+    if snapshot.files is not None:
+        _write_durable_file(destination, snapshot.files[relative_name])
+        return
+    assert snapshot.source_paths is not None and snapshot.identities is not None
+    try:
+        copy_regular_file_exclusive(
+            snapshot.source_paths[relative_name],
+            destination,
+            expected=snapshot.identities[relative_name],
+        )
+    except FileExistsError as exc:
+        raise StorageWriteError("lifecycle snapshot destination already exists") from exc
+
+
+def _write_snapshot_files(root: Path, snapshot: _PayloadSnapshot) -> None:
+    names = (
+        snapshot.files.keys()
+        if snapshot.files is not None
+        else snapshot.source_paths.keys()  # type: ignore[union-attr]
+    )
+    for relative_name in sorted(names):
+        relative = PurePosixPath(relative_name)
+        _validate_relative_payload_path(relative_name)
+        _ensure_private_payload_parent(root, relative)
+        _write_snapshot_file(
+            snapshot,
+            relative_name,
+            root.joinpath(*relative.parts),
+        )
 
 
 class _LifecycleFormatAdapter:
@@ -1193,18 +1838,37 @@ class _FileLifecycleAdapter(_LifecycleFormatAdapter):
     payload_entry = "payload"
 
     def capture(self, assessment: LifecycleAssessment) -> _PayloadSnapshot:
-        files = LifecycleInspector._scan_file_storage(Path(assessment.target.path))
+        root = Path(assessment.target.path)
+        manifest = stream_regular_tree_manifest(
+            root,
+            exclude_relative_name=_is_file_storage_runtime_lock,
+        )
         snapshot = _PayloadSnapshot(
             content=LifecycleContentIdentity.from_assessment(assessment),
-            files=files,
+            source_paths={
+                entry.relative_path: str(
+                    root.joinpath(*PurePosixPath(entry.relative_path).parts)
+                )
+                for entry in manifest.files
+            },
+            identities={
+                entry.relative_path: RegularFileIdentity(
+                    size=entry.size,
+                    sha256=entry.sha256,
+                )
+                for entry in manifest.files
+            },
         )
-        if _fingerprint_files(files) != snapshot.content.fingerprint:
+        if (
+            manifest.tree_fingerprint != snapshot.content.fingerprint
+            or manifest.file_count != snapshot.content.file_count
+        ):
             raise StaleLifecyclePlanError("FileStorage changed while it was captured")
         return snapshot
 
     def write_restored(self, snapshot: _PayloadSnapshot, staging_path: Path) -> None:
         _create_private_directory(staging_path)
-        _write_payload_files(staging_path, snapshot.files)
+        _write_snapshot_files(staging_path, snapshot)
 
 
 class _SQLiteLifecycleAdapter(_LifecycleFormatAdapter):
@@ -1212,18 +1876,29 @@ class _SQLiteLifecycleAdapter(_LifecycleFormatAdapter):
     payload_entry = "payload/database.sqlite3"
 
     def capture(self, assessment: LifecycleAssessment) -> _PayloadSnapshot:
-        content = _read_stable_bytes(Path(assessment.target.path))
-        files = {"database.sqlite3": content}
+        source_path = Path(assessment.target.path)
+        identity = stream_regular_file_identity(source_path)
         snapshot = _PayloadSnapshot(
             content=LifecycleContentIdentity.from_assessment(assessment),
-            files=files,
+            source_paths={"database.sqlite3": str(source_path)},
+            identities={"database.sqlite3": identity},
         )
-        if _fingerprint_files(files) != snapshot.content.fingerprint:
+        if assessment.status is LifecycleStatus.EMPTY:
+            if identity.size != 0:
+                raise StaleLifecyclePlanError("SQLite changed while it was captured")
+            actual_fingerprint = _fingerprint_files({"database.sqlite3": b""})
+        else:
+            from erii.lifecycle_sqlite_upgrade import _semantic_digest_from_path
+
+            actual_fingerprint = _semantic_digest_from_path(
+                Path(assessment.target.path)
+            )
+        if actual_fingerprint != snapshot.content.fingerprint:
             raise StaleLifecyclePlanError("SQLite changed while it was captured")
         return snapshot
 
     def write_restored(self, snapshot: _PayloadSnapshot, staging_path: Path) -> None:
-        _write_durable_file(staging_path, snapshot.files["database.sqlite3"])
+        _write_snapshot_file(snapshot, "database.sqlite3", staging_path)
 
 
 class _MemoryPackLifecycleAdapter(_LifecycleFormatAdapter):
@@ -1231,18 +1906,23 @@ class _MemoryPackLifecycleAdapter(_LifecycleFormatAdapter):
     payload_entry = "payload/memory-pack.erii"
 
     def capture(self, assessment: LifecycleAssessment) -> _PayloadSnapshot:
-        content = _read_stable_bytes(Path(assessment.target.path))
-        files = {"memory-pack.erii": content}
+        source_path = Path(assessment.target.path)
+        identity = stream_regular_file_identity(source_path)
+        if identity.size > MAX_LIFECYCLE_MEMORY_PACK_BYTES:
+            raise StorageIntegrityError(
+                "MemoryPack exceeds the supported lifecycle size limit"
+            )
         snapshot = _PayloadSnapshot(
             content=LifecycleContentIdentity.from_assessment(assessment),
-            files=files,
+            source_paths={"memory-pack.erii": str(source_path)},
+            identities={"memory-pack.erii": identity},
         )
-        if hashlib.sha256(content).hexdigest() != snapshot.content.fingerprint:
+        if identity.sha256 != snapshot.content.fingerprint:
             raise StaleLifecyclePlanError("MemoryPack changed while it was captured")
         return snapshot
 
     def write_restored(self, snapshot: _PayloadSnapshot, staging_path: Path) -> None:
-        _write_durable_file(staging_path, snapshot.files["memory-pack.erii"])
+        _write_snapshot_file(snapshot, "memory-pack.erii", staging_path)
 
 
 _FORMAT_ADAPTERS: Dict[LifecycleTargetKind, _LifecycleFormatAdapter] = {
@@ -1257,6 +1937,158 @@ def _adapter_for_kind(kind: LifecycleTargetKind) -> _LifecycleFormatAdapter:
         return _FORMAT_ADAPTERS[kind]
     except KeyError as exc:
         raise LifecyclePlanError(f"no live-data lifecycle adapter for {kind.value!r}") from exc
+
+
+def _upgrade_snapshot(
+    strategy_id: str,
+    source: _PayloadSnapshot,
+) -> _PayloadSnapshot:
+    source = _materialize_snapshot(source)
+    assert source.files is not None
+    if strategy_id == _SQLITE_SCHEMA_6_TO_9_STRATEGY_ID:
+        return _upgrade_sqlite_snapshot(source)
+    if strategy_id.startswith(_MEMORY_PACK_STRATEGY_PREFIX):
+        return _upgrade_memory_pack_snapshot(strategy_id, source)
+    if strategy_id != _FILE_STORAGE_LEGACY_TO_V1_STRATEGY_ID:
+        raise LifecyclePlanError("lifecycle upgrade strategy is unavailable")
+    if (
+        source.content.kind is not LifecycleTargetKind.FILE_STORAGE
+        or source.content.status is not LifecycleStatus.MIGRATION_REQUIRED
+        or source.content.detected_version != "legacy"
+        or source.content.current_version != FILE_STORAGE_FORMAT.current_version
+    ):
+        raise LifecyclePlanError("FileStorage upgrade source identity is invalid")
+    if FILE_STORAGE_MANIFEST in source.files:
+        raise StorageIntegrityError("legacy FileStorage unexpectedly contains a manifest")
+
+    files = dict(source.files)
+    files[FILE_STORAGE_MANIFEST] = _canonical_json(
+        {
+            "format": FILE_STORAGE_FORMAT.format_id,
+            "version": int(FILE_STORAGE_FORMAT.current_version),
+        }
+    )
+    return _PayloadSnapshot(
+        content=LifecycleContentIdentity(
+            kind=LifecycleTargetKind.FILE_STORAGE,
+            status=LifecycleStatus.CURRENT,
+            format_id=FILE_STORAGE_FORMAT.format_id,
+            detected_version=FILE_STORAGE_FORMAT.current_version,
+            current_version=FILE_STORAGE_FORMAT.current_version,
+            fingerprint=_fingerprint_files(files),
+            file_count=len(files),
+        ),
+        files=files,
+    )
+
+
+def _upgrade_sqlite_snapshot(source: _PayloadSnapshot) -> _PayloadSnapshot:
+    if (
+        source.content.kind is not LifecycleTargetKind.SQLITE
+        or source.content.status is not LifecycleStatus.MIGRATION_REQUIRED
+        or source.content.detected_version != "6"
+        or source.content.current_version != SQLITE_FORMAT.current_version
+        or set(source.files) != {"database.sqlite3"}
+    ):
+        raise LifecyclePlanError("SQLite upgrade source identity is invalid")
+
+    from erii.lifecycle_sqlite_upgrade import _migrate_sqlite_bytes
+
+    migrated, result = _migrate_sqlite_bytes(source.files["database.sqlite3"])
+    if (
+        str(result.source_version) != source.content.detected_version
+        or str(result.target_version) != source.content.current_version
+    ):
+        raise StorageIntegrityError("SQLite upgrade result has the wrong schema")
+    return _PayloadSnapshot(
+        content=LifecycleContentIdentity(
+            kind=LifecycleTargetKind.SQLITE,
+            status=LifecycleStatus.CURRENT,
+            format_id=SQLITE_FORMAT.format_id,
+            detected_version=SQLITE_FORMAT.current_version,
+            current_version=SQLITE_FORMAT.current_version,
+            fingerprint=result.semantic_digest,
+            file_count=1,
+        ),
+        files={"database.sqlite3": migrated},
+    )
+
+
+def _upgrade_memory_pack_snapshot(
+    strategy_id: str,
+    source: _PayloadSnapshot,
+) -> _PayloadSnapshot:
+    expected_strategy = (
+        f"{_MEMORY_PACK_STRATEGY_PREFIX}{source.content.detected_version}"
+        f"-to-{MEMORY_PACK_FORMAT.current_version}"
+    )
+    if (
+        strategy_id != expected_strategy
+        or source.content.kind is not LifecycleTargetKind.MEMORY_PACK
+        or source.content.status is not LifecycleStatus.MIGRATION_REQUIRED
+        or source.content.current_version != MEMORY_PACK_FORMAT.current_version
+        or set(source.files) != {"memory-pack.erii"}
+    ):
+        raise LifecyclePlanError("MemoryPack upgrade source identity is invalid")
+    try:
+        pack = MemoryPack.from_json(source.files["memory-pack.erii"].decode("utf-8"))
+    except (UnicodeDecodeError, TypeError, ValueError) as exc:
+        raise StorageIntegrityError("MemoryPack upgrade source is malformed") from exc
+    if pack.version != source.content.detected_version:
+        raise StorageIntegrityError("MemoryPack upgrade version changed during capture")
+    _validate_memory_pack_semantic_graph(pack)
+
+    pack.version = MEMORY_PACK_FORMAT.current_version
+    upgraded_content = pack.to_json().encode("utf-8")
+    try:
+        verified = MemoryPack.from_json(upgraded_content.decode("utf-8"))
+    except (UnicodeDecodeError, TypeError, ValueError) as exc:
+        raise StorageIntegrityError("MemoryPack upgrade result is malformed") from exc
+    if verified.version != MEMORY_PACK_FORMAT.current_version:
+        raise StorageIntegrityError("MemoryPack upgrade result has the wrong version")
+    _validate_memory_pack_semantic_graph(verified)
+
+    return _PayloadSnapshot(
+        content=LifecycleContentIdentity(
+            kind=LifecycleTargetKind.MEMORY_PACK,
+            status=LifecycleStatus.CURRENT,
+            format_id=MEMORY_PACK_FORMAT.format_id,
+            detected_version=MEMORY_PACK_FORMAT.current_version,
+            current_version=MEMORY_PACK_FORMAT.current_version,
+            fingerprint=hashlib.sha256(upgraded_content).hexdigest(),
+            file_count=1,
+        ),
+        files={"memory-pack.erii": upgraded_content},
+    )
+
+
+def _validate_memory_pack_semantic_graph(pack: MemoryPack) -> None:
+    """Runs the production import graph checks without opening any Storage."""
+    from erii.core.memory_pack_evidence import validate_memory_pack_archival_evidence
+    from erii.engine import ERIIEngine
+
+    try:
+        ERIIEngine._validate_memory_pack_node_types(pack)
+        ERIIEngine._validate_temporal_pack(pack)
+        ERIIEngine._validate_persona_growth_pack(pack)
+        ERIIEngine._validate_turn_pack(pack, pack.agent_id, pack.user_id)
+        validate_memory_pack_archival_evidence(pack)
+        ERIIEngine._validate_persisted_turn_adjudication_pack(
+            pack,
+            pack.agent_id,
+            pack.user_id,
+            None,
+        )
+        ERIIEngine._validate_relationship_processing_pack(
+            pack,
+            pack.agent_id,
+            pack.user_id,
+            None,
+        )
+    except ValueError as exc:
+        raise StorageIntegrityError(
+            "MemoryPack semantic graph validation failed"
+        ) from exc
 
 
 def _write_durable_file(path: Path, content: bytes) -> None:
@@ -1414,14 +2246,6 @@ def _rename_no_replace(source: Path, destination: Path) -> None:
     raise OSError(error_number, os.strerror(error_number), os.fspath(destination))
 
 
-def _write_payload_files(root: Path, files: Dict[str, bytes]) -> None:
-    for relative_name in sorted(files):
-        relative = PurePosixPath(relative_name)
-        _validate_relative_payload_path(relative_name)
-        _ensure_private_payload_parent(root, relative)
-        _write_durable_file(root.joinpath(*relative.parts), files[relative_name])
-
-
 def _validate_relative_payload_path(value: object) -> str:
     if not isinstance(value, str) or not value:
         raise StorageIntegrityError("backup payload path must be a non-empty string")
@@ -1470,35 +2294,6 @@ def _fsync_tree_directories(root: Path) -> None:
     _fsync_directory(root)
 
 
-def _scan_directory_strict(root: Path) -> Dict[str, bytes]:
-    initial, initial_directories = _scan_directory_entries(
-        root,
-        label="backup lifecycle target",
-    )
-    content = {
-        name: _read_stable_bytes(
-            root.joinpath(*PurePosixPath(name).parts),
-            expected_signature=initial[name],
-        )
-        for name in sorted(initial)
-    }
-    final, final_directories = _scan_directory_entries(
-        root,
-        label="backup lifecycle target",
-    )
-    if final != initial or final_directories != initial_directories:
-        raise StorageIntegrityError("backup lifecycle target changed during inspection")
-    for directory in final_directories:
-        if directory == "payload":
-            continue
-        prefix = f"{directory}/"
-        if not any(name.startswith(prefix) for name in final):
-            raise StorageIntegrityError(
-                "backup lifecycle target contains an undeclared empty directory"
-            )
-    return content
-
-
 def _payload_file_manifest(files: Dict[str, bytes]) -> list[Dict[str, object]]:
     return [
         {
@@ -1520,7 +2315,7 @@ def _backup_manifest(plan: LifecyclePlan, snapshot: _PayloadSnapshot) -> Dict[st
         "source": _content_to_dict(snapshot.content),
         "payload": {
             "entry": adapter.payload_entry,
-            "files": _payload_file_manifest(snapshot.files),
+            "files": _snapshot_file_manifest(snapshot),
             "tree_fingerprint": snapshot.content.fingerprint,
         },
     }
@@ -1582,10 +2377,27 @@ def _read_backup_bundle(target: LifecycleTarget) -> _BackupBundle:
     _require_regular_file(manifest_path, label="backup manifest")
     _require_regular_directory(payload_root, label="backup payload")
 
-    content_by_name = _scan_directory_strict(root)
-    manifest_bytes = content_by_name.get(LIFECYCLE_BACKUP_MANIFEST)
-    if manifest_bytes is None:
-        raise StorageIntegrityError("backup manifest is missing")
+    initial_files, initial_directories = _scan_directory_entries(
+        root,
+        label="backup lifecycle target",
+    )
+    streamed = stream_regular_tree_manifest(root)
+    streamed_entries = {entry.relative_path: entry for entry in streamed.files}
+    if set(streamed_entries) != set(initial_files):
+        raise StorageIntegrityError("backup lifecycle target changed during inspection")
+    for directory in initial_directories:
+        if directory == "payload":
+            continue
+        prefix = f"{directory}/"
+        if not any(name.startswith(prefix) for name in initial_files):
+            raise StorageIntegrityError(
+                "backup lifecycle target contains an undeclared empty directory"
+            )
+    manifest_bytes = _read_stable_bytes(
+        manifest_path,
+        expected_signature=initial_files[LIFECYCLE_BACKUP_MANIFEST],
+        size_limit=MAX_LIFECYCLE_BACKUP_MANIFEST_BYTES,
+    )
     try:
         manifest = _decode_strict_json(
             manifest_bytes.decode("utf-8"),
@@ -1652,18 +2464,18 @@ def _read_backup_bundle(target: LifecycleTarget) -> _BackupBundle:
     if [item["path"] for item in listed_files] != sorted(expected_files):
         raise StorageIntegrityError("backup payload file manifest is not canonical")
 
-    actual_files = {
-        relative_name.removeprefix("payload/"): content
-        for relative_name, content in content_by_name.items()
+    actual_entries = {
+        relative_name.removeprefix("payload/"): entry
+        for relative_name, entry in streamed_entries.items()
         if relative_name.startswith("payload/")
     }
-    if set(actual_files) != set(expected_files):
+    if set(actual_entries) != set(expected_files):
         raise StorageIntegrityError("backup payload files do not match the manifest")
-    for relative_name, content in actual_files.items():
+    for relative_name, entry in actual_entries.items():
         size, digest = expected_files[relative_name]
-        if len(content) != size or hashlib.sha256(content).hexdigest() != digest:
+        if entry.size != size or entry.sha256 != digest:
             raise StorageIntegrityError("backup payload file verification failed")
-    if source_content.file_count != len(actual_files):
+    if source_content.file_count != len(actual_entries):
         raise StorageIntegrityError("backup source file count does not match its payload")
 
     payload_target = adapter.restored_target(
@@ -1673,21 +2485,43 @@ def _read_backup_bundle(target: LifecycleTarget) -> _BackupBundle:
     if not _assessment_matches_content(payload_assessment, source_content):
         raise StorageIntegrityError("backup payload does not match its source identity")
 
+    final_files, final_directories = _scan_directory_entries(
+        root,
+        label="backup lifecycle target",
+    )
+    if final_files != initial_files or final_directories != initial_directories:
+        raise StorageIntegrityError("backup lifecycle target changed during inspection")
+
     assessment = LifecycleAssessment(
         target=target,
         status=LifecycleStatus.CURRENT,
         format_id=LIFECYCLE_BACKUP_FORMAT.format_id,
         detected_version=LIFECYCLE_BACKUP_FORMAT.current_version,
         current_version=LIFECYCLE_BACKUP_FORMAT.current_version,
-        fingerprint=_fingerprint_files(content_by_name),
-        file_count=len(content_by_name),
+        fingerprint=streamed.tree_fingerprint,
+        file_count=streamed.file_count,
     )
     return _BackupBundle(
         assessment=assessment,
         content=source_content,
         operation_id=operation_id,
         plan_digest=plan_digest,
-        snapshot=_PayloadSnapshot(content=source_content, files=actual_files),
+        snapshot=_PayloadSnapshot(
+            content=source_content,
+            source_paths={
+                relative_name: str(
+                    payload_root.joinpath(*PurePosixPath(relative_name).parts)
+                )
+                for relative_name in actual_entries
+            },
+            identities={
+                relative_name: RegularFileIdentity(
+                    size=entry.size,
+                    sha256=entry.sha256,
+                )
+                for relative_name, entry in actual_entries.items()
+            },
+        ),
     )
 
 
@@ -1721,18 +2555,71 @@ def _require_safe_destination(
         ) from exc
 
 
-def _assert_plan_destination_topology(plan: LifecyclePlan) -> None:
+def _require_destinations_do_not_overlap(
+    first: LifecycleTarget,
+    second: LifecycleTarget,
+) -> None:
     try:
-        current_parent = _require_safe_destination(
-            source=plan.source.target,
-            destination=plan.destination.target,
-        )
-    except LifecyclePlanError as exc:
-        raise StaleLifecyclePlanError(
-            "lifecycle source/destination topology became unsafe"
-        ) from exc
-    if current_parent != plan.destination_parent:
-        raise StaleLifecyclePlanError("lifecycle destination parent changed after planning")
+        overlaps = _paths_overlap(first.path, second.path)
+    except StorageIntegrityError as exc:
+        raise LifecyclePlanError("lifecycle destination paths are unsafe") from exc
+    if overlaps:
+        raise LifecyclePlanError("lifecycle destinations cannot overlap")
+
+
+def _assert_plan_destination_topology(plan: LifecyclePlan) -> None:
+    if plan.operation in {LifecycleOperation.ERASE, LifecycleOperation.REBUILD}:
+        if plan.destination.target != plan.source.target:
+            raise LifecyclePlanError("in-place lifecycle target identity is invalid")
+        try:
+            current_parent = _directory_identity(Path(plan.destination.target.path).parent)
+        except StorageIntegrityError as exc:
+            raise StaleLifecyclePlanError(
+                "lifecycle source parent became unsafe"
+            ) from exc
+        if current_parent != plan.destination_parent:
+            raise StaleLifecyclePlanError(
+                "lifecycle source parent changed after planning"
+            )
+    else:
+        try:
+            current_parent = _require_safe_destination(
+                source=plan.source.target,
+                destination=plan.destination.target,
+            )
+        except LifecyclePlanError as exc:
+            raise StaleLifecyclePlanError(
+                "lifecycle source/destination topology became unsafe"
+            ) from exc
+        if current_parent != plan.destination_parent:
+            raise StaleLifecyclePlanError(
+                "lifecycle destination parent changed after planning"
+            )
+    if plan.operation in {
+        LifecycleOperation.UPGRADE,
+        LifecycleOperation.ERASE,
+        LifecycleOperation.REBUILD,
+    }:
+        if plan.backup_destination is None or plan.backup_destination_parent is None:
+            raise LifecyclePlanError("lifecycle plan backup topology is incomplete")
+        try:
+            current_backup_parent = _require_safe_destination(
+                source=plan.source.target,
+                destination=plan.backup_destination.target,
+            )
+            if plan.operation is LifecycleOperation.UPGRADE:
+                _require_destinations_do_not_overlap(
+                    plan.destination.target,
+                    plan.backup_destination.target,
+                )
+        except LifecyclePlanError as exc:
+            raise StaleLifecyclePlanError(
+                "lifecycle backup destination topology became unsafe"
+            ) from exc
+        if current_backup_parent != plan.backup_destination_parent:
+            raise StaleLifecyclePlanError(
+                "lifecycle backup destination parent changed after planning"
+            )
 
 
 def _owner_document(plan: LifecyclePlan) -> bytes:
@@ -1890,10 +2777,64 @@ def _destination_lock(destination: Path):
         # waiter still holds the old one, which would split the exclusion domain.
 
 
+@contextmanager
+def _destination_locks(*destinations: Path):
+    unique = {
+        os.path.normcase(os.path.abspath(str(destination))): destination
+        for destination in destinations
+    }
+    with ExitStack() as stack:
+        for key in sorted(unique):
+            stack.enter_context(_destination_lock(unique[key]))
+        yield
+
+
 def _stage_paths(destination: Path, plan: LifecyclePlan) -> tuple[Path, Path]:
     stem = f".{destination.name}.{plan.operation_id[:12]}.{plan.operation.value}.tmp"
     staging = destination.parent / stem
     return staging, destination.parent / f"{stem}.owner"
+
+
+def _recovery_path(destination: Path, plan: LifecyclePlan) -> Path:
+    return destination.parent / (
+        f".{destination.name}.{plan.operation_id[:12]}.{plan.operation.value}.recovery"
+    )
+
+
+def _quiesce_sqlite_staging(path: Path) -> None:
+    """Checkpoints a private SQLite artifact and removes only empty sidecars."""
+    try:
+        with closing(sqlite3.connect(str(path))) as connection:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+            connection.commit()
+    except sqlite3.Error as exc:
+        raise StorageIntegrityError("staged SQLite database could not be checkpointed") from exc
+    for suffix in ("-wal", "-shm", "-journal"):
+        sidecar = Path(f"{path}{suffix}")
+        if not _lexists(sidecar):
+            continue
+        info = _require_regular_file(sidecar, label="staged SQLite sidecar")
+        if suffix in {"-wal", "-journal"} and info.st_size:
+            raise StorageIntegrityError("staged SQLite sidecar still contains pending data")
+        try:
+            sidecar.unlink()
+        except OSError as exc:
+            raise StorageWriteError("staged SQLite sidecar could not be removed") from exc
+    _fsync_directory(path.parent)
+
+
+def _with_lifecycle_backup_inventory(
+    result: ErasureTransformResult,
+) -> ErasureTransformResult:
+    counts = result.inventory.to_dict()
+    counts["unverified_external"]["lifecycle_backup"] = 1
+    return ErasureTransformResult(
+        storage_kind=result.storage_kind,
+        selector=result.selector,
+        affected_relationship_ids=result.affected_relationship_ids,
+        rebuild_proofs=result.rebuild_proofs,
+        inventory=ErasureInventory(counts=counts),
+    )
 
 
 def _same_assessment(
@@ -1916,11 +2857,16 @@ def _require_complete_bundle(bundle: _BackupBundle) -> _BackupBundle:
 
 
 def _matching_backup_for_plan(bundle: _BackupBundle, plan: LifecyclePlan) -> bool:
+    expected_content = (
+        LifecycleContentIdentity.from_assessment(plan.source)
+        if plan.operation is LifecycleOperation.UPGRADE
+        else plan.content
+    )
     return (
         bundle.assessment.status is LifecycleStatus.CURRENT
         and bundle.operation_id == plan.operation_id
         and bundle.plan_digest == plan.plan_digest
-        and bundle.content == plan.content
+        and bundle.content == expected_content
         and bundle.snapshot is not None
     )
 
@@ -1930,6 +2876,8 @@ def _report(
     *,
     outcome: LifecycleOutcome,
     artifact_fingerprint: str,
+    file_count: int | None = None,
+    details: ErasureTransformResult | MemoryPackStagingImportReport | None = None,
 ) -> LifecycleReport:
     return LifecycleReport(
         operation_id=plan.operation_id,
@@ -1938,7 +2886,8 @@ def _report(
         outcome=outcome,
         content_fingerprint=plan.content.fingerprint,
         artifact_fingerprint=artifact_fingerprint,
-        file_count=plan.content.file_count,
+        file_count=plan.content.file_count if file_count is None else file_count,
+        details=details,
     )
 
 
@@ -1961,11 +2910,19 @@ class DataLifecycleCoordinator:
         return assessment
 
     def plan(self, request: LifecycleRequest) -> LifecyclePlan:
-        """Freezes a zero-write backup or restore plan."""
+        """Freezes a zero-write, strictly serializable lifecycle plan."""
         if isinstance(request, BackupRequest):
             return self._plan_backup(request)
         if isinstance(request, RestoreRequest):
             return self._plan_restore(request)
+        if isinstance(request, UpgradeRequest):
+            return self._plan_upgrade(request)
+        if isinstance(request, EraseRequest):
+            return self._plan_erasure(request, LifecycleOperation.ERASE)
+        if isinstance(request, RebuildRequest):
+            return self._plan_erasure(request, LifecycleOperation.REBUILD)
+        if isinstance(request, MemoryPackImportRequest):
+            return self._plan_memory_pack_import(request)
         raise TypeError("plan() requires a supported lifecycle request")
 
     def execute(self, plan: LifecyclePlan) -> LifecycleReport:
@@ -1979,6 +2936,12 @@ class DataLifecycleCoordinator:
             return self._execute_backup(plan)
         if plan.operation is LifecycleOperation.RESTORE:
             return self._execute_restore(plan)
+        if plan.operation is LifecycleOperation.UPGRADE:
+            return self._execute_upgrade(plan)
+        if plan.operation in {LifecycleOperation.ERASE, LifecycleOperation.REBUILD}:
+            return self._execute_erasure_or_rebuild(plan)
+        if plan.operation is LifecycleOperation.IMPORT:
+            return self._execute_memory_pack_import(plan)
         raise LifecyclePlanError("lifecycle plan operation is unsupported")
 
     def _plan_backup(self, request: BackupRequest) -> LifecyclePlan:
@@ -2001,6 +2964,7 @@ class DataLifecycleCoordinator:
             destination=destination,
             destination_parent=destination_parent,
             content=LifecycleContentIdentity.from_assessment(current_source),
+            strategy_id=_BACKUP_STRATEGY_ID,
         )
 
     def _plan_restore(self, request: RestoreRequest) -> LifecyclePlan:
@@ -2026,7 +2990,254 @@ class DataLifecycleCoordinator:
             destination=destination,
             destination_parent=destination_parent,
             content=current_bundle.content,
+            strategy_id=_RESTORE_STRATEGY_ID,
         )
+
+    def _plan_upgrade(self, request: UpgradeRequest) -> LifecyclePlan:
+        _validate_assessment(request.source)
+        current_source = self.inspect(request.source.target)
+        if not _same_assessment(request.source, current_source):
+            raise StaleLifecyclePlanError("upgrade source changed before planning")
+        if current_source.status is not LifecycleStatus.MIGRATION_REQUIRED:
+            raise LifecyclePlanError("upgrade source does not require migration")
+        strategy_id = _upgrade_strategy_id(current_source)
+
+        destination = self.inspect(request.destination)
+        if destination.status is not LifecycleStatus.MISSING:
+            raise LifecycleConflictError("upgrade destination must not already exist")
+        backup_destination = self.inspect(request.backup_destination)
+        if backup_destination.status is not LifecycleStatus.MISSING:
+            raise LifecycleConflictError("upgrade backup destination must not already exist")
+        destination_parent = _require_safe_destination(
+            source=current_source.target,
+            destination=destination.target,
+        )
+        backup_destination_parent = _require_safe_destination(
+            source=current_source.target,
+            destination=backup_destination.target,
+        )
+        _require_destinations_do_not_overlap(
+            destination.target,
+            backup_destination.target,
+        )
+
+        adapter = _adapter_for_kind(current_source.target.kind)
+        source_snapshot = adapter.capture(current_source)
+        final_source = self.inspect(current_source.target)
+        if not _same_assessment(current_source, final_source):
+            raise StaleLifecyclePlanError("upgrade source changed during planning")
+        upgraded = _upgrade_snapshot(strategy_id, source_snapshot)
+        return _make_plan(
+            operation=LifecycleOperation.UPGRADE,
+            source=current_source,
+            destination=destination,
+            destination_parent=destination_parent,
+            content=upgraded.content,
+            strategy_id=strategy_id,
+            backup_destination=backup_destination,
+            backup_destination_parent=backup_destination_parent,
+        )
+
+    def _plan_erasure(
+        self,
+        request: EraseRequest | RebuildRequest,
+        operation: LifecycleOperation,
+    ) -> LifecyclePlan:
+        _validate_assessment(request.source)
+        current_source = self.inspect(request.source.target)
+        if not _same_assessment(request.source, current_source):
+            raise StaleLifecyclePlanError("lifecycle mutation source changed before planning")
+        if current_source.status is not LifecycleStatus.CURRENT:
+            raise LifecyclePlanError("erase and rebuild require current live storage")
+        storage_kind = _erasure_storage_kind(current_source.target.kind)
+        if (
+            operation is LifecycleOperation.REBUILD
+            and request.selector.scope is not ErasureScope.RELATIONSHIP
+        ):
+            raise LifecyclePlanError(
+                "deterministic rebuild currently requires a relationship selector"
+            )
+
+        from erii.lifecycle_erasure import inspect_erasure_scope
+
+        try:
+            inspect_erasure_scope(
+                current_source.target.path,
+                storage_kind,
+                request.selector,
+            )
+        except ErasureSelectionError as exc:
+            raise LifecyclePlanError("erasure selector does not match live storage") from exc
+        final_source = self.inspect(current_source.target)
+        if not _same_assessment(current_source, final_source):
+            raise StaleLifecyclePlanError("lifecycle mutation source changed during planning")
+
+        backup_destination = self.inspect(request.backup_destination)
+        if backup_destination.status is not LifecycleStatus.MISSING:
+            raise LifecycleConflictError(
+                "erase and rebuild backup destination must not already exist"
+            )
+        try:
+            destination_parent = _directory_identity(
+                Path(current_source.target.path).parent
+            )
+        except StorageIntegrityError as exc:
+            raise LifecyclePlanError("lifecycle source parent is unsafe") from exc
+        backup_destination_parent = _require_safe_destination(
+            source=current_source.target,
+            destination=backup_destination.target,
+        )
+        return _make_plan(
+            operation=operation,
+            source=current_source,
+            destination=current_source,
+            destination_parent=destination_parent,
+            content=LifecycleContentIdentity.from_assessment(current_source),
+            strategy_id=_erasure_strategy_id(operation, current_source.target.kind),
+            backup_destination=backup_destination,
+            backup_destination_parent=backup_destination_parent,
+            selector=request.selector,
+        )
+
+    def _plan_memory_pack_import(
+        self,
+        request: MemoryPackImportRequest,
+    ) -> LifecyclePlan:
+        _validate_assessment(request.source)
+        current_source = self.inspect(request.source.target)
+        if not _same_assessment(request.source, current_source):
+            raise StaleLifecyclePlanError("MemoryPack source changed before planning")
+        if current_source.status not in {
+            LifecycleStatus.CURRENT,
+            LifecycleStatus.MIGRATION_REQUIRED,
+        }:
+            raise LifecyclePlanError("MemoryPack import source must be readable")
+        destination = self.inspect(request.destination)
+        if destination.status is not LifecycleStatus.MISSING:
+            raise LifecycleConflictError("MemoryPack import destination must not exist")
+        destination_parent = _require_safe_destination(
+            source=current_source.target,
+            destination=destination.target,
+        )
+        snapshot = _materialize_snapshot(
+            _MemoryPackLifecycleAdapter().capture(current_source)
+        )
+        assert snapshot.files is not None
+        try:
+            pack = MemoryPack.from_json(snapshot.files["memory-pack.erii"].decode("utf-8"))
+        except (UnicodeDecodeError, TypeError, ValueError) as exc:
+            raise StorageIntegrityError("MemoryPack import source is malformed") from exc
+        _validate_memory_pack_semantic_graph(pack)
+        final_source = self.inspect(current_source.target)
+        if not _same_assessment(current_source, final_source):
+            raise StaleLifecyclePlanError("MemoryPack source changed during planning")
+        options = MemoryPackImportOptions(
+            target_agent_id=request.target_agent_id,
+            target_user_id=request.target_user_id,
+        )
+        return _make_plan(
+            operation=LifecycleOperation.IMPORT,
+            source=current_source,
+            destination=destination,
+            destination_parent=destination_parent,
+            content=LifecycleContentIdentity.from_assessment(current_source),
+            strategy_id=_import_strategy_id(destination.target.kind),
+            selector=options,
+        )
+
+    def _ensure_verified_prechange_backup(
+        self,
+        plan: LifecyclePlan,
+        *,
+        backup_staging: Path,
+        backup_owner: Path,
+    ) -> _BackupBundle:
+        """Returns the plan-bound backup, publishing it only from the exact source."""
+        if plan.backup_destination is None:
+            raise LifecyclePlanError("lifecycle mutation has no backup destination")
+        backup_destination = Path(plan.backup_destination.target.path)
+        if _lexists(backup_destination):
+            try:
+                bundle = _require_complete_bundle(
+                    _read_backup_bundle(plan.backup_destination.target)
+                )
+            except (
+                LifecyclePlanError,
+                StorageIntegrityError,
+                UnsupportedFormatError,
+            ) as exc:
+                raise LifecycleConflictError(
+                    "lifecycle backup destination contains a damaged artifact"
+                ) from exc
+            if not _matching_backup_for_plan(bundle, plan):
+                raise LifecycleConflictError(
+                    "lifecycle backup destination belongs to a different plan"
+                )
+            _cleanup_staging(plan, backup_staging, backup_owner)
+            return bundle
+
+        current_source = self.inspect(plan.source.target)
+        if not _same_assessment(plan.source, current_source):
+            raise StaleLifecyclePlanError(
+                "lifecycle source changed before its required backup"
+            )
+        adapter = _adapter_for_kind(plan.source.target.kind)
+        source_snapshot = adapter.capture(current_source)
+        final_source = self.inspect(plan.source.target)
+        if not _same_assessment(plan.source, final_source):
+            raise StaleLifecyclePlanError(
+                "lifecycle source changed during required backup capture"
+            )
+
+        _prepare_staging(plan, backup_staging, backup_owner)
+        backup_published = False
+        try:
+            _create_private_directory(backup_staging)
+            payload_root = backup_staging / "payload"
+            _create_private_directory(payload_root)
+            _write_snapshot_files(payload_root, source_snapshot)
+            _fsync_tree_directories(payload_root)
+            _write_durable_file(
+                backup_staging / LIFECYCLE_BACKUP_MANIFEST,
+                _canonical_json(_backup_manifest(plan, source_snapshot)),
+            )
+            _fsync_directory(backup_staging)
+            staged = _require_complete_bundle(
+                _read_backup_bundle(
+                    LifecycleTarget(
+                        LifecycleTargetKind.BACKUP,
+                        str(backup_staging),
+                    )
+                )
+            )
+            if not _matching_backup_for_plan(staged, plan):
+                raise LifecycleVerificationError(
+                    "staged lifecycle backup does not match its plan",
+                    recovery_status="source_unchanged",
+                )
+            _assert_plan_destination_topology(plan)
+            try:
+                _rename_no_replace(backup_staging, backup_destination)
+            except LifecycleConflictError:
+                raise
+            except OSError as exc:
+                raise StorageWriteError("lifecycle backup publication failed") from exc
+            backup_published = True
+            _fsync_directory(backup_destination.parent)
+            bundle = _require_complete_bundle(
+                _read_backup_bundle(plan.backup_destination.target)
+            )
+            if not _matching_backup_for_plan(bundle, plan):
+                raise LifecycleVerificationError(
+                    "published lifecycle backup does not match its plan",
+                    recovery_status=_published_target_recovery_status(),
+                )
+            _cleanup_staging(plan, backup_staging, backup_owner)
+            return bundle
+        except Exception:
+            if not backup_published:
+                _cleanup_staging(plan, backup_staging, backup_owner)
+            raise
 
     def _execute_backup(self, plan: LifecyclePlan) -> LifecycleReport:
         destination = Path(plan.destination.target.path)
@@ -2070,7 +3281,7 @@ class DataLifecycleCoordinator:
                 _create_private_directory(staging)
                 payload_root = staging / "payload"
                 _create_private_directory(payload_root)
-                _write_payload_files(payload_root, snapshot.files)
+                _write_snapshot_files(payload_root, snapshot)
                 _fsync_tree_directories(payload_root)
                 manifest_bytes = _canonical_json(_backup_manifest(plan, snapshot))
                 _write_durable_file(staging / LIFECYCLE_BACKUP_MANIFEST, manifest_bytes)
@@ -2192,13 +3403,585 @@ class DataLifecycleCoordinator:
                     _cleanup_staging(plan, staging, owner)
                 raise
 
+    def _execute_upgrade(self, plan: LifecyclePlan) -> LifecycleReport:
+        if plan.backup_destination is None or plan.backup_destination_parent is None:
+            raise LifecyclePlanError("upgrade plan backup destination is incomplete")
+
+        destination = Path(plan.destination.target.path)
+        backup_destination = Path(plan.backup_destination.target.path)
+        staging, owner = _stage_paths(destination, plan)
+        backup_staging, backup_owner = _stage_paths(backup_destination, plan)
+        _assert_plan_destination_topology(plan)
+
+        with _destination_locks(backup_destination, destination):
+            _assert_plan_destination_topology(plan)
+            current_destination = self.inspect(plan.destination.target)
+            if current_destination.status is not LifecycleStatus.MISSING:
+                try:
+                    existing_backup = _require_complete_bundle(
+                        _read_backup_bundle(plan.backup_destination.target)
+                    )
+                except (
+                    LifecyclePlanError,
+                    StorageIntegrityError,
+                    UnsupportedFormatError,
+                ) as exc:
+                    raise LifecycleConflictError(
+                        "completed upgrade target has no matching verified backup"
+                    ) from exc
+                if not _assessment_matches_content(current_destination, plan.content) or not (
+                    _matching_backup_for_plan(existing_backup, plan)
+                ):
+                    raise LifecycleConflictError(
+                        "upgrade destination contains a different or damaged artifact"
+                    )
+                _cleanup_staging(plan, backup_staging, backup_owner)
+                _cleanup_staging(plan, staging, owner)
+                assert current_destination.fingerprint is not None
+                return _report(
+                    plan,
+                    outcome=LifecycleOutcome.ALREADY_COMPLETE,
+                    artifact_fingerprint=current_destination.fingerprint,
+                )
+
+            current_source = self.inspect(plan.source.target)
+            if not _same_assessment(plan.source, current_source):
+                raise StaleLifecyclePlanError("upgrade source changed after planning")
+            adapter = _adapter_for_kind(plan.source.target.kind)
+
+            if _lexists(backup_destination):
+                try:
+                    backup_bundle = _require_complete_bundle(
+                        _read_backup_bundle(plan.backup_destination.target)
+                    )
+                except (
+                    LifecyclePlanError,
+                    StorageIntegrityError,
+                    UnsupportedFormatError,
+                ) as exc:
+                    raise LifecycleConflictError(
+                        "upgrade backup destination contains a damaged artifact"
+                    ) from exc
+                if not _matching_backup_for_plan(backup_bundle, plan):
+                    raise LifecycleConflictError(
+                        "upgrade backup destination belongs to a different plan"
+                    )
+                _cleanup_staging(plan, backup_staging, backup_owner)
+            else:
+                source_snapshot = adapter.capture(current_source)
+                final_source = self.inspect(plan.source.target)
+                if not _same_assessment(plan.source, final_source):
+                    raise StaleLifecyclePlanError("upgrade source changed during backup capture")
+
+                _prepare_staging(plan, backup_staging, backup_owner)
+                backup_published = False
+                try:
+                    _create_private_directory(backup_staging)
+                    payload_root = backup_staging / "payload"
+                    _create_private_directory(payload_root)
+                    _write_snapshot_files(payload_root, source_snapshot)
+                    _fsync_tree_directories(payload_root)
+                    manifest_bytes = _canonical_json(_backup_manifest(plan, source_snapshot))
+                    _write_durable_file(
+                        backup_staging / LIFECYCLE_BACKUP_MANIFEST,
+                        manifest_bytes,
+                    )
+                    _fsync_directory(backup_staging)
+                    try:
+                        staged_backup = _read_backup_bundle(
+                            LifecycleTarget(
+                                LifecycleTargetKind.BACKUP,
+                                str(backup_staging),
+                            )
+                        )
+                    except (StorageIntegrityError, UnsupportedFormatError) as exc:
+                        raise LifecycleVerificationError(
+                            "staged upgrade backup failed verification",
+                            recovery_status="source_unchanged",
+                        ) from exc
+                    if not _matching_backup_for_plan(staged_backup, plan):
+                        raise LifecycleVerificationError(
+                            "staged upgrade backup does not match its plan",
+                            recovery_status="source_unchanged",
+                        )
+                    _assert_plan_destination_topology(plan)
+                    try:
+                        _rename_no_replace(backup_staging, backup_destination)
+                    except LifecycleConflictError:
+                        raise
+                    except OSError as exc:
+                        raise StorageWriteError("upgrade backup publication failed") from exc
+                    backup_published = True
+                    _fsync_directory(backup_destination.parent)
+                    try:
+                        backup_bundle = _read_backup_bundle(plan.backup_destination.target)
+                    except (StorageIntegrityError, UnsupportedFormatError) as exc:
+                        raise LifecycleVerificationError(
+                            "published upgrade backup failed verification",
+                            recovery_status=_published_target_recovery_status(),
+                        ) from exc
+                    if not _matching_backup_for_plan(backup_bundle, plan):
+                        raise LifecycleVerificationError(
+                            "published upgrade backup does not match its plan",
+                            recovery_status=_published_target_recovery_status(),
+                        )
+                    _cleanup_staging(plan, backup_staging, backup_owner)
+                except Exception:
+                    if not backup_published:
+                        _cleanup_staging(plan, backup_staging, backup_owner)
+                    raise
+
+            if backup_bundle.snapshot is None:
+                raise LifecycleVerificationError(
+                    "verified upgrade backup has no restorable payload",
+                    recovery_status="verified_backup_preserved_target_missing",
+                )
+            current_source = self.inspect(plan.source.target)
+            if not _same_assessment(plan.source, current_source):
+                raise StaleLifecyclePlanError(
+                    "upgrade source changed after its backup was verified"
+                )
+            upgraded = _upgrade_snapshot(plan.strategy_id, backup_bundle.snapshot)
+            if upgraded.content != plan.content:
+                raise StaleLifecyclePlanError(
+                    "upgrade result no longer matches its planned identity"
+                )
+
+            _prepare_staging(plan, staging, owner)
+            published = False
+            try:
+                adapter.write_restored(upgraded, staging)
+                if staging.is_dir():
+                    _fsync_tree_directories(staging)
+                _fsync_directory(staging.parent)
+                staged_assessment = self.inspect(adapter.restored_target(staging))
+                if not _assessment_matches_content(staged_assessment, plan.content):
+                    raise LifecycleVerificationError(
+                        "staged upgrade does not match its planned result",
+                        recovery_status="verified_backup_preserved_target_missing",
+                    )
+                final_source = self.inspect(plan.source.target)
+                if not _same_assessment(plan.source, final_source):
+                    raise StaleLifecyclePlanError(
+                        "upgrade source changed before target publication"
+                    )
+                current_backup = _require_complete_bundle(
+                    _read_backup_bundle(plan.backup_destination.target)
+                )
+                if not _matching_backup_for_plan(current_backup, plan):
+                    raise StaleLifecyclePlanError(
+                        "upgrade backup changed before target publication"
+                    )
+                _assert_plan_destination_topology(plan)
+                try:
+                    _rename_no_replace(staging, destination)
+                except LifecycleConflictError:
+                    raise
+                except OSError as exc:
+                    raise StorageWriteError("upgrade publication failed") from exc
+                published = True
+                _fsync_directory(destination.parent)
+                try:
+                    final_assessment = self.inspect(plan.destination.target)
+                except (StorageIntegrityError, UnsupportedFormatError) as exc:
+                    raise LifecycleVerificationError(
+                        "published upgrade failed verification",
+                        recovery_status=_published_target_recovery_status(),
+                    ) from exc
+                if not _assessment_matches_content(final_assessment, plan.content):
+                    raise LifecycleVerificationError(
+                        "published upgrade does not match its planned result",
+                        recovery_status=_published_target_recovery_status(),
+                    )
+                _cleanup_staging(plan, staging, owner)
+                assert final_assessment.fingerprint is not None
+                return _report(
+                    plan,
+                    outcome=LifecycleOutcome.APPLIED,
+                    artifact_fingerprint=final_assessment.fingerprint,
+                )
+            except Exception:
+                if not published:
+                    _cleanup_staging(plan, staging, owner)
+                raise
+
+    def _execute_erasure_or_rebuild(self, plan: LifecyclePlan) -> LifecycleReport:
+        if (
+            plan.backup_destination is None
+            or plan.backup_destination_parent is None
+            or not isinstance(plan.selector, ErasureSelector)
+        ):
+            raise LifecyclePlanError("erase or rebuild plan is incomplete")
+
+        destination = Path(plan.destination.target.path)
+        backup_destination = Path(plan.backup_destination.target.path)
+        staging, owner = _stage_paths(destination, plan)
+        backup_staging, backup_owner = _stage_paths(backup_destination, plan)
+        recovery = _recovery_path(destination, plan)
+        adapter = _adapter_for_kind(plan.source.target.kind)
+        storage_kind = _erasure_storage_kind(plan.source.target.kind)
+        _assert_plan_destination_topology(plan)
+
+        with _destination_locks(backup_destination, destination):
+            _assert_plan_destination_topology(plan)
+
+            # A crash between the two same-directory renames leaves the exact
+            # original under the deterministic recovery name. Restore it before
+            # re-entering the ordinary backup-first path.
+            if _lexists(recovery) and not _lexists(destination):
+                if not _lexists(backup_destination):
+                    raise LifecycleConflictError(
+                        "lifecycle recovery exists without its verified backup"
+                    )
+                recovery_assessment = self.inspect(
+                    LifecycleTarget(plan.source.target.kind, str(recovery))
+                )
+                if not _assessment_matches_content(recovery_assessment, plan.content):
+                    raise LifecycleConflictError(
+                        "lifecycle recovery does not match the planned source"
+                    )
+                recovery_bundle = _require_complete_bundle(
+                    _read_backup_bundle(plan.backup_destination.target)
+                )
+                if not _matching_backup_for_plan(recovery_bundle, plan):
+                    raise LifecycleConflictError(
+                        "lifecycle recovery backup does not match the plan"
+                    )
+                try:
+                    _rename_no_replace(recovery, destination)
+                except OSError as exc:
+                    raise StorageWriteError(
+                        "lifecycle recovery restoration failed"
+                    ) from exc
+                _fsync_directory(destination.parent)
+
+            backup_preexisted = _lexists(backup_destination)
+            backup_bundle = self._ensure_verified_prechange_backup(
+                plan,
+                backup_staging=backup_staging,
+                backup_owner=backup_owner,
+            )
+            if backup_bundle.snapshot is None:
+                raise LifecycleVerificationError(
+                    "verified lifecycle backup has no restorable payload",
+                    recovery_status="verified_backup_preserved",
+                )
+
+            _prepare_staging(plan, staging, owner)
+            try:
+                adapter.write_restored(backup_bundle.snapshot, staging)
+                from erii.lifecycle_erasure import (
+                    erase_staged_storage,
+                    rebuild_staged_storage,
+                )
+
+                if plan.operation is LifecycleOperation.ERASE:
+                    details = erase_staged_storage(
+                        str(staging),
+                        storage_kind,
+                        plan.selector,
+                    )
+                else:
+                    details = rebuild_staged_storage(
+                        str(staging),
+                        storage_kind,
+                        plan.selector,
+                    )
+                details = _with_lifecycle_backup_inventory(details)
+                if plan.source.target.kind is LifecycleTargetKind.SQLITE:
+                    _quiesce_sqlite_staging(staging)
+                elif staging.is_dir():
+                    _fsync_tree_directories(staging)
+                _fsync_directory(staging.parent)
+                staged_assessment = self.inspect(adapter.restored_target(staging))
+                if staged_assessment.status is not LifecycleStatus.CURRENT:
+                    raise LifecycleVerificationError(
+                        "staged lifecycle mutation is not current storage",
+                        recovery_status="verified_backup_preserved_source_unchanged",
+                    )
+                staged_content = LifecycleContentIdentity.from_assessment(
+                    staged_assessment
+                )
+
+                current = self.inspect(plan.destination.target)
+                if _assessment_matches_content(current, staged_content) and backup_preexisted:
+                    if _lexists(recovery):
+                        recovery_assessment = self.inspect(
+                            LifecycleTarget(plan.source.target.kind, str(recovery))
+                        )
+                        if not _assessment_matches_content(
+                            recovery_assessment,
+                            plan.content,
+                        ):
+                            raise LifecycleConflictError(
+                                "lifecycle recovery contains unexpected data"
+                            )
+                        _remove_staging_path(recovery)
+                        _fsync_directory(recovery.parent)
+                    _cleanup_staging(plan, staging, owner)
+                    assert current.fingerprint is not None
+                    return _report(
+                        plan,
+                        outcome=LifecycleOutcome.ALREADY_COMPLETE,
+                        artifact_fingerprint=current.fingerprint,
+                        file_count=current.file_count,
+                        details=details,
+                    )
+                if not _same_assessment(current, plan.source):
+                    raise LifecycleConflictError(
+                        "live lifecycle source changed after planning"
+                    )
+                if _lexists(recovery):
+                    raise LifecycleConflictError(
+                        "lifecycle recovery path is unexpectedly occupied"
+                    )
+                current_backup = _require_complete_bundle(
+                    _read_backup_bundle(plan.backup_destination.target)
+                )
+                if not _matching_backup_for_plan(current_backup, plan):
+                    raise StaleLifecyclePlanError(
+                        "lifecycle backup changed before live publication"
+                    )
+                _assert_plan_destination_topology(plan)
+
+                try:
+                    _rename_no_replace(destination, recovery)
+                    _fsync_directory(destination.parent)
+                    try:
+                        _rename_no_replace(staging, destination)
+                    except Exception:
+                        try:
+                            _rename_no_replace(recovery, destination)
+                            _fsync_directory(destination.parent)
+                        except Exception as rollback_exc:
+                            raise LifecycleVerificationError(
+                                "lifecycle publication and automatic rollback failed",
+                                recovery_status=(
+                                    "verified_backup_and_recovery_preserved_"
+                                    "live_target_missing"
+                                ),
+                            ) from rollback_exc
+                        raise
+                except LifecycleVerificationError:
+                    raise
+                except LifecycleConflictError:
+                    raise
+                except OSError as exc:
+                    raise StorageWriteError(
+                        "lifecycle live publication failed and original was restored"
+                    ) from exc
+
+                _fsync_directory(destination.parent)
+                try:
+                    final = self.inspect(plan.destination.target)
+                except (StorageIntegrityError, UnsupportedFormatError) as exc:
+                    final = None
+                    verification_error: Exception | None = exc
+                else:
+                    verification_error = None
+                if final is None or not _assessment_matches_content(final, staged_content):
+                    try:
+                        if _lexists(destination):
+                            _rename_no_replace(destination, staging)
+                        if _lexists(recovery):
+                            _rename_no_replace(recovery, destination)
+                        _fsync_directory(destination.parent)
+                    except Exception as rollback_exc:
+                        raise LifecycleVerificationError(
+                            "published lifecycle mutation failed verification and rollback",
+                            recovery_status=(
+                                "verified_backup_preserved_manual_recovery_required"
+                            ),
+                        ) from rollback_exc
+                    raise LifecycleVerificationError(
+                        "published lifecycle mutation failed verification; original restored",
+                        recovery_status="verified_backup_preserved_source_restored",
+                    ) from verification_error
+
+                _remove_staging_path(recovery)
+                _fsync_directory(destination.parent)
+                _cleanup_staging(plan, staging, owner)
+                assert final.fingerprint is not None
+                return _report(
+                    plan,
+                    outcome=LifecycleOutcome.APPLIED,
+                    artifact_fingerprint=final.fingerprint,
+                    file_count=final.file_count,
+                    details=details,
+                )
+            except Exception:
+                # The publication path may already have moved staging into the
+                # live name; cleanup is therefore ownership-aware and only runs
+                # while the staging owner still exists.
+                if _lexists(owner):
+                    _cleanup_staging(plan, staging, owner)
+                raise
+
+    def _execute_memory_pack_import(self, plan: LifecyclePlan) -> LifecycleReport:
+        if not isinstance(plan.selector, MemoryPackImportOptions):
+            raise LifecyclePlanError("MemoryPack import plan options are missing")
+        destination = Path(plan.destination.target.path)
+        staging, owner = _stage_paths(destination, plan)
+        _assert_plan_destination_topology(plan)
+
+        with _destination_lock(destination):
+            _assert_plan_destination_topology(plan)
+            current_source = self.inspect(plan.source.target)
+            if not _same_assessment(plan.source, current_source):
+                raise StaleLifecyclePlanError("MemoryPack source changed after planning")
+            source_snapshot = _materialize_snapshot(
+                _MemoryPackLifecycleAdapter().capture(current_source)
+            )
+            assert source_snapshot.files is not None
+            if source_snapshot.content != plan.content:
+                raise StaleLifecyclePlanError(
+                    "MemoryPack import source no longer matches its plan"
+                )
+            try:
+                pack = MemoryPack.from_json(
+                    source_snapshot.files["memory-pack.erii"].decode("utf-8")
+                )
+            except (UnicodeDecodeError, TypeError, ValueError) as exc:
+                raise StorageIntegrityError("MemoryPack import source is malformed") from exc
+            _validate_memory_pack_semantic_graph(pack)
+
+            _prepare_staging(plan, staging, owner)
+            published = False
+            try:
+                from erii.lifecycle_memory_pack_import import (
+                    MemoryPackStagingImportRequest,
+                    MemoryPackStagingImporter,
+                )
+
+                staging_adapter = (
+                    MemoryPackStagingAdapter.FILE_STORAGE
+                    if plan.destination.target.kind is LifecycleTargetKind.FILE_STORAGE
+                    else MemoryPackStagingAdapter.SQLITE
+                )
+                importer = MemoryPackStagingImporter()
+                details = importer.import_pack(
+                    MemoryPackStagingImportRequest(
+                        adapter=staging_adapter,
+                        staging_path=str(staging),
+                        pack=pack,
+                        target_agent_id=plan.selector.target_agent_id,
+                        target_user_id=plan.selector.target_user_id,
+                        overwrite=False,
+                    )
+                )
+                if plan.destination.target.kind is LifecycleTargetKind.FILE_STORAGE:
+                    manifest = staging / FILE_STORAGE_MANIFEST
+                    if _lexists(manifest):
+                        raise StorageIntegrityError(
+                            "fresh FileStorage import unexpectedly created a format manifest"
+                        )
+                    _write_durable_file(
+                        manifest,
+                        _canonical_json(
+                            {
+                                "format": FILE_STORAGE_FORMAT.format_id,
+                                "version": int(FILE_STORAGE_FORMAT.current_version),
+                            }
+                        ),
+                    )
+                    _fsync_tree_directories(staging)
+                else:
+                    _quiesce_sqlite_staging(staging)
+                _fsync_directory(staging.parent)
+                staged_assessment = self.inspect(
+                    LifecycleTarget(plan.destination.target.kind, str(staging))
+                )
+                if staged_assessment.status is not LifecycleStatus.CURRENT:
+                    raise LifecycleVerificationError(
+                        "staged MemoryPack import is not current storage",
+                        recovery_status="source_pack_preserved_target_missing",
+                    )
+                staged_content = LifecycleContentIdentity.from_assessment(
+                    staged_assessment
+                )
+
+                current_destination = self.inspect(plan.destination.target)
+                if current_destination.status is not LifecycleStatus.MISSING:
+                    if current_destination.status is LifecycleStatus.CURRENT:
+                        try:
+                            existing_details = importer.inspect_target(
+                                adapter=staging_adapter,
+                                staging_path=plan.destination.target.path,
+                                agent_id=details.agent_id,
+                                user_id=details.user_id,
+                            )
+                        except Exception as exc:
+                            raise LifecycleConflictError(
+                                "MemoryPack import destination contains unreadable data"
+                            ) from exc
+                        if existing_details.to_dict() == details.to_dict():
+                            _cleanup_staging(plan, staging, owner)
+                            assert current_destination.fingerprint is not None
+                            return _report(
+                                plan,
+                                outcome=LifecycleOutcome.ALREADY_COMPLETE,
+                                artifact_fingerprint=current_destination.fingerprint,
+                                file_count=current_destination.file_count,
+                                details=existing_details,
+                            )
+                    raise LifecycleConflictError(
+                        "MemoryPack import destination contains different data"
+                    )
+                final_source = self.inspect(plan.source.target)
+                if not _same_assessment(plan.source, final_source):
+                    raise StaleLifecyclePlanError(
+                        "MemoryPack source changed before target publication"
+                    )
+                _assert_plan_destination_topology(plan)
+                try:
+                    _rename_no_replace(staging, destination)
+                except LifecycleConflictError:
+                    raise
+                except OSError as exc:
+                    raise StorageWriteError("MemoryPack import publication failed") from exc
+                published = True
+                _fsync_directory(destination.parent)
+                try:
+                    final = self.inspect(plan.destination.target)
+                except (StorageIntegrityError, UnsupportedFormatError) as exc:
+                    raise LifecycleVerificationError(
+                        "published MemoryPack import failed verification",
+                        recovery_status=_published_target_recovery_status(),
+                    ) from exc
+                if not _assessment_matches_content(final, staged_content):
+                    raise LifecycleVerificationError(
+                        "published MemoryPack import does not match staging",
+                        recovery_status=_published_target_recovery_status(),
+                    )
+                _cleanup_staging(plan, staging, owner)
+                assert final.fingerprint is not None
+                return _report(
+                    plan,
+                    outcome=LifecycleOutcome.APPLIED,
+                    artifact_fingerprint=final.fingerprint,
+                    file_count=final.file_count,
+                    details=details,
+                )
+            except Exception:
+                if not published and _lexists(owner):
+                    _cleanup_staging(plan, staging, owner)
+                raise
+
 
 __all__ = [
     "BackupRequest",
     "DataLifecycleCoordinator",
+    "EraseRequest",
+    "ErasureInventory",
+    "ErasureScope",
+    "ErasureSelector",
+    "ErasureTransformResult",
     "FILE_STORAGE_MANIFEST",
     "LIFECYCLE_BACKUP_MANIFEST",
     "LIFECYCLE_PLAN_CONTRACT_VERSION",
+    "MAX_LIFECYCLE_BACKUP_MANIFEST_BYTES",
+    "MAX_LIFECYCLE_MEMORY_PACK_BYTES",
+    "MAX_LIFECYCLE_TRANSFORM_BYTES",
     "LifecycleAssessment",
     "LifecycleContentIdentity",
     "LifecycleDirectoryIdentity",
@@ -2206,10 +3989,17 @@ __all__ = [
     "LifecycleOperation",
     "LifecycleOutcome",
     "LifecyclePlan",
+    "LifecyclePlanSelector",
     "LifecycleReport",
     "LifecycleRequest",
     "LifecycleStatus",
     "LifecycleTarget",
     "LifecycleTargetKind",
+    "MemoryPackImportOptions",
+    "MemoryPackImportRequest",
+    "MemoryPackStagingImportReport",
+    "RebuildRequest",
+    "RelationshipRebuildProof",
     "RestoreRequest",
+    "UpgradeRequest",
 ]

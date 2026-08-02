@@ -2,11 +2,12 @@
 
 from contextlib import closing
 import os
+from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
 
-from erii import FileStorage, SQLiteStorage
+from erii import FileStorage, MigrationRequiredError, SQLiteStorage
 from erii.models.archival import TimelineEntry
 from erii.models.provenance import ArtifactProvenanceState
 from erii.storage.base import BaseStorage
@@ -307,7 +308,7 @@ class RecentTimelineStorageTest(unittest.TestCase):
                         ["timeline-b"],
                     )
 
-    def test_sqlite_v9_backfills_stable_timeline_sort_fields(self):
+    def test_sqlite_v8_requires_explicit_upgrade_without_mutating_rows(self):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, "memory.db")
             storage = SQLiteStorage(path)
@@ -329,9 +330,11 @@ class RecentTimelineStorageTest(unittest.TestCase):
                     """
                 )
                 connection.commit()
+            before = Path(path).read_bytes()
 
-            reopened = SQLiteStorage(path)
-            with closing(reopened._get_connection()) as connection:
+            with self.assertRaisesRegex(MigrationRequiredError, "schema 8"):
+                SQLiteStorage(path)
+            with closing(sqlite3.connect(path)) as connection:
                 row = connection.execute(
                     """
                     SELECT timeline_entry_id, sort_key
@@ -339,11 +342,11 @@ class RecentTimelineStorageTest(unittest.TestCase):
                     """
                 ).fetchone()
 
-            self.assertEqual(reopened.schema_version, 9)
-            self.assertTrue(row["timeline_entry_id"])
-            self.assertTrue(row["sort_key"])
+            self.assertEqual(Path(path).read_bytes(), before)
+            self.assertIsNone(row[0])
+            self.assertEqual(row[1], "")
 
-    def test_sqlite_v9_preserves_null_legacy_time_as_unknown(self):
+    def test_sqlite_v8_with_null_legacy_time_fails_closed(self):
         with tempfile.TemporaryDirectory() as root:
             path = os.path.join(root, "legacy-null.db")
             with closing(sqlite3.connect(path)) as connection:
@@ -413,30 +416,12 @@ class RecentTimelineStorageTest(unittest.TestCase):
                     ],
                 )
                 connection.commit()
+            before = Path(path).read_bytes()
 
-            storage = SQLiteStorage(path)
+            with self.assertRaisesRegex(MigrationRequiredError, "schema 8"):
+                SQLiteStorage(path)
 
-            self.assertEqual(
-                [
-                    item.content
-                    for item in storage.list_timeline_entries(
-                        "agent-lumi",
-                        "user-chen",
-                    )
-                ],
-                ["unknown-time", "known-time"],
-            )
-            self.assertEqual(
-                [
-                    item.content
-                    for item in storage.get_recent_timeline_entries(
-                        "agent-lumi",
-                        "user-chen",
-                        limit=1,
-                    )
-                ],
-                ["known-time"],
-            )
+            self.assertEqual(Path(path).read_bytes(), before)
 
     def test_sqlite_has_a_scope_and_recency_index(self):
         with tempfile.TemporaryDirectory() as root:

@@ -1,0 +1,30 @@
+[
+  {
+    "node_id": "fixture-memory-001",
+    "user_id": "fixture_user",
+    "content": "用户喜欢在写完代码后听雨声，也会把重要约定写进纸质笔记。",
+    "agent_id": "fixture_agent",
+    "node_type": "preference",
+    "tags": [
+      "偏好",
+      "雨夜",
+      "约定"
+    ],
+    "base_importance": 0.72,
+    "emotional_score": 0.35,
+    "confidence": 0.91,
+    "access_count": 2,
+    "decayable": true,
+    "is_latest": true,
+    "superseded_by": null,
+    "state": "active",
+    "timeline_entry": "在冬日车站分享热可可 ☕",
+    "visibility": "public_log",
+    "is_unresolved": false,
+    "foreshadowing_tags": [
+      "下次一起看雪"
+    ],
+    "created_at": "2026-01-03 09:12:00",
+    "last_accessed_at": "2026-01-04 20:30:00"
+  }
+]

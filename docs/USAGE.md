@@ -2,7 +2,11 @@
 
 **English** · [简体中文](USAGE_zh-CN.md)
 
-> This guide tracks `main`, currently identified as `0.4.0b1.dev0`. The latest immutable release remains `v0.4.0a8`; use the documentation at that tag for its exact Python and compatibility contract. Neither build should be exposed as a public production service without additional hardening.
+> This guide describes the `0.4.0b1` source tree. Until a `v0.4.0b1` tag and
+> prerelease are actually published, the latest immutable GitHub release remains
+> `v0.4.0a8`; use the documentation inside that tag for its Python 3.9 and
+> compatibility contract. Neither version is a complete public-production
+> security boundary.
 
 E.R.I.I. is a long-term memory kernel for relationship-oriented AI characters, companions, and narrative applications. It does not generate chat responses, nor is it tied to a particular model. Its job is to preserve what a character and a specific user have experienced together, how those experiences are currently understood, and which promises or unfinished matters are still worth remembering.
 
@@ -16,7 +20,7 @@ If you only want to get something running, complete the “Installation” and �
 
 [Relationship adjudication](#advanced-write-relationship-changes-separate-trusted-and-model-generated-input) · [Persona growth](#advanced-persona-growth-is-not-an-ordinary-relationship-event) · [Recall](#recall-memories) · [Promises and Open Loops](#promises-and-unfinished-matters)
 
-[Storage](#filestorage-or-sqlite) · [Beta inspection, backup, and restore](#beta-data-inspection-backup-and-restore) · [MemoryPack](#memorypack-backup-migration-and-user-data-portability) · [REST](#reference-rest-service) · [Troubleshooting](#troubleshooting) · [Production checklist](#pre-production-checklist) · [Examples](#more-runnable-examples)
+[Storage](#filestorage-or-sqlite) · [Beta data lifecycle](#beta-data-lifecycle) · [MemoryPack](#memorypack-backup-migration-and-user-data-portability) · [REST](#reference-rest-service) · [Troubleshooting](#troubleshooting) · [Production checklist](#pre-production-checklist) · [Examples](#more-runnable-examples)
 
 ## Four Rules to Understand First
 
@@ -38,31 +42,36 @@ If you only want to get something running, complete the “Installation” and �
 | --- | --- |
 | Durably record one visible User/Agent exchange under a stable source identity | `begin_turn()` → `complete_turn()`, or atomic `record_turn()` |
 | Reliably derive MemoryNodes and a structured Timeline from that exchange | configure `MemoryExtractorV1` → `archive_turn()` → `process_pending()` / `drain()` |
-| Save conversations and retrieve a block of prompt context | `remember()` → `process_pending()` → `recall()` |
+| Reliably save conversation-derived memories and recall prompt context | canonical Turn Recording → `archive_turn()` → `process_pending()` / `drain()` → `recall()` |
 | Maintain an independent persona and user relationship | `initialize_relationship()` → Relationship Event → `recall_structured()`; start with `full`, or approve a Persona Manifest first |
 | Automatically derive Relationship Events and persona reflections from a completed turn | configure `RelationshipEventExtractorV1` / `PersonaReflectionInterpreterV1` → `process_relationship_turn()` |
-| Manually submit Relationship Event candidates for tests, correction tools, or advanced workflows | `adjudicate_relationship_candidates()` |
+| Manually submit Relationship Event candidates for tests, correction tools, or advanced workflows | persist a completed Turn → `adjudicate_turn_candidates()` |
 | Preserve promises or unfinished matters | `record_promise()` / `record_open_loop()` |
-| Migrate, back up, or let users take their data with them | `export_memory()` / `import_memory()` |
+| Back up, upgrade, erase, rebuild, or freshly import data | `DataLifecycleCoordinator.inspect()` → `plan()` → `execute()` |
+| Let one relationship move between hosts | `export_memory()` / `import_memory()`; lifecycle fresh import is the atomic missing-target path |
 | Integrate from a non-Python host application | Use the reference REST service, or wrap the Python API yourself |
 
-Real products will usually use the first two paths together: legacy MemoryNodes preserve retrievable impressions, while the relationship kernel preserves evidence-backed shared history and the current relationship projection.
+Real products normally combine canonical Turn Recording, reliable archival, and
+relationship processing. The deprecated `remember()` and transient
+`adjudicate_relationship_candidates()` compatibility entries emit
+`DeprecationWarning` in b1 and are planned for removal in v0.5.
 
 ## Installation
 
 ### Requirements
 
-- The current `main` branch requires Python 3.11+ and CI verifies Python 3.11 and the latest stable Python 3.14, with additional Windows storage smoke tests. The immutable `v0.4.0a8` release is the last version that promises Python 3.9 support.
+- `0.4.0b1` requires Python 3.11+ and CI verifies Python 3.11 and 3.14, with additional Windows storage and built-artifact installation tests. The immutable `v0.4.0a8` release is the last version that promises Python 3.9 support.
 - The base installation depends only on Pydantic.
 - SQLite uses Python's standard library and does not require a separate database service.
 
 ### Install the Current Version from GitHub
 
-Install the current alpha prerelease from its immutable release tag so that a
-later `main` branch does not silently change the version under your deployment:
+Clone the repository to work with the b1 source tree. Pin the reviewed commit in
+any long-lived deployment; after the immutable `v0.4.0b1` tag is published,
+prefer that tag:
 
 ```bash
-git clone --branch v0.4.0a8 --depth 1 https://github.com/bailong-Hakuryu/E.R.I.I.git
+git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
 cd E.R.I.I
 ```
 
@@ -122,9 +131,10 @@ Confirm that installation succeeded:
 python -c "import erii; print(erii.__version__)"
 ```
 
-The command should print `0.4.0a8`.
+The b1 source tree should print `0.4.0b1`.
 
-For long-lived alpha deployments, pin a verified commit or release instead of allowing deployment scripts to follow `main` unconditionally.
+For long-lived deployments, pin a verified commit or immutable release instead
+of allowing deployment scripts to follow `main` unconditionally.
 
 ## Run It in Ten Minutes
 
@@ -328,7 +338,11 @@ def run_turn(engine, chat_model, conversation_messages, user_text):
 
 This example passes `processing_channels=()` because it demonstrates only canonical source acceptance. It deliberately records an explicit `shown_unreviewed` availability fallback; it does not claim that the reply passed continuity review. Persist the exact `DeliveryExceptionRecord` with the host request so an idempotent retry reuses the same timestamp and payload. If the Engine has real per-turn processors configured, omit `processing_channels` to use the configured default, or explicitly declare the channels that this accepted source must run. A declared channel starts as `pending`; a receipt is not evidence that MemoryNodes or Relationship Events already exist.
 
-In `0.4.0a5`, the older `remember()` archival path and raw-Source-Turn relationship adjudication API remain compatibility interfaces. They do not let the kernel safely infer that two independent legacy calls describe the same interaction. New hosts should preserve the canonical turn first. If an existing integration still calls `remember()` for legacy MemoryNode extraction, continue to monitor that queue as described later and do not confuse its task status with the Source Turn receipt.
+The older `remember()` archival path and raw-Source-Turn relationship
+adjudication API remain compatibility interfaces. In b1 both emit
+`DeprecationWarning` and are planned for removal in v0.5. They do not let the
+kernel safely infer that two independent legacy calls describe the same
+interaction. New hosts must preserve the canonical Turn first.
 
 `max_cost` currently measures the cost of serialized text in characters, not chat-model tokens. Increase the budget to match the actual length of long persona sources. For long-term operation, approving a Persona Manifest and switching to the more compact `planned` mode is recommended.
 
@@ -743,7 +757,11 @@ It does not export pending/processing work, the raw idempotency key, detailed at
 
 ### Legacy `remember()` remains available
 
-`remember()` still supports existing `llm=` / `BaseLLMAdapter` integrations and the old persistent task queue. It does not create a canonical Turn Record, reliable receipt, structured provenance, or atomic a6 archival batch. New integrations should use:
+`remember()` still supports existing `llm=` / `BaseLLMAdapter` integrations and
+the old persistent task queue, but b1 emits `DeprecationWarning` and plans to
+remove this Python entry in v0.5. It does not create a canonical Turn Record,
+reliable receipt, structured provenance, or atomic archival batch. New
+integrations should use:
 
 ```text
 record_turn() (or begin_turn() → complete_turn()) → archive_turn()
@@ -1411,7 +1429,12 @@ For a more complete runnable example, see [`examples/07_structured_persona_recal
 
 ## Save Ordinary Conversation Memories
 
-`remember()` is the compatibility entry point for extracting ordinary retrievable MemoryNodes from one exchange. It creates a persistent archival task:
+This section documents migration of an old integration. `remember()` emits
+`DeprecationWarning` in b1 and is planned for removal in v0.5. New integrations
+must use canonical Turn Recording plus the `MemoryExtractorV1` /
+`archive_turn()` flow described in
+[Reliable archival](#reliable-archival-derive-long-term-memory-from-a-source-turn).
+The legacy call creates a persistent archival task:
 
 ```python
 engine.remember(
@@ -1849,7 +1872,7 @@ In `0.4.0a6`, reliable commands, leases, frozen batches, structured Timeline ent
 
 In `0.4.0a7`, relationship processing runs, explicit zero-result decisions, formal persona reflections, and their minimal provenance are persisted under the same relationship-wide file lock. Separate FileStorage instances therefore cannot overwrite each other's append-only relationship history during concurrent writes.
 
-On `0.4.0b1.dev0`, the legacy `nodes.json`, `core_memory.json`, and `timeline.json` paths also use flush, fsync, and atomic replacement. A missing file retains its documented empty/default meaning, but malformed JSON, an invalid record, or an I/O failure raises `StorageIntegrityError` instead of pretending that the data is empty. A failed publication raises `StorageWriteError` and leaves the previous valid document in place. Do not catch either error and immediately write an empty replacement; preserve the affected files for inspection or the explicit Beta migration/recovery tooling.
+On `0.4.0b1`, the legacy `nodes.json`, `core_memory.json`, and `timeline.json` paths also use flush, fsync, and atomic replacement. A missing file retains its documented empty/default meaning, but malformed JSON, an invalid record, or an I/O failure raises `StorageIntegrityError` instead of pretending that the data is empty. A failed publication raises `StorageWriteError` and leaves the previous valid document in place. Do not catch either error and immediately write an empty replacement; preserve the affected files for inspection or the explicit Beta migration/recovery tooling.
 
 ### SQLiteStorage
 
@@ -1875,15 +1898,21 @@ This is appropriate for:
 
 `0.4.0a7` migrates schema v5 to v6, adding durable relationship processing runs, reflection decisions, and formal reflection records. Existing events and legacy metadata remain intact and readable through the compatibility path; they are not converted into incomplete formal reflections.
 
-`0.4.0a8` uses SQLite Schema v9. Migrations v7-v9 add bounded recent-Timeline reads, canonical UTC ordering keys, and stable ordering for equal instants. Turn v2 review data and archival evidence remain inside their relationship-scoped aggregates and receive the same transactional round-trip behavior.
+`0.4.0a8` uses SQLite Schema v9. Its historical migrations v7-v9 add bounded
+recent-Timeline reads, canonical UTC ordering keys, and stable ordering for equal
+instants. In b1, constructing `SQLiteStorage` no longer runs those old migrations:
+an old schema raises `MigrationRequiredError` before the storage can open it.
+The verified lifecycle upgrade supplied by b1 is specifically schema `6 → 9`;
+schemas `0–5`, `7`, and `8` can be identified but do not have a claimed b1
+upgrade route.
 
-On `0.4.0b1.dev0`, malformed or identity-inconsistent SQLite MemoryNode and structured Timeline rows raise `StorageIntegrityError`. A collection read never skips a damaged row and returns a misleading partial result.
+On `0.4.0b1`, malformed or identity-inconsistent SQLite MemoryNode and structured Timeline rows raise `StorageIntegrityError`. A collection read never skips a damaged row and returns a misleading partial result.
 
 FileStorage remains the default in the current release. To select SQLite, explicitly pass a `SQLiteStorage` instance. Neither storage implementation is a multi-tenant authorization boundary, and both store data in plaintext by default.
 
-## Beta Data Inspection, Backup, and Restore
+## Beta Data Lifecycle
 
-The current `main` development tree can identify a FileStorage directory, a
+`0.4.0b1` can identify a FileStorage directory, a
 SQLite database, or a MemoryPack before migration code is allowed to touch it:
 
 ```python
@@ -1925,9 +1954,23 @@ Storage driver. `StorageIntegrityError` means that the declared source cannot
 be inspected consistently. Missing and empty sources are ordinary assessment
 states instead of exceptions.
 
+Every mutating operation follows the same deep interface:
+
+```python
+assessment = lifecycle.inspect(target)  # read-only
+plan = lifecycle.plan(request)          # zero-write dry-run
+report = lifecycle.execute(plan)        # mutation plus terminal verification
+```
+
+Plan writer v3 binds source/destination identity, strategy, optional backup and
+typed selector. The strict reader preserves v1–v3 historical rules; old plans
+cannot declare new operations. Full operation examples, retry behavior and
+recovery guidance are maintained in
+[`data-lifecycle.md`](data-lifecycle.md).
+
 ### Create a verified backup
 
-The current `main` tree can copy the complete E.R.I.I.-managed logical data from
+The b1 tree can copy the complete E.R.I.I.-managed logical data from
 a FileStorage directory, SQLite database, or MemoryPack into a versioned
 Lifecycle Backup v1 bundle. Known FileStorage runtime locks are excluded:
 `_turn_context_snapshot.lock` at the root, plus `<64hex>.lock` files below
@@ -2001,11 +2044,56 @@ restore_plan = lifecycle.plan(
 restore_report = lifecycle.execute(restore_plan)
 ```
 
-This slice restores only to a path that does not exist, whose parent already
+Restore publishes only to a path that does not exist, whose parent already
 exists. It never overwrites an existing file or even an empty directory.
 Restore preserves the captured bytes and detected format identity: restoring an
-old SQLite/FileStorage backup does not migrate it. Format upgrade, overwrite
-restore, deletion, and deterministic rebuild are still unavailable.
+old SQLite/FileStorage backup does not migrate it. Overwrite restore remains
+unsupported; upgrade, fresh import, erase and rebuild are separate explicit
+operations.
+
+### Upgrade, fresh import, erase, and rebuild
+
+b1 supports exactly these upgrade routes:
+
+- FileStorage `legacy → 1`;
+- SQLite schema `6 → 9`;
+- every declared-readable older MemoryPack → `0.4.0a8`.
+
+Each upgrade requires a missing side-by-side destination and a separate missing
+backup destination. Source and backup are preserved. “Readable” does not imply a
+verified SQLite migration route: schemas `0–5`, `7`, and `8` are not upgraded by
+b1.
+
+`MemoryPackImportRequest` validates a current or declared-readable Pack inside
+isolated staging and publishes it to a **missing, fresh** FileStorage v1 or
+SQLite v9 target. It is not an atomic merge into an existing store.
+
+`EraseRequest` supports relationship, Source Turn, Relationship Event, and
+complete-user selectors on current FileStorage v1 or SQLite v9. `RebuildRequest`
+recomputes one relationship's derived projections without deleting its
+authoritative events. Both operations are backup-first. Reports carry IDs,
+counts, digests and disposition groups, never the deleted conversation or
+persona bodies.
+
+Source Turn and Relationship Event deletion follows frozen processing
+dependencies. If a later processing run's direct/adjudication journal prefix
+included the removed authority, that run and its dependent events, reflections,
+growth records and archival artifacts are revoked transitively. Source
+transcripts outside the selector remain. A surviving modern Turn whose
+`TurnContextBaseline` included the removed prefix is downgraded to an explicit
+legacy record without continuity-assessment authority; E.R.I.I. does not invent
+a retrospective review. Rebuilding the later derived memory requires a future,
+explicit historical-reprocessing operation.
+
+Before a staged erasure or rebuild can replace the live target, the affected
+relationship must pass a production MemoryPack export/import round trip into a
+fresh store of the same adapter. A physically readable database is not by
+itself sufficient publication proof.
+
+The pre-change Lifecycle Backup still contains the erased data. Vector indexes,
+exported packs, copied databases, logs, cloud retention and remote-provider
+copies are external work and are reported as delegated or unverified—not
+silently claimed as deleted.
 
 Execution leaves a non-sensitive `.erii-lifecycle.lock` file beside the target
 as the stable cross-process exclusion identity; do not remove it while a
@@ -2037,12 +2125,11 @@ same directories. Keep source, backup, and destination parents in trusted local
 directories. Authentication, tenant isolation, and adversarial same-host path
 handling remain part of the later product-security boundary.
 
-The current Beta implementation materializes the complete source and backup
-payload in process memory while it computes fingerprints and verifies the
-bundle. Peak memory therefore grows with the data set, and this path is not yet
-the supported choice for very large stores. A later B1 slice will add bounded-
-memory, chunked streaming capture and verification without weakening stable
-snapshot checks, manifest commitments, or atomic publication.
+File/tree hashing and copying is chunked at no more than 1 MiB per stream chunk;
+SQLite semantic identity streams canonical rows. Lifecycle MemoryPacks are
+limited to 256 MiB, transforms that require semantic materialization to 512 MiB,
+and backup manifests to 16 MiB. These are rejection limits, not capacity or
+memory SLAs.
 
 ## MemoryPack: Backup, Migration, and User Data Portability
 

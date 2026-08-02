@@ -1,0 +1,264 @@
+{
+  "snapshot_release": "0.4.0b1",
+  "sqlite": {
+    "current_schema_version": 9,
+    "format_id": "erii.sqlite",
+    "migrations": [
+      {
+        "name": "relationship-kernel-alpha1",
+        "version": 1
+      },
+      {
+        "name": "relationship-adjudication-alpha2",
+        "version": 2
+      },
+      {
+        "name": "persona-structured-recall-alpha3",
+        "version": 3
+      },
+      {
+        "name": "durable-turn-ledger-alpha5",
+        "version": 4
+      },
+      {
+        "name": "reliable-archival-alpha6",
+        "version": 5
+      },
+      {
+        "name": "relationship-consolidation-alpha7",
+        "version": 6
+      },
+      {
+        "name": "bounded-recent-timeline-alpha7",
+        "version": 7
+      },
+      {
+        "name": "semantic-timeline-order-alpha7",
+        "version": 8
+      },
+      {
+        "name": "utc-stable-timeline-order-alpha7",
+        "version": 9
+      }
+    ],
+    "schema_object_count": 36,
+    "sqlite_master": [
+      {
+        "name": "idx_agent_user",
+        "sql": "CREATE INDEX idx_agent_user ON memory_nodes(agent_id, user_id)",
+        "table": "memory_nodes",
+        "type": "index"
+      },
+      {
+        "name": "idx_archival_ready",
+        "sql": "CREATE INDEX idx_archival_ready ON archival_records(status, next_attempt_at, lease_expires_at, sequence)",
+        "table": "archival_records",
+        "type": "index"
+      },
+      {
+        "name": "idx_archival_tombstone_relationship",
+        "sql": "CREATE INDEX idx_archival_tombstone_relationship ON archival_tombstones(relationship_id, terminal_at)",
+        "table": "archival_tombstones",
+        "type": "index"
+      },
+      {
+        "name": "idx_persona_compilation_blueprint",
+        "sql": "CREATE INDEX idx_persona_compilation_blueprint ON persona_compilation_revisions(blueprint_id, proposal_id, revision)",
+        "table": "persona_compilation_revisions",
+        "type": "index"
+      },
+      {
+        "name": "idx_persona_growth_relationship",
+        "sql": "CREATE INDEX idx_persona_growth_relationship ON persona_growth_proposals(relationship_id, created_at)",
+        "table": "persona_growth_proposals",
+        "type": "index"
+      },
+      {
+        "name": "idx_persona_manifest_blueprint",
+        "sql": "CREATE INDEX idx_persona_manifest_blueprint ON persona_manifests(blueprint_id, approved_at)",
+        "table": "persona_manifests",
+        "type": "index"
+      },
+      {
+        "name": "idx_reflection_decision_order",
+        "sql": "CREATE INDEX idx_reflection_decision_order ON persona_reflection_decisions(relationship_id, sequence)",
+        "table": "persona_reflection_decisions",
+        "type": "index"
+      },
+      {
+        "name": "idx_reflection_record_order",
+        "sql": "CREATE INDEX idx_reflection_record_order ON persona_reflection_records(relationship_id, sequence)",
+        "table": "persona_reflection_records",
+        "type": "index"
+      },
+      {
+        "name": "idx_reflection_record_target",
+        "sql": "CREATE INDEX idx_reflection_record_target ON persona_reflection_records(relationship_id, target_reflection_id)",
+        "table": "persona_reflection_records",
+        "type": "index"
+      },
+      {
+        "name": "idx_relationship_adjudications_order",
+        "sql": "CREATE INDEX idx_relationship_adjudications_order ON relationship_adjudications(relationship_id, sequence)",
+        "table": "relationship_adjudications",
+        "type": "index"
+      },
+      {
+        "name": "idx_relationship_events_order",
+        "sql": "CREATE INDEX idx_relationship_events_order ON relationship_events(relationship_id, sequence)",
+        "table": "relationship_events",
+        "type": "index"
+      },
+      {
+        "name": "idx_relationship_processing_order",
+        "sql": "CREATE INDEX idx_relationship_processing_order ON relationship_processing_runs(relationship_id, sequence)",
+        "table": "relationship_processing_runs",
+        "type": "index"
+      },
+      {
+        "name": "idx_reply_attempts_order",
+        "sql": "CREATE INDEX idx_reply_attempts_order ON reply_attempts(relationship_id, turn_id, attempt_number)",
+        "table": "reply_attempts",
+        "type": "index"
+      },
+      {
+        "name": "idx_source_turns_order",
+        "sql": "CREATE INDEX idx_source_turns_order ON source_turns(relationship_id, sequence)",
+        "table": "source_turns",
+        "type": "index"
+      },
+      {
+        "name": "idx_timeline_entry_identity",
+        "sql": "CREATE UNIQUE INDEX idx_timeline_entry_identity ON timeline_entries(timeline_entry_id) WHERE timeline_entry_id IS NOT NULL",
+        "table": "timeline_entries",
+        "type": "index"
+      },
+      {
+        "name": "idx_timeline_recent",
+        "sql": "CREATE INDEX idx_timeline_recent ON timeline_entries( agent_id, user_id, sort_key DESC, timeline_entry_id DESC )",
+        "table": "timeline_entries",
+        "type": "index"
+      },
+      {
+        "name": "archival_consumer_leases",
+        "sql": "CREATE TABLE archival_consumer_leases ( lease_name TEXT PRIMARY KEY, consumer_id TEXT NOT NULL, expires_at REAL NOT NULL )",
+        "table": "archival_consumer_leases",
+        "type": "table"
+      },
+      {
+        "name": "archival_records",
+        "sql": "CREATE TABLE archival_records ( sequence INTEGER PRIMARY KEY AUTOINCREMENT, archival_id TEXT NOT NULL UNIQUE, relationship_id TEXT NOT NULL, agent_id TEXT NOT NULL, user_id TEXT NOT NULL, idempotency_fingerprint TEXT NOT NULL, request_fingerprint TEXT NOT NULL, status TEXT NOT NULL, next_attempt_at REAL, lease_expires_at REAL, data JSON NOT NULL, submitted_at TEXT NOT NULL, UNIQUE (relationship_id, idempotency_fingerprint), UNIQUE (relationship_id, request_fingerprint), FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id) )",
+        "table": "archival_records",
+        "type": "table"
+      },
+      {
+        "name": "archival_tombstones",
+        "sql": "CREATE TABLE archival_tombstones ( archival_id TEXT PRIMARY KEY, relationship_id TEXT NOT NULL, data JSON NOT NULL, terminal_at TEXT NOT NULL, FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id) )",
+        "table": "archival_tombstones",
+        "type": "table"
+      },
+      {
+        "name": "core_memories",
+        "sql": "CREATE TABLE core_memories ( agent_id TEXT NOT NULL, user_id TEXT NOT NULL, content TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (agent_id, user_id) )",
+        "table": "core_memories",
+        "type": "table"
+      },
+      {
+        "name": "memory_nodes",
+        "sql": "CREATE TABLE memory_nodes ( node_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, user_id TEXT NOT NULL, data JSON NOT NULL )",
+        "table": "memory_nodes",
+        "type": "table"
+      },
+      {
+        "name": "persona_compilation_revisions",
+        "sql": "CREATE TABLE persona_compilation_revisions ( proposal_id TEXT NOT NULL, revision INTEGER NOT NULL, blueprint_id TEXT NOT NULL, content_fingerprint TEXT NOT NULL, status TEXT NOT NULL, data JSON NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (proposal_id, revision) )",
+        "table": "persona_compilation_revisions",
+        "type": "table"
+      },
+      {
+        "name": "persona_growth_proposals",
+        "sql": "CREATE TABLE persona_growth_proposals ( proposal_id TEXT PRIMARY KEY, relationship_id TEXT NOT NULL, revision INTEGER NOT NULL, status TEXT NOT NULL, data JSON NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id) )",
+        "table": "persona_growth_proposals",
+        "type": "table"
+      },
+      {
+        "name": "persona_manifests",
+        "sql": "CREATE TABLE persona_manifests ( manifest_id TEXT PRIMARY KEY, blueprint_id TEXT NOT NULL, proposal_id TEXT NOT NULL, proposal_revision INTEGER NOT NULL, content_fingerprint TEXT NOT NULL, data JSON NOT NULL, approved_at TEXT NOT NULL, UNIQUE (proposal_id, proposal_revision), FOREIGN KEY (proposal_id, proposal_revision) REFERENCES persona_compilation_revisions(proposal_id, revision) )",
+        "table": "persona_manifests",
+        "type": "table"
+      },
+      {
+        "name": "persona_reflection_decisions",
+        "sql": "CREATE TABLE persona_reflection_decisions ( sequence INTEGER PRIMARY KEY AUTOINCREMENT, decision_id TEXT NOT NULL UNIQUE, relationship_id TEXT NOT NULL, event_id TEXT NOT NULL, interpretation_identity TEXT NOT NULL, data JSON NOT NULL, recorded_at TEXT NOT NULL, UNIQUE (relationship_id, interpretation_identity), FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id) )",
+        "table": "persona_reflection_decisions",
+        "type": "table"
+      },
+      {
+        "name": "persona_reflection_records",
+        "sql": "CREATE TABLE persona_reflection_records ( sequence INTEGER PRIMARY KEY AUTOINCREMENT, reflection_id TEXT NOT NULL UNIQUE, relationship_id TEXT NOT NULL, event_id TEXT NOT NULL, target_reflection_id TEXT NOT NULL DEFAULT '', data JSON NOT NULL, recorded_at TEXT NOT NULL, FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id) )",
+        "table": "persona_reflection_records",
+        "type": "table"
+      },
+      {
+        "name": "relationship_adjudications",
+        "sql": "CREATE TABLE relationship_adjudications ( sequence INTEGER PRIMARY KEY AUTOINCREMENT, decision_id TEXT NOT NULL UNIQUE, relationship_id TEXT NOT NULL, source_turn_id TEXT NOT NULL, source_revision TEXT NOT NULL, processing_identity TEXT NOT NULL, candidate_key TEXT NOT NULL, data JSON NOT NULL, created_at TEXT NOT NULL, UNIQUE ( relationship_id, source_turn_id, source_revision, processing_identity, candidate_key ), FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id) )",
+        "table": "relationship_adjudications",
+        "type": "table"
+      },
+      {
+        "name": "relationship_events",
+        "sql": "CREATE TABLE relationship_events ( sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE, relationship_id TEXT NOT NULL, data JSON NOT NULL, recorded_at TEXT NOT NULL, FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id) )",
+        "table": "relationship_events",
+        "type": "table"
+      },
+      {
+        "name": "relationship_initial_context",
+        "sql": "CREATE TABLE relationship_initial_context ( relationship_id TEXT PRIMARY KEY, data JSON NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id) )",
+        "table": "relationship_initial_context",
+        "type": "table"
+      },
+      {
+        "name": "relationship_processing_runs",
+        "sql": "CREATE TABLE relationship_processing_runs ( sequence INTEGER PRIMARY KEY AUTOINCREMENT, processing_id TEXT NOT NULL UNIQUE, relationship_id TEXT NOT NULL, source_turn_id TEXT NOT NULL, source_revision TEXT NOT NULL, processing_identity TEXT NOT NULL, record_version INTEGER NOT NULL, status TEXT NOT NULL, data JSON NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE ( relationship_id, source_turn_id, source_revision, processing_identity ), FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id), FOREIGN KEY (relationship_id, source_turn_id) REFERENCES source_turns(relationship_id, turn_id) )",
+        "table": "relationship_processing_runs",
+        "type": "table"
+      },
+      {
+        "name": "relationships",
+        "sql": "CREATE TABLE relationships ( relationship_id TEXT PRIMARY KEY, persona_id TEXT NOT NULL UNIQUE, blueprint_id TEXT NOT NULL UNIQUE, agent_identity_id TEXT NOT NULL, user_identity_id TEXT NOT NULL, agent_id TEXT NOT NULL, user_id TEXT NOT NULL, blueprint_data JSON NOT NULL, created_at TEXT NOT NULL, UNIQUE (agent_id, user_id), FOREIGN KEY (agent_identity_id) REFERENCES stable_identities(identity_id), FOREIGN KEY (user_identity_id) REFERENCES stable_identities(identity_id) )",
+        "table": "relationships",
+        "type": "table"
+      },
+      {
+        "name": "reply_attempts",
+        "sql": "CREATE TABLE reply_attempts ( sequence INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL UNIQUE, relationship_id TEXT NOT NULL, turn_id TEXT NOT NULL, attempt_number INTEGER NOT NULL, data JSON NOT NULL, attempted_at TEXT NOT NULL, UNIQUE (relationship_id, turn_id, attempt_number), FOREIGN KEY (relationship_id, turn_id) REFERENCES source_turns(relationship_id, turn_id) )",
+        "table": "reply_attempts",
+        "type": "table"
+      },
+      {
+        "name": "schema_migrations",
+        "sql": "CREATE TABLE schema_migrations ( version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL )",
+        "table": "schema_migrations",
+        "type": "table"
+      },
+      {
+        "name": "source_turns",
+        "sql": "CREATE TABLE source_turns ( sequence INTEGER PRIMARY KEY AUTOINCREMENT, turn_id TEXT NOT NULL, relationship_id TEXT NOT NULL, status TEXT NOT NULL, data JSON NOT NULL, opened_at TEXT NOT NULL, UNIQUE (relationship_id, turn_id), FOREIGN KEY (relationship_id) REFERENCES relationships(relationship_id) )",
+        "table": "source_turns",
+        "type": "table"
+      },
+      {
+        "name": "stable_identities",
+        "sql": "CREATE TABLE stable_identities ( identity_id TEXT PRIMARY KEY, kind TEXT NOT NULL, external_id TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE (kind, external_id) )",
+        "table": "stable_identities",
+        "type": "table"
+      },
+      {
+        "name": "timeline_entries",
+        "sql": "CREATE TABLE timeline_entries ( id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, user_id TEXT NOT NULL, content TEXT NOT NULL, timestamp TEXT NOT NULL , timeline_entry_id TEXT, source_archival_id TEXT, data JSON, sort_key TEXT NOT NULL DEFAULT '')",
+        "table": "timeline_entries",
+        "type": "table"
+      }
+    ]
+  }
+}

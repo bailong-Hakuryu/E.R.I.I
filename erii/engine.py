@@ -2681,6 +2681,8 @@ class ERIIEngine:
             clean_agent,
             clean_user,
             existing_target_profile,
+            storage=self.storage,
+            relationship_adjudicator=self.relationship_adjudicator,
         )
         has_persona_compilation_payload = bool(
             pack.relationship is not None
@@ -3807,14 +3809,22 @@ class ERIIEngine:
                     "quarantined Agent evidence"
                 )
 
+    @staticmethod
     def _validate_relationship_processing_pack(
-        self,
         pack: MemoryPack,
         target_agent: str,
         target_user: str,
         existing_profile: Optional[RelationshipProfile],
+        *,
+        storage: Optional[BaseStorage] = None,
+        relationship_adjudicator: Optional[RelationshipAdjudicator] = None,
     ) -> None:
         """Preflights a7 ledgers before any legacy memory field is written."""
+        if relationship_adjudicator is None:
+            # `_reconstruct_batch_records` is a pure replay routine; bypassing
+            # its storage-binding constructor keeps standalone pack validation
+            # zero-write while using the exact production adjudication rules.
+            relationship_adjudicator = object.__new__(RelationshipAdjudicator)
         runs = pack.relationship_processing_runs
         decisions = pack.persona_reflection_decisions
         processing_receipt_ids = {
@@ -3951,32 +3961,37 @@ class ERIIEngine:
             for event_id in direct_event_order
         }
         if existing_profile is not None:
+            if storage is None:
+                raise ValueError(
+                    "target storage is required to validate existing "
+                    "relationship-processing history"
+                )
             try:
                 existing_direct_events = (
-                    self.storage.list_relationship_events(relationship_id)
+                    storage.list_relationship_events(relationship_id)
                 )
                 existing_adjudications = (
-                    self.storage.list_relationship_adjudications(
+                    storage.list_relationship_adjudications(
                         relationship_id
                     )
                 )
                 existing_runs = (
-                    self.storage.list_relationship_processing_runs(
+                    storage.list_relationship_processing_runs(
                         relationship_id
                     )
                 )
                 existing_reflection_decisions = (
-                    self.storage.list_persona_reflection_decisions(
+                    storage.list_persona_reflection_decisions(
                         relationship_id
                     )
                 )
                 existing_reflections = (
-                    self.storage.list_persona_reflection_records(
+                    storage.list_persona_reflection_records(
                         relationship_id
                     )
                 )
                 existing_growth_proposals = (
-                    self.storage.list_persona_growth_proposals(
+                    storage.list_persona_growth_proposals(
                         relationship_id
                     )
                 )
@@ -4321,7 +4336,7 @@ class ERIIEngine:
                 if actual_records:
                     try:
                         canonical, resolution_order = (
-                            self.relationship_adjudicator
+                            relationship_adjudicator
                             ._reconstruct_batch_records(
                                 relationship,
                                 source,
@@ -4762,11 +4777,13 @@ class ERIIEngine:
                     decision.reflection_record
                 )
 
+        if storage is None:
+            return
         try:
-            existing_runs = self.storage.list_relationship_processing_runs(
+            existing_runs = storage.list_relationship_processing_runs(
                 relationship_id
             )
-            existing_decisions = self.storage.list_persona_reflection_decisions(
+            existing_decisions = storage.list_persona_reflection_decisions(
                 relationship_id
             )
         except NotImplementedError as exc:
