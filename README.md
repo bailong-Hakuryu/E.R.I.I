@@ -3,8 +3,10 @@
 > Experiential Recall & Impression Integration — 让情感型 Agent 保留共同经历，并维持连续的人格与关系。
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
+[![Latest release](https://img.shields.io/badge/latest_release-v0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
+[![Release Python](https://img.shields.io/badge/release_Python-%3E%3D3.9-green.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
+[![main](https://img.shields.io/badge/main-0.4.0b1.dev0-blue.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/tree/main)
+[![main Python](https://img.shields.io/badge/main_Python-3.11--3.14-green.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/tree/main)
 
 E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI 伴侣、虚拟角色和叙事型 Agent。
 
@@ -15,7 +17,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 - 哪些承诺、情绪和未完成事件仍在影响双方关系；
 - 如何在不轻易破坏角色底色的前提下，让长期互动留下痕迹。
 
-项目目前处于 `0.x` 实验阶段，由单人维护。API 与存储模型仍会演进，不提供商业级 SLA。我们会优先保护记忆数据的可导出性，并为破坏性数据升级提供迁移路径。
+项目目前处于 `0.x` 实验阶段，由单人维护。最新不可移动发布仍是 `v0.4.0a8`，`main` 已进入 `0.4.0b1.dev0` 开发阶段。API 与存储模型仍会演进，不提供商业级 SLA。我们会优先保护记忆数据的可导出性，并为破坏性数据升级提供迁移路径。
 
 ## 从这里开始
 
@@ -78,6 +80,8 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 当前版本尚未实现：
 
+- B1 剩余的真实格式升级与迁移 dry-run、覆盖恢复、删除、确定性重建、长期轨迹评测与性能基线（缺失目标的可验证备份/恢复已实现）；
+- v0.5 规划中的连续性例外解除、真实关系后果、双方立场和角色内在审视；
 - 完整的授权、加密或多租户安全边界。
 
 这项产品安全能力属于后续路线；关系范围校验不应被理解为已经交付认证或租户隔离。
@@ -840,7 +844,30 @@ python -m compileall -q erii examples tests
 - FileStorage、SQLiteStorage、MemoryPack、旧数据、并发幂等、干净安装与 prerelease 构建收口；
 - 这是最后一个承诺支持 Python 3.9 的版本。
 
-以下版本均为公开规划，尚未实现；实际发布必须满足 [ROADMAP.md](ROADMAP.md) 中的退出条件。
+以下版本按开发状态区分：`v0.4.0b1` 已进入开发但尚未达到发布条件，后续版本仍是公开规划；实际发布必须满足 [ROADMAP.md](ROADMAP.md) 中的退出条件。
+
+### v0.4.0b1 — 数据生命周期与长期验证（开发中）
+
+详细交付顺序和 Data Lifecycle Module 契约见 [`docs/b1-implementation-contract.md`](docs/b1-implementation-contract.md)。
+
+当前开发树已完成 B1.1–B1.3 的第一条安全闭环：
+
+- 旧 FileStorage JSON 与 SQLite 行损坏会失败关闭；`LifecycleInspector` 可以零写入识别 FileStorage、SQLite、MemoryPack 与 Lifecycle Backup 的版本和内容指纹；未来 SQLite Schema 和未知 MemoryPack/Backup 格式会在读取或模型构造前被拒绝；
+- `DataLifecycleCoordinator` 可以对三种实时格式生成严格验证、版本化的 Lifecycle Backup v1，并通过不可变、可序列化的计划幂等恢复到缺失目标；计划绑定来源指纹和目标父目录身份，发布采用 no-replace 语义，不会静默覆盖已有数据；
+- FileStorage 只排除 `_turn_context_snapshot.lock`，以及 `_turn_locks/`、`_relationship_history_locks/`、`_relationship_processing_locks/` 下的 `<64hex>.lock`。其他 `.lock` 文件仍作为逻辑数据保留；发现遗留 `.tmp`、符号链接、junction/reparse point、硬链接或其他非普通文件时失败关闭，不会把未知内容当作可忽略垃圾；
+- 如果目标已经发布、但最终验证失败，系统保留该目标并返回 `published_target_preserved_manual_cleanup_required`，不会以“回滚”为名删除唯一可见副本。
+
+格式升级、迁移 dry-run、覆盖恢复、删除和确定性重建仍未实现，不能把“可备份恢复”理解为“已经可安全原地迁移”。当前 Beta 还会在检查、捕获和验证期间把整份 payload 物化到进程内存，峰值内存随数据量增长；超大存储应等待后续有界内存的分块流式捕获，或由宿主先在隔离环境中验证资源预算。使用方式见[中文使用手册](docs/USAGE_zh-CN.md#beta-数据检查备份与恢复)和 [English guide](docs/USAGE.md#beta-data-inspection-backup-and-restore)。
+
+这套跨进程锁用于协调遵守协议的本地宿主，不是授权或多租户安全边界。来源、备份和恢复目标应位于可信本地目录；如果另一个不可信进程已经拥有这些目录的写权限，当前 B1.3 不承诺抵抗主动路径替换攻击。POSIX 平台的目录同步失败会使操作失败；Windows 只对已知不支持目录同步的系统错误采用 best-effort，不能把它解释为跨平台掉电持久性完全等价。
+
+后续 B1 工作：
+
+- 补齐真实格式升级、迁移 dry-run、覆盖恢复前备份、语义验证与历史格式 fixture；
+- 增加关系、Source Turn、事件和完整用户范围的删除计划与结果报告，并从仍有效的权威历史确定性重建派生投影；
+- 用原创合成人设运行固定长轨迹，验证关系隔离、来源权威、重启、导入导出和重复处理；
+- 建立召回、投影、巩固、导入导出、删除和重建的性能基线；
+- 冻结 v0.4 的公共 Python Interface、REST `/api/v1`、SQLite Schema 与 MemoryPack Format。Beta 不增加新的角色领域模型。
 
 ### v0.5.0a1 — 关系后果与角色内在审视（计划）
 

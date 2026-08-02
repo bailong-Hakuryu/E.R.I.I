@@ -379,11 +379,15 @@ class RecentTimelineStorageTest(unittest.TestCase):
                     )
                     """
                 )
-                connection.execute(
+                connection.executemany(
                     """
                     INSERT INTO schema_migrations (version, name, applied_at)
-                    VALUES (8, 'semantic-timeline-order-alpha7', '2026-07-31')
-                    """
+                    VALUES (?, ?, '2026-07-31')
+                    """,
+                    [
+                        (version, f"historical-schema-{version}")
+                        for version in range(1, 9)
+                    ],
                 )
                 connection.executemany(
                     """

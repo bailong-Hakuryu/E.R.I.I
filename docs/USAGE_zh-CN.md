@@ -2,11 +2,15 @@
 
 **简体中文** · [English](USAGE.md)
 
-> 适用于 E.R.I.I. `0.4.0a8`。当前版本仍是 alpha：适合本地开发、原型验证和受控集成，不应未经加固直接承担公开生产服务。
+> 本手册跟随当前 `main`，其开发身份为 `0.4.0b1.dev0`。最新不可移动发布仍是 `v0.4.0a8`；如需该版本的精确 Python 与兼容契约，请阅读对应标签中的文档。两者都不应未经加固直接承担公开生产服务。
 
 E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长期记忆内核。它不负责生成聊天回复，也不绑定某一种模型；它负责保存角色与某个用户共同经历过什么、当前如何理解这些经历，以及哪些承诺和未完成事项仍值得被想起。
 
 如果你只想先跑起来，请完成“安装”和“十分钟跑通”两节。后面的章节用于把它接进真实应用。
+
+## 目录
+
+[开始路径](#你应该从哪条路径开始) · [安装](#安装) · [Beta 数据检查、备份与恢复](#beta-数据检查备份与恢复) · [当前限制](#当前限制)
 
 ## 先理解四条规则
 
@@ -42,7 +46,7 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 
 ### 环境要求
 
-- 要求 Python 3.9+；`0.4.0a8` 是最后一个承诺支持 Python 3.9 的版本，`0.4.0b1` 起最低版本提高到 Python 3.11。当前 CI 重点验证 3.9 与 3.12，新项目建议使用 Python 3.11 或 3.12；
+- 当前 `main` 要求 Python 3.11+，CI 验证最低版本 3.11 与当前最新稳定版本 3.14，并额外运行 Windows 存储冒烟；不可移动的 `v0.4.0a8` 是最后一个承诺支持 Python 3.9 的版本；
 - 基础安装只依赖 Pydantic；
 - SQLite 使用 Python 标准库，无需单独安装数据库服务。
 
@@ -1817,6 +1821,8 @@ with ERIIEngine(storage_dir="./data/erii-memory") as engine:
 
 `0.4.0a7` 的关系处理运行、显式零产物决定、正式人格反思与最小来源也受同一个关系级文件锁保护。不同 FileStorage 实例并发追加时不会相互覆盖关系历史。
 
+从 `0.4.0b1.dev0` 开始，旧式 `nodes.json`、`core_memory.json` 与 `timeline.json` 也通过 flush、fsync 和原子替换写入。文件不存在仍保留原有的空值/默认语义；但 JSON 损坏、记录非法或读取失败会抛出 `StorageIntegrityError`，不再伪装成“没有数据”。发布失败会抛出 `StorageWriteError`，此前有效文件保持不变。不要捕获这些错误后立即写入空集合；应保留现场，交给检查或后续显式迁移/恢复工具处理。
+
 ### SQLiteStorage
 
 ```python
@@ -1843,7 +1849,150 @@ with ERIIEngine(storage_driver=storage) as engine:
 
 `0.4.0a8` 使用 SQLite Schema v9。v7-v9 增加有界最近 Timeline 读取、规范 UTC 排序键和相同时刻的稳定顺序。Turn v2 审查数据与归档证据仍保存在关系范围内的聚合中，并获得相同的事务往返语义。
 
+从 `0.4.0b1.dev0` 开始，损坏或身份字段不一致的 SQLite MemoryNode 与结构化 Timeline 行会抛出 `StorageIntegrityError`；集合读取不会再跳过损坏行后返回具有误导性的部分结果。
+
 当前版本仍以 FileStorage 为默认；选择 SQLite 必须显式传入 `SQLiteStorage`。两者都不是多租户授权边界，也都默认以明文保存数据。
+
+## Beta 数据检查、备份与恢复
+
+当前 `main` 开发树可以在迁移代码接触数据前，先识别一个 FileStorage
+目录、SQLite 数据库或 MemoryPack：
+
+```python
+from erii.data_lifecycle import (
+    LifecycleInspector,
+    LifecycleTarget,
+    LifecycleTargetKind,
+)
+
+
+assessment = LifecycleInspector().inspect(
+    LifecycleTarget(
+        kind=LifecycleTargetKind.SQLITE,
+        path="./data/erii.db",
+    )
+)
+
+print(assessment.status.value)       # current / migration_required / empty / missing
+print(assessment.detected_version)   # 例如 "9"
+print(assessment.fingerprint)        # SHA-256，不含聊天正文
+```
+
+检查 FileStorage 目录时使用 `FILE_STORAGE`，检查导出的 JSON/`.erii` 文件时
+使用 `MEMORY_PACK`。结果只包含格式身份、版本、文件数、警告与内容指纹；
+不会携带人设、聊天、Timeline 或记忆正文。
+
+检查严格零写入：它不会实例化 `FileStorage`/`SQLiteStorage`、创建不存在的
+路径、切换 SQLite journal mode、恢复事务、执行迁移或写入 FileStorage v1
+manifest。因此，没有 manifest 的 FileStorage 目录会报告为 `legacy` /
+`migration_required`，即使当前开发版仍能读取它。检查前应停止写入；非空
+SQLite WAL/journal，或检查期间发生变化的数据源，会以
+`StorageIntegrityError` 失败。
+
+`UnsupportedFormatError` 表示数据声明了当前兼容目录之外的版本；不要捕获后
+改用可写 Storage 强行重试。`StorageIntegrityError` 表示数据源无法被一致地
+检查。missing 与 empty 是普通检查状态，不是异常。
+
+### 创建可验证备份
+
+当前 `main` 已经可以把 FileStorage、SQLite 或 MemoryPack 中由 E.R.I.I. 管理的
+完整逻辑数据复制到独立的 Lifecycle Backup v1 包。FileStorage 中已知的运行时
+锁文件不会进入备份：根目录 `_turn_context_snapshot.lock`，以及
+`_turn_locks/<64hex>.lock`、`_relationship_history_locks/<64hex>.lock` 和
+`_relationship_processing_locks/<64hex>.lock`。只有这些精确的运行时锁路径会被
+排除；其他位置由应用持有的 `.lock` 文件仍属于逻辑数据并会完整保留。备份不会
+静默忽略遗留 `.tmp`、符号链接、junction/reparse point、硬链接或其他非普通文件；
+检查或捕获遇到这些内容时会失败关闭。备份不会经过 recall、显示或导出数量限制：
+
+```python
+from pathlib import Path
+
+from erii import (
+    BackupRequest,
+    DataLifecycleCoordinator,
+    LifecyclePlan,
+    LifecycleTarget,
+    LifecycleTargetKind,
+)
+
+
+lifecycle = DataLifecycleCoordinator()
+source = lifecycle.inspect(
+    LifecycleTarget(LifecycleTargetKind.SQLITE, "./data/erii.db")
+)
+Path("./backups").mkdir(parents=True, exist_ok=True)
+backup_target = LifecycleTarget(
+    LifecycleTargetKind.BACKUP,
+    "./backups/erii-before-upgrade.eriibak",
+)
+
+plan = lifecycle.plan(BackupRequest(source=source, destination=backup_target))
+serialized_plan = plan.to_json()  # 可持久化，重启后由 LifecyclePlan.from_json() 恢复
+report = lifecycle.execute(LifecyclePlan.from_json(serialized_plan))
+
+print(report.outcome.value)        # applied / already_complete
+print(report.artifact_fingerprint) # 已发布备份包的 SHA-256 身份
+```
+
+可直接运行的完整示例见 [`examples/lifecycle_backup_restore.py`](../examples/lifecycle_backup_restore.py)。
+
+`plan()` 仍然零写入。备份目标必须不存在，其父目录必须已经存在，并且不能位于
+FileStorage 源内部。`execute()` 会重新检查源指纹，稳定捕获全部逻辑数据文件并
+排除上述 FileStorage 运行时锁，在目标同级暂存，核对严格 manifest、逐文件大小/
+SHA-256 和原格式结构后再原子发布。相同 plan 在发布后重试会返回
+`already_complete`，不会复制第二份或覆盖不同产物。
+
+### 恢复到缺失目标
+
+```python
+from pathlib import Path
+
+from erii import RestoreRequest
+
+
+backup = lifecycle.inspect(backup_target)
+Path("./restored").mkdir(parents=True, exist_ok=True)
+restore_target = LifecycleTarget(
+    LifecycleTargetKind.SQLITE,
+    "./restored/erii.db",
+)
+restore_plan = lifecycle.plan(
+    RestoreRequest(backup=backup, destination=restore_target)
+)
+restore_report = lifecycle.execute(restore_plan)
+```
+
+当前切片只允许恢复到不存在的目标；目标父目录必须存在。已有目标即使只是空目录
+也不会被覆盖。恢复保持源字节与检测到的格式身份：旧 SQLite/FileStorage 的备份
+恢复后仍是旧格式，不等于完成迁移。格式升级、覆盖恢复、删除和确定性重建仍未
+实现。
+
+执行会在目标同级保留一个不含用户内容的 `.erii-lifecycle.lock` 文件，作为不同
+进程共享的排他锁身份；不要在仍可能有生命周期操作运行时删除它。备份 payload
+仍是明文，manifest 的未加密 SHA-256 只能发现损坏或计划漂移，不能认证创建者，
+也不能替代签名、MAC、加密、授权或多租户隔离。计划 JSON 不含聊天正文，但含
+本机绝对路径、版本和指纹，也应按运维数据保护。
+
+如果目标名称已经发布、但最终校验失败，协调器不会自动回滚或删除这个名称：
+此时另一个宿主可能已经向其中写入新数据。系统会抛出
+`LifecycleVerificationError`，其
+`recovery_status="published_target_preserved_manual_cleanup_required"`，并保留
+目标与该操作的 owner 标记，供人工检查或按同一 plan 重试。这样可以避免一边
+声称“回滚成功”，一边误删发布后的宿主写入。
+
+发布使用原子的 no-replace 命名空间操作。在 POSIX 上，目录 `fsync` 失败会让
+生命周期操作失败；CPython 在 Windows 上无法可移植地刷新目录句柄，因此文件
+内容仍会 flush/fsync、no-replace 仍然成立，但目录项面对断电的持久性只能视为
+best effort。需要更强崩溃持久性保证的部署，应由宿主与文件系统层提供。
+
+跨进程锁用于协调彼此遵守协议的 E.R.I.I. 宿主，不是对抗“已经拥有这些目录写
+权限”的另一进程的授权边界。来源、备份和目标父目录都应放在可信本地目录中；
+认证、租户隔离和同机对抗性路径处理仍属于后续产品安全边界。
+
+当前 Beta 在计算指纹和验证备份包时，会把完整来源与 payload 物化到进程内存；
+峰值内存会随数据量增长，因此这条路径暂不作为超大存储的受支持方案。后续 B1
+切片会加入有界内存的分块流式捕获与验证，同时继续保持稳定快照检查、manifest
+承诺和原子发布不变量。
 
 ## MemoryPack：备份、迁移和用户数据携带
 

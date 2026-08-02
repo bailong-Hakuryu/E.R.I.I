@@ -166,6 +166,7 @@ class ConsolidationMemoryPackTests(unittest.TestCase):
                     "version": "0.4.0a6",
                     "agent_id": "agent-lumi",
                     "user_id": "user-chen",
+                    "exported_at": "2026-07-31 00:00:00",
                 }
             }
         )

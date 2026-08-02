@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+### Added
+
+- Linux CI 与 prerelease 验证现在覆盖 Python 3.11 和 3.14，并在 Windows 3.11/3.14 上额外验证文件、SQLite、归档与宿主生命周期路径。
+- 新增公开 `StorageIntegrityError` 与 `StorageWriteError`，让宿主能够区分损坏/不一致的持久数据和未能发布的写入。
+- 新增独立 `COMPATIBILITY_CATALOG` 与只读 `LifecycleInspector`：它们分别识别 Package、Python、SQLite、FileStorage、MemoryPack 与 Lifecycle Backup 版本，并以不含聊天正文的状态、版本、文件数量和内容指纹报告本地数据源；检查不会实例化 Storage、创建路径、切换 SQLite journal mode 或写入 FileStorage manifest。
+- 新增公开 `UnsupportedFormatError`，让宿主把“不受支持的未来格式”与损坏、缺失和普通输入错误分开处理。
+- 新增公开 `DataLifecycleCoordinator`、`BackupRequest` 与 `RestoreRequest`：三种本地格式的完整逻辑数据现在可以通过可序列化的不可变计划生成严格 Lifecycle Backup v1，并幂等恢复到缺失目标；FileStorage 的 `_turn_context_snapshot.lock`，以及 `_turn_locks/`、`_relationship_history_locks/`、`_relationship_processing_locks/` 中的 `<64hex>.lock` 不进入 payload，其他 `.lock` 文件仍会保留，遗留 `.tmp`、链接或其他非普通文件则失败关闭；执行会重检来源与目标父目录身份、验证完整 payload 与逐文件 SHA-256、通过原子 no-replace 同级发布，并在发布后最终校验失败时保留可见目标，避免误删其他宿主的新写入。POSIX 目录同步失败会失败关闭；Windows 只对已知不支持目录同步的错误采用 best-effort，文件内容刷新与 no-replace 仍然成立。当前 Beta 会在检查、捕获与验证期间把整包物化到内存，后续 B1 将增加有界内存的分块流式路径。
+
+### Changed
+
+- `main` 进入 `0.4.0b1.dev0` 开发阶段；最低 Python 版本提高到 3.11，Ruff 语法基线同步提高到 `py311`。MemoryPack 当前格式仍保持 `0.4.0a8`，SQLite Schema 仍保持 v9，避免把独立版本生命周期混为一次全局替换。
+- 包许可证元数据改用 PEP 639/SPDX `Apache-2.0`，构建后端最低版本提高到 Setuptools 77，消除旧 license table/classifier 的发布弃用路径。
+- prerelease 工作流使用版本中立的 Release 标题，不再把后续 Beta 错标为 a8 的连续性审计发布。
+- `remember()` 与接收 transient Source Turn 的 `adjudicate_relationship_candidates()` 现在发出带替代 Interface 和计划删除版本的 `DeprecationWarning`；持久历史数据本身不受弃用影响。
+- SQLite 生命周期指纹现在只绑定静止主数据库的规范逻辑名称，不把文件名或 `-shm` 等运行时 sidecar 写入持久内容身份，因此同一已验证数据库可以恢复到不同文件名。生命周期执行保留不含用户正文的稳定目标锁文件，以维持跨进程排他域。
+
+### Fixed
+
+- 归档心跳分别调度 Processing Lease 与 Consumer Lease，使用存储观察时间和单调时钟，避免慢持久化把刚续租的尝试写成已经过期；Commit Binding 之后由精确 Commit Permit 负责发布授权，旧尝试仍会被 fencing 拒绝。
+- 发布恢复分支不再同时触发普通 CI 与 prerelease 恢复工作流，避免同一提交留下重复且互相矛盾的检查结果。
+- FileStorage 的旧 `nodes.json`、`core_memory.json` 与 `timeline.json` 路径改用 flush、fsync 和原子替换；损坏 JSON、非法记录或读取失败不再被伪装为空数据，也不能被后续默认写入静默覆盖。SQLite MemoryNode/Timeline 解码同样失败关闭，不再跳过损坏行后返回不完整集合。
+- SQLiteStorage 在初始化和迁移前拒绝高于 v9 的 Schema；只读检查要求静止的 WAL/journal 并验证 migration history 连续性与 `quick_check`。MemoryPack Reader 现在要求完整 metadata、拒绝根级/metadata 未知字段、重复 JSON 字段和未声明格式版本，并在构造任何嵌套领域对象之前完成这些检查。
+
 ## [0.4.0a8] - 2026-08-02
 
 ### Added

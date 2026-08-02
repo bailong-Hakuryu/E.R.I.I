@@ -8,7 +8,6 @@ from dataclasses import replace
 from datetime import datetime
 import hashlib
 import json
-import logging
 import os
 import sqlite3
 import time
@@ -69,16 +68,17 @@ from erii.models.turn import (
 )
 from erii.models.turn_context import TurnContextBaseline
 from erii.core.temporal_history import TemporalHistoryValidator
+from erii.compatibility import SQLITE_FORMAT
+from erii.data_lifecycle import read_sqlite_schema_version
+from erii.errors import UnsupportedFormatError
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage, cross_process_file_lock
+from erii.storage.errors import StorageIntegrityError
 from erii.storage.timeline_order import timeline_timestamp_sort_key
 from erii.storage.turn_context import (
     TurnContextSourceSnapshot,
     validate_turn_context_baseline_authority,
 )
-
-logger = logging.getLogger("erii")
-
 
 def _decode_json_object(value: object, field_name: str) -> Dict[str, Any]:
     """Decodes one storage JSON object without accepting scalar containers."""
@@ -96,6 +96,8 @@ def _decode_json_object(value: object, field_name: str) -> Dict[str, Any]:
 class SQLiteStorage(BaseStorage):
     """SQLite-backed memory storage driver."""
 
+    CURRENT_SCHEMA_VERSION = int(SQLITE_FORMAT.current_version)
+
     def __init__(self, db_path: str = "./erii_memory.db") -> None:
         """Initializes SQLiteStorage driver and sets up database schema.
 
@@ -104,6 +106,7 @@ class SQLiteStorage(BaseStorage):
         """
         super().__init__()
         self.db_path = db_path
+        read_sqlite_schema_version(self.db_path, immutable=False)
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -408,6 +411,12 @@ class SQLiteStorage(BaseStorage):
             conn.execute("BEGIN IMMEDIATE")
             cursor.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations")
             current_version = int(cursor.fetchone()[0])
+            if current_version > self.CURRENT_SCHEMA_VERSION:
+                raise UnsupportedFormatError(
+                    f"unsupported {SQLITE_FORMAT.format_id} version "
+                    f"{current_version!r}; current reader is "
+                    f"{SQLITE_FORMAT.current_version!r}"
+                )
             if current_version < 1:
                 self._migrate_relationship_kernel_v1(cursor)
                 cursor.execute(
@@ -951,13 +960,21 @@ class SQLiteStorage(BaseStorage):
                 cursor = conn.cursor()
                 existing_rows = cursor.execute(
                     """
-                    SELECT node_id, data FROM memory_nodes
+                    SELECT node_id, agent_id, user_id, data FROM memory_nodes
                     WHERE agent_id = ? AND user_id = ?
                     """,
                     (clean_agent, clean_user),
                 ).fetchall()
+                existing_nodes = {
+                    str(row["node_id"]): self._memory_node_from_row(row)
+                    for row in existing_rows
+                }
                 keep_ids = set()
                 for node in nodes:
+                    if node.agent_id != clean_agent or node.user_id != clean_user:
+                        raise ValueError(
+                            "MemoryNode belongs to another Agent x User scope"
+                        )
                     node_json = json.dumps(node.to_dict(), ensure_ascii=False)
                     cursor.execute(
                         """
@@ -973,16 +990,8 @@ class SQLiteStorage(BaseStorage):
                 for row in existing_rows:
                     if row["node_id"] in keep_ids:
                         continue
-                    try:
-                        existing_node = MemoryNode.from_dict(
-                            json.loads(row["data"])
-                        )
-                    except (TypeError, ValueError, json.JSONDecodeError):
-                        existing_node = None
-                    if (
-                        existing_node is None
-                        or existing_node.source_archival_id is None
-                    ):
+                    existing_node = existing_nodes[str(row["node_id"])]
+                    if existing_node.source_archival_id is None:
                         removable_ids.append(str(row["node_id"]))
                 if removable_ids:
                     placeholders = ",".join(["?"] * len(removable_ids))
@@ -1005,18 +1014,33 @@ class SQLiteStorage(BaseStorage):
             with closing(self._get_connection()) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT data FROM memory_nodes WHERE agent_id = ? AND user_id = ?",
+                    """
+                    SELECT node_id, agent_id, user_id, data FROM memory_nodes
+                    WHERE agent_id = ? AND user_id = ?
+                    """,
                     (clean_agent, clean_user),
                 )
                 rows = cursor.fetchall()
-                nodes = []
-                for row in rows:
-                    try:
-                        data = json.loads(row["data"])
-                        nodes.append(MemoryNode.from_dict(data))
-                    except Exception as e:
-                        logger.error("Error parsing node DB data: %s", str(e))
-                return nodes
+                return [self._memory_node_from_row(row) for row in rows]
+
+    @staticmethod
+    def _memory_node_from_row(row: sqlite3.Row) -> MemoryNode:
+        """Decodes one node row without allowing a partial collection."""
+        try:
+            node = MemoryNode.from_dict(json.loads(row["data"]))
+        except Exception as exc:
+            raise StorageIntegrityError(
+                "SQLite MemoryNode row is unreadable or malformed"
+            ) from exc
+        if (
+            node.node_id != row["node_id"]
+            or node.agent_id != row["agent_id"]
+            or node.user_id != row["user_id"]
+        ):
+            raise StorageIntegrityError(
+                "SQLite MemoryNode row identity differs from its payload"
+            )
+        return node
 
     def get_core_memory(self, agent_id: str, user_id: str) -> str:
         """Retrieves core memory string from SQLite."""
@@ -1103,7 +1127,24 @@ class SQLiteStorage(BaseStorage):
     ) -> TimelineEntry:
         """Projects one SQLite row through the canonical Timeline model."""
         if row["data"]:
-            return TimelineEntry.from_dict(json.loads(row["data"]))
+            try:
+                entry = TimelineEntry.from_dict(json.loads(row["data"]))
+            except Exception as exc:
+                raise StorageIntegrityError(
+                    "SQLite Timeline row is unreadable or malformed"
+                ) from exc
+            if (
+                entry.agent_id != agent_id
+                or entry.user_id != user_id
+                or (
+                    row["timeline_entry_id"]
+                    and entry.timeline_entry_id != row["timeline_entry_id"]
+                )
+            ):
+                raise StorageIntegrityError(
+                    "SQLite Timeline row identity differs from its payload"
+                )
+            return entry
         entry_id = str(row["timeline_entry_id"] or "").strip()
         if not entry_id:
             entry_id = str(

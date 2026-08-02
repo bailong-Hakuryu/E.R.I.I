@@ -13,6 +13,7 @@ import os
 import threading
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 import uuid
+import warnings
 
 from erii.adapters.base import BaseLLMAdapter
 from erii.adapters.custom_adapter import CallableLLMAdapter
@@ -353,6 +354,12 @@ class ERIIEngine:
             bot_reply: Assistant response text string.
             user_msg: Deprecated alias for user_message.
         """
+        warnings.warn(
+            "ERIIEngine.remember() is deprecated in 0.4.0b1 and is planned for "
+            "removal in 0.5.0; record a canonical Turn and call archive_turn() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         user_message = user_message or user_msg
         if not user_message or not bot_reply:
             return
@@ -1925,6 +1932,14 @@ class ERIIEngine:
         be verified. Only minimal verified spans are retained by accepted or
         corroborated decisions; raw source messages are not persisted.
         """
+        warnings.warn(
+            "ERIIEngine.adjudicate_relationship_candidates() is deprecated in "
+            "0.4.0b1 and is planned for removal in 0.5.0; use "
+            "adjudicate_turn_candidates() for a persisted Turn or "
+            "process_relationship_turn() for automatic processing",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
         profile = self.storage.get_relationship(clean_agent, clean_user)

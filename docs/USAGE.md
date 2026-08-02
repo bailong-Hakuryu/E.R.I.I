@@ -2,7 +2,7 @@
 
 **English** · [简体中文](USAGE_zh-CN.md)
 
-> This guide applies to E.R.I.I. `0.4.0a8`. The current release is still an alpha: it is suitable for local development, prototyping, and controlled integrations, but should not be exposed as a public production service without additional hardening.
+> This guide tracks `main`, currently identified as `0.4.0b1.dev0`. The latest immutable release remains `v0.4.0a8`; use the documentation at that tag for its exact Python and compatibility contract. Neither build should be exposed as a public production service without additional hardening.
 
 E.R.I.I. is a long-term memory kernel for relationship-oriented AI characters, companions, and narrative applications. It does not generate chat responses, nor is it tied to a particular model. Its job is to preserve what a character and a specific user have experienced together, how those experiences are currently understood, and which promises or unfinished matters are still worth remembering.
 
@@ -16,7 +16,7 @@ If you only want to get something running, complete the “Installation” and �
 
 [Relationship adjudication](#advanced-write-relationship-changes-separate-trusted-and-model-generated-input) · [Persona growth](#advanced-persona-growth-is-not-an-ordinary-relationship-event) · [Recall](#recall-memories) · [Promises and Open Loops](#promises-and-unfinished-matters)
 
-[Storage](#filestorage-or-sqlite) · [MemoryPack](#memorypack-backup-migration-and-user-data-portability) · [REST](#reference-rest-service) · [Troubleshooting](#troubleshooting) · [Production checklist](#pre-production-checklist) · [Examples](#more-runnable-examples)
+[Storage](#filestorage-or-sqlite) · [Beta inspection, backup, and restore](#beta-data-inspection-backup-and-restore) · [MemoryPack](#memorypack-backup-migration-and-user-data-portability) · [REST](#reference-rest-service) · [Troubleshooting](#troubleshooting) · [Production checklist](#pre-production-checklist) · [Examples](#more-runnable-examples)
 
 ## Four Rules to Understand First
 
@@ -52,7 +52,7 @@ Real products will usually use the first two paths together: legacy MemoryNodes 
 
 ### Requirements
 
-- Python 3.9+ is required. `0.4.0a8` is the last release that promises Python 3.9 support; the minimum becomes Python 3.11 in `0.4.0b1`. Current CI focuses on Python 3.9 and 3.12, and Python 3.11 or 3.12 is recommended for new projects.
+- The current `main` branch requires Python 3.11+ and CI verifies Python 3.11 and the latest stable Python 3.14, with additional Windows storage smoke tests. The immutable `v0.4.0a8` release is the last version that promises Python 3.9 support.
 - The base installation depends only on Pydantic.
 - SQLite uses Python's standard library and does not require a separate database service.
 
@@ -1849,6 +1849,8 @@ In `0.4.0a6`, reliable commands, leases, frozen batches, structured Timeline ent
 
 In `0.4.0a7`, relationship processing runs, explicit zero-result decisions, formal persona reflections, and their minimal provenance are persisted under the same relationship-wide file lock. Separate FileStorage instances therefore cannot overwrite each other's append-only relationship history during concurrent writes.
 
+On `0.4.0b1.dev0`, the legacy `nodes.json`, `core_memory.json`, and `timeline.json` paths also use flush, fsync, and atomic replacement. A missing file retains its documented empty/default meaning, but malformed JSON, an invalid record, or an I/O failure raises `StorageIntegrityError` instead of pretending that the data is empty. A failed publication raises `StorageWriteError` and leaves the previous valid document in place. Do not catch either error and immediately write an empty replacement; preserve the affected files for inspection or the explicit Beta migration/recovery tooling.
+
 ### SQLiteStorage
 
 ```python
@@ -1875,7 +1877,172 @@ This is appropriate for:
 
 `0.4.0a8` uses SQLite Schema v9. Migrations v7-v9 add bounded recent-Timeline reads, canonical UTC ordering keys, and stable ordering for equal instants. Turn v2 review data and archival evidence remain inside their relationship-scoped aggregates and receive the same transactional round-trip behavior.
 
+On `0.4.0b1.dev0`, malformed or identity-inconsistent SQLite MemoryNode and structured Timeline rows raise `StorageIntegrityError`. A collection read never skips a damaged row and returns a misleading partial result.
+
 FileStorage remains the default in the current release. To select SQLite, explicitly pass a `SQLiteStorage` instance. Neither storage implementation is a multi-tenant authorization boundary, and both store data in plaintext by default.
+
+## Beta Data Inspection, Backup, and Restore
+
+The current `main` development tree can identify a FileStorage directory, a
+SQLite database, or a MemoryPack before migration code is allowed to touch it:
+
+```python
+from erii.data_lifecycle import (
+    LifecycleInspector,
+    LifecycleTarget,
+    LifecycleTargetKind,
+)
+
+
+assessment = LifecycleInspector().inspect(
+    LifecycleTarget(
+        kind=LifecycleTargetKind.SQLITE,
+        path="./data/erii.db",
+    )
+)
+
+print(assessment.status.value)       # current / migration_required / empty / missing
+print(assessment.detected_version)   # for example, "9"
+print(assessment.fingerprint)        # SHA-256; no conversation text
+```
+
+Use `FILE_STORAGE` for a storage directory and `MEMORY_PACK` for an exported
+JSON/`.erii` file. The assessment contains only format identity, version,
+file count, warnings, and a content fingerprint; it does not contain persona,
+conversation, Timeline, or memory text.
+
+Inspection is deliberately zero-write: it does not instantiate `FileStorage`
+or `SQLiteStorage`, create a missing path, switch SQLite journal mode, recover
+transactions, run migrations, or write the FileStorage v1 manifest. A
+manifest-less FileStorage directory is therefore reported as `legacy` /
+`migration_required`, even when the current development build can still read
+it. Stop writers before inspection; a non-empty SQLite WAL/journal or a source
+that changes during the scan fails with `StorageIntegrityError`.
+
+`UnsupportedFormatError` means that the source declares a version outside the
+current compatibility catalog. Do not catch it and retry with a write-capable
+Storage driver. `StorageIntegrityError` means that the declared source cannot
+be inspected consistently. Missing and empty sources are ordinary assessment
+states instead of exceptions.
+
+### Create a verified backup
+
+The current `main` tree can copy the complete E.R.I.I.-managed logical data from
+a FileStorage directory, SQLite database, or MemoryPack into a versioned
+Lifecycle Backup v1 bundle. Known FileStorage runtime locks are excluded:
+`_turn_context_snapshot.lock` at the root, plus `<64hex>.lock` files below
+`_turn_locks/`, `_relationship_history_locks/`, and
+`_relationship_processing_locks/`. Only those exact runtime-lock paths are
+excluded; an application-owned `.lock` file anywhere else remains logical data
+and is preserved. A stale `.tmp`, symbolic link, junction/reparse point, hard
+link, or other non-regular file makes inspection and capture fail closed; it is
+not silently treated as disposable runtime debris. Backup capture does not use
+recall, display, or export limits:
+
+```python
+from pathlib import Path
+
+from erii import (
+    BackupRequest,
+    DataLifecycleCoordinator,
+    LifecyclePlan,
+    LifecycleTarget,
+    LifecycleTargetKind,
+)
+
+
+lifecycle = DataLifecycleCoordinator()
+source = lifecycle.inspect(
+    LifecycleTarget(LifecycleTargetKind.SQLITE, "./data/erii.db")
+)
+Path("./backups").mkdir(parents=True, exist_ok=True)
+backup_target = LifecycleTarget(
+    LifecycleTargetKind.BACKUP,
+    "./backups/erii-before-upgrade.eriibak",
+)
+
+plan = lifecycle.plan(BackupRequest(source=source, destination=backup_target))
+serialized_plan = plan.to_json()  # persist; reload with LifecyclePlan.from_json()
+report = lifecycle.execute(LifecyclePlan.from_json(serialized_plan))
+
+print(report.outcome.value)        # applied / already_complete
+print(report.artifact_fingerprint) # SHA-256 identity of the published bundle
+```
+
+See [`examples/lifecycle_backup_restore.py`](../examples/lifecycle_backup_restore.py)
+for a complete runnable example.
+
+`plan()` remains zero-write. The backup target must be missing, its parent must
+already exist, and it cannot be nested inside a FileStorage source. `execute()`
+rechecks the source fingerprint, captures every logical data file stably while
+excluding the FileStorage runtime locks above, stages beside the destination,
+verifies the strict manifest, per-file sizes/SHA-256 digests, and the original
+format structure, and only then publishes atomically. Retrying the same plan
+after publication returns `already_complete`; it does not create a second copy
+or overwrite a different artifact.
+
+### Restore to a missing target
+
+```python
+from pathlib import Path
+
+from erii import RestoreRequest
+
+
+backup = lifecycle.inspect(backup_target)
+Path("./restored").mkdir(parents=True, exist_ok=True)
+restore_target = LifecycleTarget(
+    LifecycleTargetKind.SQLITE,
+    "./restored/erii.db",
+)
+restore_plan = lifecycle.plan(
+    RestoreRequest(backup=backup, destination=restore_target)
+)
+restore_report = lifecycle.execute(restore_plan)
+```
+
+This slice restores only to a path that does not exist, whose parent already
+exists. It never overwrites an existing file or even an empty directory.
+Restore preserves the captured bytes and detected format identity: restoring an
+old SQLite/FileStorage backup does not migrate it. Format upgrade, overwrite
+restore, deletion, and deterministic rebuild are still unavailable.
+
+Execution leaves a non-sensitive `.erii-lifecycle.lock` file beside the target
+as the stable cross-process exclusion identity; do not remove it while a
+lifecycle operation may still be running. Backup payloads remain plaintext.
+The manifest's unkeyed SHA-256 digests detect damage and plan drift but do not
+authenticate the creator or replace signatures, MACs, encryption,
+authorization, or tenant isolation. Plan JSON contains no conversation text,
+but it does contain local absolute paths, versions, and fingerprints and should
+be protected as operational data.
+
+If final verification fails after a target name has already been published,
+the coordinator does not roll that name back or delete it: another host may
+already have written to it. It raises `LifecycleVerificationError` with
+`recovery_status="published_target_preserved_manual_cleanup_required"` and
+leaves the target plus its operation owner marker for inspection or an exact-
+plan retry. This is intentionally safer than claiming rollback succeeded while
+discarding post-publication writes.
+
+Publication is an atomic no-replace namespace operation. On POSIX, a directory
+`fsync` failure fails the lifecycle operation. CPython cannot portably flush a
+directory handle on Windows, so file bytes are flushed and no-replace remains
+enforced, but power-loss persistence of the directory entry is best effort;
+deployments that need a stronger crash-durability guarantee must provide it at
+the host/filesystem layer.
+
+The cross-process lock coordinates cooperating E.R.I.I. hosts; it is not an
+authorization boundary against another process running with write access to the
+same directories. Keep source, backup, and destination parents in trusted local
+directories. Authentication, tenant isolation, and adversarial same-host path
+handling remain part of the later product-security boundary.
+
+The current Beta implementation materializes the complete source and backup
+payload in process memory while it computes fingerprints and verifies the
+bundle. Peak memory therefore grows with the data set, and this path is not yet
+the supported choice for very large stores. A later B1 slice will add bounded-
+memory, chunked streaming capture and verification without weakening stable
+snapshot checks, manifest commitments, or atomic publication.
 
 ## MemoryPack: Backup, Migration, and User Data Portability
 

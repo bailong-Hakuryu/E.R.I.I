@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Annotated prerelease tag to publish (for example v0.4.0a8)
+        description: Annotated prerelease tag to publish (for example v0.4.0b1)
         required: true
         type: string
   push:
@@ -52,7 +52,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: Verify annotated immutable tag
         env:
           RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
@@ -119,7 +119,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.12"]
+        python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -148,7 +148,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           cache: pip
       - name: Build wheel and source distribution once
         run: |
@@ -172,9 +172,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - python-version: "3.9"
+          - python-version: "3.11"
             artifact-glob: "dist/*.whl"
-          - python-version: "3.12"
+          - python-version: "3.14"
             artifact-glob: "dist/*.tar.gz"
     steps:
       - uses: actions/download-artifact@v4
@@ -232,7 +232,7 @@ jobs:
             --draft \
             --prerelease \
             --latest=false \
-            --title "E.R.I.I. ${RELEASE_TAG} - Continuity Audit and Release Closeout" \
+            --title "E.R.I.I. ${RELEASE_TAG}" \
             --notes-file "docs/release-notes-${RELEASE_VERSION}.md"
           gh release upload "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \

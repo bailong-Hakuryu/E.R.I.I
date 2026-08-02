@@ -12,7 +12,6 @@ from contextlib import contextmanager
 from functools import wraps
 import hashlib
 import json
-import logging
 import os
 import re
 import time
@@ -72,15 +71,13 @@ from erii.models.turn import (
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage, cross_process_file_lock
+from erii.storage.errors import StorageIntegrityError, StorageWriteError
 from erii.storage.timeline_order import timeline_entry_order_key
 from erii.storage.turn_context import (
     TurnContextSourceSnapshot,
     validate_turn_context_baseline_authority,
 )
 from erii.models.turn_context import TurnContextBaseline
-
-logger = logging.getLogger("erii")
-
 
 def _turn_context_snapshot_writer(method):
     """Runs a FileStorage writer outside every finer-grained storage lock."""
@@ -310,9 +307,82 @@ class FileStorage(BaseStorage):
                 file_obj.flush()
                 os.fsync(file_obj.fileno())
             os.replace(temp_path, file_path)
+        except Exception as exc:
+            raise StorageWriteError(
+                f"failed to atomically write {os.path.basename(file_path)}"
+            ) from exc
         finally:
             if os.path.exists(temp_path):
-                os.remove(temp_path)
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _read_json(file_path: str, description: str) -> Any:
+        """Reads one required JSON document without treating damage as absence."""
+        try:
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                return json.load(file_obj)
+        except Exception as exc:
+            raise StorageIntegrityError(
+                f"{description} is unreadable or malformed"
+            ) from exc
+
+    @classmethod
+    def _read_legacy_nodes(
+        cls,
+        file_path: str,
+        agent_id: str,
+        user_id: str,
+    ) -> List[MemoryNode]:
+        """Validates the complete legacy MemoryNode document."""
+        raw_nodes = cls._read_json(file_path, "MemoryNode document")
+        if not isinstance(raw_nodes, list):
+            raise StorageIntegrityError("MemoryNode document must contain a list")
+        try:
+            nodes = [MemoryNode.from_dict(item) for item in raw_nodes]
+        except Exception as exc:
+            raise StorageIntegrityError(
+                "MemoryNode document contains an invalid record"
+            ) from exc
+        if any(
+            node.agent_id != agent_id or node.user_id != user_id
+            for node in nodes
+        ):
+            raise StorageIntegrityError(
+                "MemoryNode document contains a record from another Agent x User scope"
+            )
+        return nodes
+
+    @classmethod
+    def _read_legacy_core(cls, file_path: str) -> Dict[str, Any]:
+        """Validates the complete legacy Core Memory document."""
+        data = cls._read_json(file_path, "Core Memory document")
+        if not isinstance(data, dict) or not isinstance(data.get("content"), str):
+            raise StorageIntegrityError(
+                "Core Memory document must contain string content"
+            )
+        return data
+
+    @classmethod
+    def _read_legacy_timeline(cls, file_path: str) -> List[Dict[str, Any]]:
+        """Validates the complete legacy Timeline document."""
+        entries = cls._read_json(file_path, "Timeline document")
+        if not isinstance(entries, list):
+            raise StorageIntegrityError("Timeline document must contain a list")
+        if any(
+            not isinstance(item, dict)
+            or "content" not in item
+            or not isinstance(item.get("content"), str)
+            or (
+                item.get("timestamp") is not None
+                and not isinstance(item.get("timestamp"), str)
+            )
+            for item in entries
+        ):
+            raise StorageIntegrityError("Timeline document contains an invalid record")
+        return entries
 
     @_turn_context_snapshot_writer
     def _recover_persona_approval_transactions(self) -> None:
@@ -408,41 +478,45 @@ class FileStorage(BaseStorage):
         self, agent_id: str, user_id: str, nodes: List[MemoryNode]
     ) -> None:
         """Saves memory nodes to nodes.json file."""
-        with self.lock_manager.lock(agent_id, user_id):
-            file_path = self._get_nodes_path(agent_id, user_id)
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        if any(
+            node.agent_id != clean_agent or node.user_id != clean_user
+            for node in nodes
+        ):
+            raise ValueError("MemoryNode belongs to another Agent x User scope")
+        with self.lock_manager.lock(clean_agent, clean_user):
+            file_path = self._get_nodes_path(clean_agent, clean_user)
+            if os.path.exists(file_path):
+                self._read_legacy_nodes(file_path, clean_agent, clean_user)
             data = [node.to_dict() for node in nodes]
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                logger.error("Failed to save nodes for %s/%s: %s", agent_id, user_id, str(e))
+            self._write_json_atomic(file_path, data)
 
     def load_nodes(self, agent_id: str, user_id: str) -> List[MemoryNode]:
         """Loads memory nodes from nodes.json file."""
-        with self.lock_manager.lock(agent_id, user_id):
-            file_path = self._get_nodes_path(agent_id, user_id)
+        clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
+        with self.lock_manager.lock(clean_agent, clean_user):
+            file_path = self._get_nodes_path(clean_agent, clean_user)
             nodes_by_id: Dict[str, MemoryNode] = {}
-            try:
-                with self._turn_guard("__archival_global__"):
-                    state = self._load_archival_state()
-                    for raw_batch in state["artifacts"].values():
-                        batch = PreparedArchivalBatch.from_dict(raw_batch)
-                        for node in batch.memories:
-                            if (
-                                node.agent_id == agent_id
-                                and node.user_id == user_id
-                            ):
-                                nodes_by_id[node.node_id] = node
-                if os.path.exists(file_path):
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        raw_list = json.load(f)
-                    for item in raw_list:
-                        node = MemoryNode.from_dict(item)
-                        nodes_by_id[node.node_id] = node
-                return list(nodes_by_id.values())
-            except Exception as e:
-                logger.error("Failed to load nodes for %s/%s: %s", agent_id, user_id, str(e))
-                return []
+            with self._turn_guard("__archival_global__"):
+                state = self._load_archival_state()
+                for raw_batch in state["artifacts"].values():
+                    batch = PreparedArchivalBatch.from_dict(raw_batch)
+                    for node in batch.memories:
+                        if (
+                            node.agent_id == clean_agent
+                            and node.user_id == clean_user
+                        ):
+                            nodes_by_id[node.node_id] = node
+            if os.path.exists(file_path):
+                for node in self._read_legacy_nodes(
+                    file_path,
+                    clean_agent,
+                    clean_user,
+                ):
+                    nodes_by_id[node.node_id] = node
+            return list(nodes_by_id.values())
 
     def get_core_memory(self, agent_id: str, user_id: str) -> str:
         """Loads core persona memory from core_memory.json file."""
@@ -450,27 +524,19 @@ class FileStorage(BaseStorage):
             file_path = self._get_core_path(agent_id, user_id)
             if not os.path.exists(file_path):
                 return ""
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    return data.get("content", "")
-            except Exception as e:
-                logger.error("Failed to read core memory for %s/%s: %s", agent_id, user_id, str(e))
-                return ""
+            return self._read_legacy_core(file_path)["content"]
 
     def save_core_memory(self, agent_id: str, user_id: str, content: str) -> None:
         """Saves core persona memory to core_memory.json file."""
         with self.lock_manager.lock(agent_id, user_id):
             file_path = self._get_core_path(agent_id, user_id)
+            if os.path.exists(file_path):
+                self._read_legacy_core(file_path)
             data = {
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "content": content,
             }
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                logger.error("Failed to save core memory for %s/%s: %s", agent_id, user_id, str(e))
+            self._write_json_atomic(file_path, data)
 
     def add_timeline_entry(
         self, agent_id: str, user_id: str, entry: str, timestamp: Optional[str] = None
@@ -480,43 +546,26 @@ class FileStorage(BaseStorage):
             file_path = self._get_timeline_path(agent_id, user_id)
             entries = []
             if os.path.exists(file_path):
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        entries = json.load(f)
-                except Exception:
-                    entries = []
+                entries = self._read_legacy_timeline(file_path)
 
             ts = timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             entries.append({"timestamp": ts, "content": entry})
 
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(entries, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                logger.error("Failed to add timeline entry for %s/%s: %s", agent_id, user_id, str(e))
+            self._write_json_atomic(file_path, entries)
 
     def get_recent_timeline(
         self, agent_id: str, user_id: str, limit: int = 5
     ) -> List[str]:
         """Retrieves formatted recent timeline entries."""
-        try:
-            entries = self.list_timeline_entries(agent_id, user_id)
-            recent = entries[-limit:] if limit > 0 else []
-            return [
-                (
-                    f"[{item.recorded_at or item.legacy_timestamp or 'unknown'}] "
-                    f"{item.content}"
-                )
-                for item in recent
-            ]
-        except Exception as e:
-            logger.error(
-                "Failed to read timeline for %s/%s: %s",
-                agent_id,
-                user_id,
-                str(e),
+        entries = self.list_timeline_entries(agent_id, user_id)
+        recent = entries[-limit:] if limit > 0 else []
+        return [
+            (
+                f"[{item.recorded_at or item.legacy_timestamp or 'unknown'}] "
+                f"{item.content}"
             )
-            return []
+            for item in recent
+        ]
 
     def list_timeline_entries(
         self,
@@ -544,8 +593,7 @@ class FileStorage(BaseStorage):
                     if entry.agent_id == agent_id and entry.user_id == user_id:
                         by_id[entry.timeline_entry_id] = entry
             if os.path.exists(file_path):
-                with open(file_path, "r", encoding="utf-8") as file_obj:
-                    legacy_entries = json.load(file_obj)
+                legacy_entries = self._read_legacy_timeline(file_path)
                 for index, item in enumerate(legacy_entries):
                     timestamp = item.get("timestamp")
                     content = str(item.get("content", ""))

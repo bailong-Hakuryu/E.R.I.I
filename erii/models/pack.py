@@ -7,6 +7,11 @@ Follows Google Python Style Guide.
 from datetime import datetime
 import json
 from typing import Any, Dict, List, Optional
+from erii.compatibility import (
+    MEMORY_PACK_FORMAT,
+    decode_memory_pack_json,
+    validate_memory_pack_envelope,
+)
 from erii.models.adjudication import AdjudicationRecord, PersonaGrowthProposal
 from erii.models.archival import ArchivalTombstone, TimelineEntry
 from erii.models.consolidation import (
@@ -22,7 +27,7 @@ from erii.models.turn import TurnRecord
 class MemoryPack:
     """Portable container data structure for agent/user memory export & import."""
 
-    CURRENT_VERSION = "0.4.0a8"
+    CURRENT_VERSION = MEMORY_PACK_FORMAT.current_version
 
     def __init__(
         self,
@@ -140,12 +145,12 @@ class MemoryPack:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MemoryPack":
-        """Deserializes MemoryPack from dictionary with automatic version migration."""
-        meta = data.get("metadata", {})
-        version = meta.get("version", "0.1.0")
-        agent_id = meta.get("agent_id", "default_agent")
-        user_id = meta.get("user_id", "default_user")
-        exported_at = meta.get("exported_at")
+        """Deserializes a supported MemoryPack after strict envelope validation."""
+        meta = validate_memory_pack_envelope(data)
+        version = meta["version"]
+        agent_id = meta["agent_id"]
+        user_id = meta["user_id"]
+        exported_at = meta["exported_at"]
 
         core_mem = data.get("core_memory", "")
         raw_nodes = data.get("nodes", [])
@@ -183,7 +188,7 @@ class MemoryPack:
             ],
             relationship=(
                 RelationshipProfile.from_dict(raw_relationship)
-                if raw_relationship
+                if raw_relationship is not None
                 else None
             ),
             relationship_events=[
@@ -226,6 +231,6 @@ class MemoryPack:
 
     @classmethod
     def from_json(cls, json_str: str) -> "MemoryPack":
-        """Deserializes MemoryPack from JSON string."""
-        data = json.loads(json_str)
+        """Deserializes strict JSON without accepting duplicate object fields."""
+        data = decode_memory_pack_json(json_str)
         return cls.from_dict(data)
