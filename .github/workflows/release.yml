@@ -1,0 +1,173 @@
+name: Release prerelease
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify immutable release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = "tag"
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(python -c "import runpy; print(runpy.run_path('erii/_version.py')['__version__'])")"
+          [[ "${tag_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(a|b|rc)[0-9]+$ ]]
+          test "${tag_version}" = "${package_version}"
+          test -f "docs/release-notes-${package_version}.md"
+          if existing_draft="$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [ "${existing_draft}" = "true" ]; then
+              echo "A draft release already exists for ${GITHUB_REF_NAME}; inspect and delete that incomplete draft explicitly before retrying." >&2
+            else
+              echo "Release ${GITHUB_REF_NAME} already exists; published tags are immutable." >&2
+            fi
+            exit 1
+          fi
+
+  verify:
+    needs: preflight
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install package and development tools
+        run: python -m pip install -e ".[dev]"
+      - name: Static checks
+        run: ruff check erii tests examples
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Compile sources
+        run: python -m compileall -q erii examples tests
+
+  package:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Build wheel and source distribution once
+        run: |
+          set -euo pipefail
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*
+          cd dist
+          sha256sum *.whl *.tar.gz > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-dist-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke:
+    needs: package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.9"
+            artifact-glob: "dist/*.whl"
+          - python-version: "3.12"
+            artifact-glob: "dist/*.tar.gz"
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Verify hashes and clean installation
+        env:
+          ARTIFACT_GLOB: ${{ matrix.artifact-glob }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS.txt)
+          artifact="$(compgen -G "${ARTIFACT_GLOB}" | head -n 1)"
+          test -n "${artifact}"
+          python -m pip install "${artifact}[server]" httpx
+          python -c "import erii; assert erii.__version__ == '${GITHUB_REF_NAME#v}'"
+          python -c "import tempfile; from fastapi.testclient import TestClient; from erii.server.app import app, configure_engine, configure_server_access; directory = tempfile.TemporaryDirectory(); engine = configure_engine(directory.name); configure_server_access('release-smoke-key-' + 'x' * 32); client = TestClient(app); response = client.get('/api/v1/health'); assert response.status_code == 200, response.text; assert response.json()['version'] == '${GITHUB_REF_NAME#v}'; client.close(); engine.close(); directory.cleanup()"
+          erii --help
+
+  publish:
+    needs: smoke
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-dist-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist
+      - name: Publish the verified files as a GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          local_tag_object="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}")"
+          remote_tag_object="$(git ls-remote --tags --refs origin "refs/tags/${GITHUB_REF_NAME}" | cut -f1)"
+          test -n "${remote_tag_object}"
+          test "${local_tag_object}" = "${remote_tag_object}"
+          test "$(git rev-list -n 1 "refs/tags/${GITHUB_REF_NAME}")" = "$(git rev-parse HEAD)"
+          (cd dist && sha256sum --check SHA256SUMS.txt)
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --draft \
+            --prerelease \
+            --latest=false \
+            --title "v${version} — Continuity Audit and Release Closeout" \
+            --notes-file "docs/release-notes-${version}.md"
+          gh release upload "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt
+          published_assets="$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')"
+          for file in dist/*.whl dist/*.tar.gz dist/SHA256SUMS.txt; do
+            grep -Fqx "$(basename "${file}")" <<<"${published_assets}"
+          done
+          gh release edit "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false \
+            --prerelease \
+            --latest=false

@@ -4,8 +4,8 @@ This document turns the accepted a8 domain decisions into a testable wire and
 public-interface contract. `CONTEXT.md` remains the project glossary; the ADRs
 remain the authority for why these boundaries exist.
 
-Implementation status: complete on 2026-08-02; prerelease packaging and tag
-publication remain separate release operations.
+Implementation status: complete and published as the `v0.4.0a8` GitHub
+prerelease on 2026-08-02. Its tag and published artifacts are immutable.
 
 ## Confirmed public test seams
 

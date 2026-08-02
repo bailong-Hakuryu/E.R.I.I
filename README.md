@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.4.0a8-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
 
 E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI 伴侣、虚拟角色和叙事型 Agent。
 
@@ -26,7 +26,7 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 当前版本能够做什么
 
-`v0.4.0a8` 已实现：
+`v0.4.0a8` 已作为 GitHub prerelease 发布，包含：
 
 - 按 `(agent_id, user_id)` 隔离记忆；
 - 核心人格文本、体验时间线和分类印象节点；
@@ -84,10 +84,10 @@ E.R.I.I. 是一个可嵌入 Python 应用的长期记忆引擎，主要面向 AI
 
 ## 安装
 
-当前 alpha 建议从 GitHub 源码安装：
+当前 alpha prerelease 建议从不可移动的发布标签安装：
 
 ```bash
-git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
+git clone --branch v0.4.0a8 --depth 1 https://github.com/bailong-Hakuryu/E.R.I.I.git
 cd E.R.I.I
 python -m pip install .
 
@@ -821,7 +821,7 @@ python -m compileall -q erii examples tests
 - 只用显式分组证据的 Episode / Relationship Chapter，以及诚实保留的未巩固事件；
 - SQLite Schema v6 与 MemoryPack 关系处理/反思携带。
 
-### v0.4.0a8 — 连续性审计与发布收口（实现完成，待发布验证）
+### v0.4.0a8 — 连续性审计与发布收口（已于 2026-08-02 发布）
 
 - 每个现代最终可见回复与 `ContinuityReviewRecord` 原子绑定，只有 `reviewed` 分支包含五轴 `ContinuityReviewReceipt`；
 - 类型化、可解析且严格保持 `Agent × User` 范围的连续性依据；

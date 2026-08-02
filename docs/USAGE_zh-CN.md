@@ -48,10 +48,10 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 
 ### 从 GitHub 安装当前版本
 
-当前 alpha 最可靠的使用方式是从源码安装：
+请从不可移动的发布标签安装当前 alpha prerelease，避免后续 `main` 分支进入新版本后悄悄改变部署内容：
 
 ```bash
-git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
+git clone --branch v0.4.0a8 --depth 1 https://github.com/bailong-Hakuryu/E.R.I.I.git
 cd E.R.I.I
 
 python -m venv .venv

@@ -58,10 +58,11 @@ Real products will usually use the first two paths together: legacy MemoryNodes 
 
 ### Install the Current Version from GitHub
 
-For the current alpha, installing from source is the most reliable option:
+Install the current alpha prerelease from its immutable release tag so that a
+later `main` branch does not silently change the version under your deployment:
 
 ```bash
-git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
+git clone --branch v0.4.0a8 --depth 1 https://github.com/bailong-Hakuryu/E.R.I.I.git
 cd E.R.I.I
 ```
 
