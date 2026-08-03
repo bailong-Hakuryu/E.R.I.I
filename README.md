@@ -46,10 +46,30 @@ E.R.I.I. 的核心定义是：
 更完整的领域术语见 [Domain Model](docs/domain-model.md)，未来版本边界见
 [Roadmap](ROADMAP.md)。
 
+## 发展路径
+
+项目按两条不同稳定性的轨道发展：
+
+- **内核演进轨**：`0.4.0b1 → 0.4.0rc1 → 0.4.0 → v0.5`，维护角色、关系、来源、
+  召回和数据生命周期的长期兼容语义；
+- **Labs 与集成轨**：DeepSeek、其他模型、本地模型、宿主 Adapter 与未来多模型
+  审查，可以独立实验、替换和删除，不阻塞内核演进。
+
+`0.x` 版本号是源码演进里程碑，不要求逐个创建 GitHub Release、wheel/sdist 资产或
+PyPI 包。近期直接在 rc1 收敛安装、Golden Continuity Demo 和公共 Interface；正式
+包发布与完整发布流程留到 `1.0`。v0.5 的第一步不是完整多 Agent，而是“最终交付的
+角色选择 → 关系后果 → 未解决张力 → 后续带来源召回”的最小纵切。
+
+完整取舍、采用目标和功能准入标准见
+[中文发展战略](docs/development-strategy.md) /
+[English Development Strategy](docs/development-strategy.en.md)；版本级交付见
+[Roadmap](ROADMAP.md)。
+
 ## 当前版本
 
-当前源码身份为 `0.4.0b1`，支持 Python 3.11–3.14。GitHub 上最后一个已经发布的
-不可移动标签仍是 `v0.4.0a8`；创建 b1 标签和 prerelease 之前，二者不要混为一谈。
+当前源码身份为 `0.4.0b1`，支持 Python 3.11–3.14。GitHub 上最后一个历史发布仍是
+`v0.4.0a8`；项目不计划为后续每个 `0.x` 源码里程碑单独发布包。需要复现当前源码时
+应固定经过验证的 commit SHA。
 
 各版本轴独立：
 
@@ -126,7 +146,7 @@ python -m pip install .
 
 ```bash
 python -m pip install ".[server]"  # FastAPI / Uvicorn
-python -m pip install ".[openai]"  # 宿主选择的 OpenAI-compatible adapter
+python -m pip install ".[openai]"  # 宿主自定义集成的可选 SDK；不是角色审思 Module
 python -m pip install ".[vector]"  # ChromaDB / NumPy
 python -m pip install ".[dev]"     # 测试、构建与静态检查
 ```
@@ -192,6 +212,22 @@ flowchart LR
 
 请从[中文使用手册](docs/USAGE_zh-CN.md)或
 [English User Guide](docs/USAGE.md)继续。官方例子位于 [`examples/`](examples/)。
+
+## 可选模型实验
+
+E.R.I.I. 内核不绑定聊天模型，当前 b1 也没有内置 Character Deliberation Module。
+截至 2026-08-03，维护者会在预算敏感的 Shadow 实验中优先评估 DeepSeek；其
+[thinking 模式](https://api-docs.deepseek.com/guides/thinking_mode/)和
+[官方定价](https://api-docs.deepseek.com/quick_start/pricing/)会随时间变化，因此这
+只是带日期的实验建议，不是质量、价格或支持承诺。不要仅为接入一个模型改造本来正常
+工作的宿主、存储或部署。
+
+未来若提供 DeepSeek Adapter，它必须独立安装、可禁用且可替换；不安装时 Turn、
+Recall、Continuity、MemoryPack 和生命周期仍可使用。raw thinking、完整 Prompt、
+凭据和 Provider 错误正文不会被持久化成“角色内心”。未来 Deliberation Ensemble
+也保持 Provider-neutral：一名 Character Actor 可以接受不同 Reviewer 的审查，但
+不会由多数票决定人格，也不会让 Reviewer 直接改写历史。详见
+[ADR-0117](docs/adr/0117-keep-character-deliberation-provider-neutral.md)。
 
 ## 后台处理由宿主控制
 
@@ -265,16 +301,20 @@ python benchmarks/run_longitudinal.py --adapter both --scenario all
 - [b1 Implementation Contract](docs/b1-implementation-contract.md)
 - [Compatibility Policy](docs/compatibility.md)
 - [Domain Model](docs/domain-model.md)
+- [发展战略（中文）](docs/development-strategy.md)
+- [Development Strategy (English)](docs/development-strategy.en.md)
 - [Security Policy](SECURITY.md)
+- [Support Policy / 支持政策](SUPPORT.md)
 - [Roadmap](ROADMAP.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
-- [b1 Release Notes](docs/release-notes-0.4.0b1.md)
+- [b1 Development Notes](docs/release-notes-0.4.0b1.md)
 
 ## 项目状态与许可证
 
-v0.4 在 b1 进入功能冻结；下一步是 `0.4.0rc1` 的兼容、缺陷、文档、构建和发布收口。
-真实关系后果、伤害后的记忆与修复、角色内在审视仍属于 v0.5；完整产品安全边界属于
+v0.4 在 b1 进入功能冻结；当前可以直接进入 `0.4.0rc1` 的兼容、缺陷、Golden
+Path、文档和源码收口。`0.x` 不以发布包为阶段门槛，正式包发布链路留到 `1.0`。真实
+关系后果、伤害后的记忆与修复、角色内在审视仍属于 v0.5；完整产品宿主安全边界属于
 v0.6。
 
 项目采用 [Apache License 2.0](LICENSE)。项目名称保留；第三方角色、人设和作品内容

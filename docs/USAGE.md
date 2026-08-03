@@ -2,13 +2,19 @@
 
 **English** · [简体中文](USAGE_zh-CN.md)
 
-> This guide describes the `0.4.0b1` source tree. Until a `v0.4.0b1` tag and
-> prerelease are actually published, the latest immutable GitHub release remains
-> `v0.4.0a8`; use the documentation inside that tag for its Python 3.9 and
-> compatibility contract. Neither version is a complete public-production
-> security boundary.
+> This guide describes the `0.4.0b1` source tree. The project does not plan to
+> distribute a package for every `0.x` source milestone. The last historical
+> GitHub release remains `v0.4.0a8`; use the documentation inside that tag for
+> its Python 3.9 and compatibility contract, and pin a reviewed commit to
+> reproduce b1. Neither version is a complete public-production security
+> boundary.
 
-E.R.I.I. is a long-term memory kernel for relationship-oriented AI characters, companions, and narrative applications. It does not generate chat responses, nor is it tied to a particular model. Its job is to preserve what a character and a specific user have experienced together, how those experiences are currently understood, and which promises or unfinished matters are still worth remembering.
+E.R.I.I. is a character-continuity and long-term-memory kernel for
+relationship-oriented AI characters, companions, and narrative applications.
+It does not generate chat responses, nor is it tied to a particular model. Its
+job is to preserve what a character and a specific user have experienced
+together, how those experiences are currently understood, and why those
+experiences can coherently preserve or change the character.
 
 If you only want to get something running, complete the “Installation” and “Run It in Ten Minutes” sections. The remaining sections explain how to integrate E.R.I.I. into a real application.
 
@@ -16,7 +22,7 @@ If you only want to get something running, complete the “Installation” and �
 
 [Start here](#four-rules-to-understand-first) · [Installation](#installation) · [Ten-minute example](#run-it-in-ten-minutes) · [Real chat loop](#next-step-integrate-one-real-conversation-turn) · [Turn Recording](#turn-recording-the-canonical-source-ledger) · [Reliable archival](#reliable-archival-derive-long-term-memory-from-a-source-turn) · [Automatic relationship processing](#automatic-relationship-processing-from-source-turn-to-event-reflection-and-consolidation) · [Core objects](#core-objects)
 
-[Import a persona](#import-your-own-persona-markdown) · [Relationship premise](#choose-where-the-relationship-begins) · [Persona compilation](#advanced-compile-and-approve-a-structured-persona) · [Conversation memory](#save-ordinary-conversation-memories)
+[Model providers](#model-provider-selection) · [Import a persona](#import-your-own-persona-markdown) · [Relationship premise](#choose-where-the-relationship-begins) · [Persona compilation](#advanced-compile-and-approve-a-structured-persona) · [Conversation memory](#save-ordinary-conversation-memories)
 
 [Relationship adjudication](#advanced-write-relationship-changes-separate-trusted-and-model-generated-input) · [Persona growth](#advanced-persona-growth-is-not-an-ordinary-relationship-event) · [Recall](#recall-memories) · [Promises and Open Loops](#promises-and-unfinished-matters)
 
@@ -66,9 +72,9 @@ relationship processing. The deprecated `remember()` and transient
 
 ### Install the Current Version from GitHub
 
-Clone the repository to work with the b1 source tree. Pin the reviewed commit in
-any long-lived deployment; after the immutable `v0.4.0b1` tag is published,
-prefer that tag:
+Clone the repository to work with the b1 source tree. Pin the reviewed commit
+SHA in any long-lived deployment. Publishing a `v0.4.0b1` distribution is not
+a prerequisite for the next development stage:
 
 ```bash
 git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
@@ -115,7 +121,7 @@ Install optional extras as needed:
 # REST service
 python -m pip install ".[server]"
 
-# Direct use of the OpenAI SDK in a custom host application integration
+# Optional SDK for custom host integrations; this is not a deliberation module
 python -m pip install ".[openai]"
 
 # Vector retrieval
@@ -349,6 +355,34 @@ interaction. New hosts must preserve the canonical Turn first.
 Relationship candidate adjudication, commitments, and persona growth are optional advanced write channels. They are not prerequisites for completing a basic chat loop.
 
 If generation or continuity evaluation fails in a retryable way, leave the Turn Record `open` and retry with the same `turn_id`; do not invent a reply. Use `abandon_turn()` only after user cancellation, explicit host termination, or an unrecoverable failure.
+
+## Model Provider Selection
+
+The current b1 source does not include Character Deliberation or a DeepSeek
+character-deliberation module. The `.[openai]` extra only supplies an optional
+SDK for custom host integrations. The `OpenAIAdapter` described later is a
+legacy memory-extraction Adapter; sharing a wire format does not turn it into
+the planned character-deliberation capability.
+
+As of 2026-08-03, the maintainer considers DeepSeek an optional Provider worth
+trying first in budget-sensitive experiments, based on hands-on tests, its
+official [thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/),
+and its relatively accessible
+[public pricing](https://api-docs.deepseek.com/quick_start/pricing/). It is not
+required by E.R.I.I., and an otherwise working host, storage, or deployment
+should not be rebuilt merely to adopt it. Prices, model names, and behavior can
+change. Before remote use, read the
+[privacy policy](https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html?locale=en_US),
+minimize transmitted persona, recall, and conversation data, and disclose the
+data destination to the User.
+
+Future “multi-agent collaboration” is not designed around DeepSeek. The domain
+term is Deliberation Ensemble: one Character Actor proposes the reply, while
+Reviewers may mix DeepSeek, other remote Providers, and local models. The host
+chooses Providers; reviewers do not vote to define the character and cannot
+write persona, relationship, memory, or Turn state directly. See
+[ADR-0117](adr/0117-keep-character-deliberation-provider-neutral.md) and the
+[Roadmap](../ROADMAP.md) for the accepted direction and version order.
 
 ## Turn Recording: The Canonical Source Ledger
 
@@ -2600,6 +2634,8 @@ For design context and compatibility information:
 - [Architecture Decision Records](adr/)
 - [Compatibility policy](compatibility.md)
 - [Security policy](../SECURITY.md)
+- [Support policy](../SUPPORT.md)
 - [Roadmap](../ROADMAP.md)
+- [Development strategy](development-strategy.en.md)
 
 If you are preparing to contribute code, read [CONTRIBUTING.md](../CONTRIBUTING.md).

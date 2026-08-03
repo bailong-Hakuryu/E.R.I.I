@@ -1,12 +1,12 @@
-# Draft E.R.I.I. v0.4.0b1 Release Notes
+# E.R.I.I. 0.4.0b1 Development Milestone Notes
 
-Candidate prepared: 2026-08-03
-Release date: pending final acceptance
-Release type: planned prerelease / Beta
+Milestone prepared: 2026-08-03
+Distribution status: source milestone; no standalone package release planned
 
-The latest immutable release remains `v0.4.0a8`. This document describes the
-implemented b1 candidate and does not announce a release before the tag,
-artifacts and release checks exist.
+The last historical GitHub release remains `v0.4.0a8`. This document describes
+the implemented b1 source milestone. The project does not plan to publish a
+standalone package for every `0.x` milestone; reproduce b1 by pinning a reviewed
+commit SHA.
 
 The implemented `0.4.0b1` candidate completes the planned v0.4 feature set. It
 turns data portability from
@@ -17,8 +17,8 @@ authority survive restarts and storage moves.
 
 ## Highlights
 
-- The b1 candidate supports Python 3.11–3.14. `0.4.0a8` remains the final Python 3.9
-  release.
+- The b1 source milestone supports Python 3.11–3.14. `0.4.0a8` remains the
+  final Python 3.9 release.
 - FileStorage, SQLite and MemoryPack share verified Backup v1 and missing-target
   restore.
 - Side-by-side upgrades are available for FileStorage `legacy → 1`, SQLite
@@ -87,8 +87,8 @@ Executable examples are in [`data-lifecycle.md`](data-lifecycle.md).
 | Lifecycle Plan | writer 3, readers 1–3 |
 
 MemoryPack remains `0.4.0a8` because its wire contract did not change merely to
-match the package prerelease name. Backup/restore preserves the detected format;
-upgrade and fresh import are separate explicit operations.
+match the source package-version identifier. Backup/restore preserves the
+detected format; upgrade and fresh import are separate explicit operations.
 
 ## Longitudinal evidence
 
@@ -144,8 +144,25 @@ Historical records remain readable.
 
 ## What comes next
 
-v0.4 is feature-frozen after this Beta. The next planned release is
-`0.4.0rc1`, limited to compatibility, defects, documentation, packaging and
-release verification. The character-centred model for consequences, harm,
-repair without forced reconciliation, and inner review remains v0.5 work; b1
-does not silently implement it inside data lifecycle code.
+After this source milestone passes final verification, work can move directly
+to `0.4.0rc1`; no b1 tag, GitHub Release, uploaded wheel/sdist, or package
+registry publication is required.
+
+v0.4 remains feature-frozen during RC. RC work is limited to compatibility,
+defects, documentation, local build verification, and source closure,
+including:
+
+- a Golden Continuity Demo for relationship isolation, restart recall,
+  provenance, and MemoryPack portability;
+- a `Golden Path | Advanced | Experimental | Internal` public-Interface audit;
+- clean-install and example execution checks, link and support-policy audits,
+  and a shorter first-adoption path.
+
+Formal Git tags, GitHub Release assets, package-registry publication, and
+release readback are deferred to `1.0`.
+
+The Golden Demo does not simulate v0.5 behavior. The character-centred model for
+consequences, harm, repair without forced reconciliation, and inner review
+remains v0.5 work; b1 does not silently implement it inside data lifecycle
+code. ADR-0118 narrows the first v0.5 Alpha to one delivered-choice →
+relationship-consequence → unresolved-tension → later-recall vertical slice.

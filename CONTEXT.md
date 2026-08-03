@@ -2,11 +2,13 @@
 
 E.R.I.I. 描述情感型 Agent 与用户如何分别形成共同历史、当前认知与关系人格。本文档规定项目统一使用的领域语言。
 
-> **实现状态（`0.4.0b1` 待验收候选，2026-08-03）：** 最新不可移动发布仍是
-> `0.4.0a8`。a8 的角色连续性、来源权威、关系处理、反思、召回与情感效价中立语义
-> 已经实现；当前 b1 候选增加 Data Lifecycle 与长期验证。本文中 `Consequence
+> **实现状态（`0.4.0b1` 待验收源码里程碑，2026-08-03）：** 最后一个历史发布仍是
+> `0.4.0a8`；后续 `0.x` 不要求逐个分发包，复现时应固定 commit SHA。a8 的角色
+> 连续性、来源权威、关系处理、反思、召回与情感效价中立语义已经实现；当前 b1
+> 源码增加 Data Lifecycle 与长期验证。本文中 `Consequence
 > Ledger`、连续性例外解除、双方立场、Narrative Tension Resolution、Character
-> Review Trigger、Reflection Sensitivity 等词描述已经接受但留给 v0.5 的领域方向，
+> Review Trigger、Reflection Sensitivity、Character Deliberation、Deliberation
+> Ensemble 等词描述已经接受但留给 v0.5 及后续版本的领域方向，
 > 除非条目明确写明当前实现，否则不应据此调用不存在的 b1 API。权威交付边界见
 > [`docs/b1-implementation-contract.md`](docs/b1-implementation-contract.md) 与
 > [`ROADMAP.md`](ROADMAP.md)。
@@ -36,6 +38,26 @@ _Avoid_: 任意字符串、显示标签、宿主自报 relationship_id、跨关�
 **Continuity Evaluator Capability（连续性评估器能力）**：
 由宿主提供具体实现、由内核定义并编排的版本化交付前能力；它根据拟展示的 Agent 回复、当前 User 消息与获准的人格和关系上下文生成严格 Reply Continuity Assessment。评估器只能指出依据、张力和冲突，不能改写台词、批准人格成长、伪造经历，或把情感正负与 User 是否满意当作连续性结论。
 _Avoid_: 回复生成器、自动润色器、Persona Growth 审批器、事后开脱器、情绪审查器、迎合度评分器
+
+**Character Deliberation（角色审思）**：
+宿主基于一个冻结 Turn 与当前关系内的 Agent-private 依据，让角色形成拟交付回复与有来源心理候选的 Provider-neutral 过程；它不直接展示回复，也不直接写入人设、关系或长期记忆。
+_Avoid_: DeepSeek Thinking、模型原始推理、聊天回复本身、自动人格变化
+
+**Character Actor（角色作者）**：
+一次 Character Deliberation 中唯一有资格提出角色可见回复的模型角色；其 Model Provider 可以替换，它不是新的 E.R.I.I. Agent 身份，也没有持久历史写权限。
+_Avoid_: 多个模型投票决定台词、模型供应商身份、关系参与者、人格审批者
+
+**Deliberation Reviewer（审思审查者）**：
+只针对人格因果、关系范围、知识记忆或心理依据等获准轴提出结构化发现的模型角色；它不能直接改写 Character Actor 的台词、投票定义人格，或因表达不温柔而否决回复。
+_Avoid_: 第二个回复作者、迎合度裁判、关系写入器、人格投票者
+
+**Deliberation Ensemble（审思协作组）**：
+由一个 Character Actor 与零个或多个 Deliberation Reviewer 组成的 Provider-neutral 协作形态；各参与者可以使用不同 Model Provider，但共同服务同一个角色而不产生新的 Agent 身份。
+_Avoid_: 多角色共享人格、供应商专属多 Agent、多数票决定角色是谁、所有 Turn 强制协同
+
+**Model Provider（模型提供方）**：
+宿主通过 Adapter 选择的本地或远程模型推理来源；它可以承担 Character Actor 或 Deliberation Reviewer，但不属于角色身份、关系权威或持久领域格式。
+_Avoid_: E.R.I.I. Agent、Character Blueprint、数据权威、内核必需依赖
 
 **Reply Continuity Assessment（回复连续性评估）**：
 对一条尚未展示的 Agent 回复作出的有来源判别；Continuity Evaluator 先分别提出结构化 Continuity Finding，内核再用版本化 Continuity Aggregation Policy 汇总为 `aligned`、`supported_new_choice`、`review_required` 或 `unsupported_drift`。它也可以如实表示评估未执行或失败，但不能把这种状态冒充已经通过审查；临时判别本身不是与最终可见回复绑定的持久审计回执。

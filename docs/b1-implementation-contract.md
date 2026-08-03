@@ -1,24 +1,25 @@
 # v0.4.0b1 Implementation Contract
 
-Status (2026-08-03): implemented and awaiting the final `0.4.0b1` acceptance
-gate. This document describes candidate behavior, not a proposal, but b1 is not
-an immutable release until its tag, artifacts and release checks exist. The
-latest immutable release remains `0.4.0a8`. Historical alpha contracts and ADRs
-remain immutable records of the decisions that led here.
+Status (2026-08-03): implemented and awaiting the final `0.4.0b1` source
+acceptance gate. This document describes implemented milestone behavior, not a
+proposal. The project does not require a b1 tag or distribution package; pin a
+reviewed commit SHA to reproduce it. `0.4.0a8` remains the last historical
+release, and historical alpha contracts and ADRs remain immutable records of
+the decisions that led here.
 
-## Release boundary
+## Source milestone boundary
 
-`0.4.0b1` is the v0.4 feature-complete Beta candidate. After this point v0.4 accepts
-compatibility, migration, performance, documentation and defect fixes; it does
-not add another character-domain model. The next planned domain work—lasting
-consequences of a character's choices and character-centred inner review—remains
-in v0.5.
+`0.4.0b1` is the v0.4 feature-complete source milestone. After this point v0.4
+accepts compatibility, migration, performance, documentation and defect fixes;
+it does not add another character-domain model. The next planned domain
+work—lasting consequences of a character's choices and character-centred inner
+review—remains in v0.5.
 
 The version axes are deliberately independent:
 
 | Axis | b1 value | Meaning |
 | --- | --- | --- |
-| Package | `0.4.0b1` candidate | intended Python distribution and Git tag; not immutable until published |
+| Package metadata | `0.4.0b1` source identity | import/build identity; no standalone distribution required |
 | Python | `3.11`–`3.14` | supported interpreter range |
 | SQLite schema | `9` | physical SQLite layout |
 | FileStorage format | `1` | `.erii-store.json` identity; legacy remains readable for lifecycle upgrade |
@@ -26,8 +27,9 @@ The version axes are deliberately independent:
 | Lifecycle Backup | `1` | verified backup bundle format |
 | Lifecycle Plan | writer `3`, readers `1`–`3` | immutable operation plan contract |
 
-A package release does not silently advance the other axes. In particular,
-publishing b1 does not rename an a8 MemoryPack or rewrite schema 9 as “b1”.
+Changing the source package-version identity does not silently advance the
+other axes. In particular, b1 does not rename an a8 MemoryPack or rewrite
+schema 9 as “b1”.
 
 ## Public module boundary
 

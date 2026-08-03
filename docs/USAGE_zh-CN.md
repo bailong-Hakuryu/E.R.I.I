@@ -2,17 +2,22 @@
 
 **简体中文** · [English](USAGE.md)
 
-> 本手册描述 `0.4.0b1` 源码树。在真正创建 `v0.4.0b1` 标签和 prerelease 之前，
-> GitHub 上最新不可移动发布仍是 `v0.4.0a8`；该版本的 Python 3.9 和兼容契约以
-> 标签内文档为准。两者都不是可直接公开部署的完整产品安全边界。
+> 本手册描述 `0.4.0b1` 源码树。项目不计划为每个 `0.x` 源码里程碑单独发布包；
+> GitHub 上最后一个历史发布仍是 `v0.4.0a8`，其 Python 3.9 和兼容契约以标签内
+> 文档为准。复现当前 b1 时请固定经过验证的 commit。两者都不是可直接公开部署的
+> 完整产品安全边界。
 
-E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长期记忆内核。它不负责生成聊天回复，也不绑定某一种模型；它负责保存角色与某个用户共同经历过什么、当前如何理解这些经历，以及哪些承诺和未完成事项仍值得被想起。
+E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的角色连续性与长期记忆
+内核。它不负责生成聊天回复，也不绑定某一种模型；它负责保存角色与某个用户共同经历
+过什么、当前如何理解这些经历，以及角色为什么能够因这些经历而保持或改变。
 
 如果你只想先跑起来，请完成“安装”和“十分钟跑通”两节。后面的章节用于把它接进真实应用。
 
 ## 目录
 
-[开始路径](#你应该从哪条路径开始) · [安装](#安装) · [Beta 数据生命周期](#beta-数据生命周期) · [当前限制](#当前限制)
+[开始路径](#你应该从哪条路径开始) · [安装](#安装) ·
+[模型 Provider](#模型-provider-选择) · [Beta 数据生命周期](#beta-数据生命周期) ·
+[当前限制](#当前限制)
 
 ## 先理解四条规则
 
@@ -59,8 +64,8 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的长�
 
 ### 从 GitHub 安装当前版本
 
-如需当前 b1 源码，先克隆仓库；长期部署必须固定经过验证的 commit。真正发布不可移动
-`v0.4.0b1` 标签后，应优先从该标签安装：
+如需当前 b1 源码，先克隆仓库；长期部署必须固定经过验证的 commit SHA。项目不会把
+创建 `v0.4.0b1` 分发包作为下一阶段前提：
 
 ```bash
 git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
@@ -91,7 +96,7 @@ python -m pip install .
 # REST 服务
 python -m pip install ".[server]"
 
-# 宿主自定义集成需要直接使用 openai SDK 时
+# 宿主自定义集成需要直接使用 openai SDK 时；这不是角色审思 Module
 python -m pip install ".[openai]"
 
 # 向量检索
@@ -321,6 +326,28 @@ def run_turn(engine, chat_model, conversation_messages, user_text):
 关系候选裁决、承诺和人格成长属于可选的高级写入通道，不是完成基本聊天闭环的前置条件。
 
 如果生成或连续性评估发生可重试失败，让 Turn Record 保持 `open`，使用同一个 `turn_id` 重试，不要捏造回复。只有用户取消、宿主明确终止或不可恢复失败时，才调用 `abandon_turn()`。
+
+## 模型 Provider 选择
+
+当前 b1 不包含 Character Deliberation 或 DeepSeek 角色审思 Module。`.[openai]`
+只是给宿主自定义集成准备的可选 SDK；后文的 `OpenAIAdapter` 是旧式记忆提取
+Adapter，不能因为接口格式兼容就被当成规划中的角色审思能力。
+
+截至 2026-08-03，维护者基于实际测试、官方
+[thinking 模式](https://api-docs.deepseek.com/guides/thinking_mode/)和相对易于承担的
+[公开价格](https://api-docs.deepseek.com/quick_start/pricing/)，把 DeepSeek 作为
+预算敏感实验中值得优先尝试的可选 Model Provider。它不是 E.R.I.I. 的必需依赖，
+也不建议为了使用它而改造一套原本正常工作的宿主、存储或部署方式。价格、模型名称
+和行为都可能变化；远程调用前还应阅读
+[隐私政策](https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html?locale=en_US)，
+最小化发送的人设、召回与对话数据，并向 User 说明数据去向。
+
+后续常称的“多 Agent 协同”与 DeepSeek 没有设计绑定。项目领域语言使用
+Deliberation Ensemble：一名 Character Actor 提出回复，若干 Reviewer 可以混用
+DeepSeek、其他远程模型和本地模型。Provider 选择由宿主负责，Reviewer 不以多数票
+决定角色是谁，也不能直接写入人格、关系、记忆或 Turn。当前决策和版本顺序见
+[ADR-0117](adr/0117-keep-character-deliberation-provider-neutral.md)与
+[Roadmap](../ROADMAP.md)。
 
 ## Turn Recording：规范来源账本
 
@@ -2521,6 +2548,8 @@ engine.initialize_relationship(agent_id, user_id, persona_source)
 - [架构决策记录](adr/)
 - [兼容性策略](compatibility.md)
 - [安全策略](../SECURITY.md)
+- [支持政策](../SUPPORT.md)
 - [路线图](../ROADMAP.md)
+- [发展战略](development-strategy.md)
 
 如果你准备贡献代码，请阅读 [CONTRIBUTING.md](../CONTRIBUTING.md)。

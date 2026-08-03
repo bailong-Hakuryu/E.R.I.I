@@ -3,9 +3,10 @@
 ADRs are historical decision records. “Accepted” means the design was accepted
 at the time; it does not by itself prove the corresponding capability was
 implemented in the release currently being read. As of 2026-08-03, the latest
-immutable release is `0.4.0a8`; the implemented, not-yet-published b1 candidate
-status is recorded in [`../b1-implementation-contract.md`](../b1-implementation-contract.md),
-and the operational lifecycle surface is in
+historical release is `0.4.0a8`; the implemented b1 source-milestone status is
+recorded in [`../b1-implementation-contract.md`](../b1-implementation-contract.md),
+and should be reproduced with a reviewed commit SHA. The operational lifecycle
+surface is in
 [`../data-lifecycle.md`](../data-lifecycle.md).
 
 ## Status map
@@ -15,6 +16,19 @@ and the operational lifecycle surface is in
 - ADRs 0097–0105 describe the accepted v0.5 consequence/inner-review direction.
   They are not b1 APIs. ADR 0106 explicitly freezes a8 and moves that work to
   v0.5.
+- ADR 0117 records the accepted v0.5+ Provider-neutral Character Deliberation
+  and Deliberation Ensemble direction. It permits an optional recommended
+  DeepSeek Adapter but does not describe a b1 Interface or installed capability.
+- ADR 0118 narrows the first v0.5 delivery to one observable
+  choice-to-consequence vertical slice and separates durable kernel evolution
+  from removable Provider, host-integration and multi-model experiments. It
+  refines ADR 0106's original a1 scope and supersedes ADR 0111 only on the
+  scheduling of historical exception reprocessing; the a8 quarantine and
+  append-only reprocessing constraints remain accepted.
+- ADR 0119 defines `0.x` versions as source-development milestones and defers
+  formal tags, GitHub Release assets and package-registry distribution until
+  `1.0`. Local package build and clean-install verification remain engineering
+  checks rather than release gates.
 - ADR 0003 predates the b1 lifecycle coordinator. Its broad MemoryPack
   “migration” language is superseded operationally by the explicit distinction
   between backup/restore, side-by-side upgrade and fresh import in

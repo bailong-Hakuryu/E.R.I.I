@@ -4,9 +4,9 @@
 
 ## [Unreleased]
 
-以下内容是截至 2026-08-03 已完成实现、等待最终验收与不可移动发布的
-`0.4.0b1` 候选。仓库当前最新已发布版本仍是 `0.4.0a8`；在 b1 tag、构建产物与
-发布验证完成前，本节不能被解读为 b1 已经发布。
+以下内容是截至 2026-08-03 已完成实现、仍在验收的 `0.4.0b1` 源码里程碑。仓库
+最后一个历史发布仍是 `0.4.0a8`；项目不计划为每个 `0.x` 里程碑单独发布包，复现
+b1 时应固定经过验证的 commit SHA。
 
 ### Added
 
@@ -30,8 +30,17 @@
   schema `6 → 9` 的显式 lifecycle 升级，其他可识别旧 schema 不因可读/可检查而获得
   升级承诺。
 - `remember()` 与接收 transient Source Turn 的 `adjudicate_relationship_candidates()` 发出带替代 Interface 的 `DeprecationWarning`，计划在 v0.5 删除；持久数据和旧 Pack 的可读性不受影响。
-- 包许可证元数据采用 PEP 639/SPDX `Apache-2.0`，Ruff 目标调整为 `py311`，构建和发布验证覆盖 wheel/sdist 干净安装。
-- v0.4 在 b1 进入功能冻结；下一阶段是 `0.4.0rc1` 的缺陷、兼容、文档与发布收口。关系后果和角色内在审视仍属于 v0.5。
+- 包许可证元数据采用 PEP 639/SPDX `Apache-2.0`，Ruff 目标调整为 `py311`，本地
+  构建验证覆盖 wheel/sdist 干净安装，但不要求上传发行资产。
+- v0.4 在 b1 进入功能冻结；下一源码阶段是 `0.4.0rc1` 的缺陷、兼容、文档与采用
+  收口。关系后果和角色内在审视仍属于 v0.5。
+- 项目发展改为“内核演进轨 + Labs 与集成轨”：DeepSeek、其他 Provider、宿主 Adapter
+  和多模型实验保持可拆卸，不进入 b1 持久契约。ADR-0118 把 `0.5.0a1` 收窄为
+  “最终交付的角色选择 → 关系后果 → 未解决张力 → 后续带来源召回”最小纵切；
+  历史例外重处理、Character Review 与 Deliberation 延后到后续 v0.5 阶段。
+- 文档明确 `0.x` 是源码演进里程碑，不以 tag、GitHub Release、wheel/sdist 上传或
+  PyPI 发布作为阶段门槛。rc1 将补齐 Golden Continuity Demo、公共 Interface 分级、
+  采用路径与支持政策；正式包发布流程留到 `1.0`，且 rc1 不新增领域语义。
 
 ### Fixed
 
