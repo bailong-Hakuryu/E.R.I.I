@@ -37,6 +37,7 @@ example_custom_llm_memory/
 *.db
 *.sqlite
 *.sqlite3
+!tests/fixtures/lifecycle/sqlite-v0.4.0a7/schema6.sqlite3
 
 # Environments
 .env
