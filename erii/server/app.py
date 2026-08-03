@@ -1039,13 +1039,19 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def cli_main():
-    """CLI entrypoint for running `erii serve`."""
-    parser = argparse.ArgumentParser(description="E.R.I.I. Engine Server CLI")
-    parser.add_argument("command", choices=["serve"], help="Command to run")
-    parser.add_argument("--host", default="127.0.0.1", help="Host address")
-    parser.add_argument("--port", type=int, default=8000, help="Port number")
-    parser.add_argument("--storage-dir", default="./erii_memory", help="Memory storage directory")
-    parser.add_argument(
+    """CLI entrypoint for the reference server and continuity demo."""
+    parser = argparse.ArgumentParser(description="E.R.I.I. command line interface")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    serve_parser = subparsers.add_parser("serve", help="Run the reference REST server")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Host address")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Port number")
+    serve_parser.add_argument(
+        "--storage-dir",
+        default="./erii_memory",
+        help="Memory storage directory",
+    )
+    serve_parser.add_argument(
         "--allow-unsafe-network",
         action="store_true",
         help=(
@@ -1053,7 +1059,7 @@ def cli_main():
             "without built-in TLS or user-level authorization"
         ),
     )
-    parser.add_argument(
+    serve_parser.add_argument(
         "--allow-unauthenticated-loopback",
         action="store_true",
         help=(
@@ -1061,7 +1067,33 @@ def cli_main():
             "ERII_API_KEY"
         ),
     )
+    demo_parser = subparsers.add_parser(
+        "demo",
+        help="Run the self-verifying Golden Continuity Demo",
+    )
+    demo_parser.add_argument(
+        "--output-dir",
+        default="./erii-demo",
+        help="Fresh directory for storage, recall, report, and MemoryPack artifacts",
+    )
     args = parser.parse_args()
+
+    if args.command == "demo":
+        from erii.demo import (
+            GoldenContinuityDemoVerificationError,
+            run_golden_continuity_demo,
+        )
+
+        try:
+            result = run_golden_continuity_demo(args.output_dir)
+        except FileExistsError as exc:
+            parser.error(str(exc))
+        except GoldenContinuityDemoVerificationError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        for line in result.summary_lines():
+            print(line)
+        return
 
     if args.command == "serve":
         if app is None:

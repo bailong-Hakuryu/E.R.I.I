@@ -18,6 +18,7 @@ from erii import (
     ERIIEngine,
     InMemoryVectorStore,
     SQLiteStorage,
+    __version__,
 )
 
 
@@ -34,8 +35,8 @@ else:
 
 
 def main():
-    work_dir = tempfile.mkdtemp(prefix="erii_b1_demo_")
-    print(f"=== E.R.I.I. v0.4.0b1 Demo Workspace: {work_dir} ===")
+    work_dir = tempfile.mkdtemp(prefix="erii_demo_")
+    print(f"=== E.R.I.I. v{__version__} Demo Workspace: {work_dir} ===")
 
     try:
         # 1. Initialize Engine with SQLite Storage & InMemory Vector Store
@@ -118,7 +119,7 @@ def main():
         print("Migrated Engine Recalled Context:")
         print(migrated_context)
 
-        print("\n=== v0.4.0b1 Demo Completed Successfully! ===")
+        print(f"\n=== v{__version__} Demo Completed Successfully! ===")
 
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

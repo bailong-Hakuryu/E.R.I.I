@@ -2,14 +2,16 @@
 
 E.R.I.I. 描述情感型 Agent 与用户如何分别形成共同历史、当前认知与关系人格。本文档规定项目统一使用的领域语言。
 
-> **实现状态（`0.4.0b1` 待验收源码里程碑，2026-08-03）：** 最后一个历史发布仍是
-> `0.4.0a8`；后续 `0.x` 不要求逐个分发包，复现时应固定 commit SHA。a8 的角色
-> 连续性、来源权威、关系处理、反思、召回与情感效价中立语义已经实现；当前 b1
-> 源码增加 Data Lifecycle 与长期验证。本文中 `Consequence
+> **实现状态（`0.4.0rc1.dev0` 源码收口，2026-08-03）：** 最后一个历史发布仍是
+> `0.4.0a8`；`0.4.0b1` 已在 commit
+> `f6dca322379c4ea88320c69d752cab471d035e95` 固定为接受的源码基线，后续 `0.x`
+> 不要求逐个分发包，复现时仍应固定完整 commit SHA。a8 的角色连续性、来源权威、
+> 关系处理、反思、召回与情感效价中立语义，以及 b1 的 Data Lifecycle 与长期验证
+> 已经实现；rc1 只处理采用路径、兼容与源码收口，不增加领域语义。本文中 `Consequence
 > Ledger`、连续性例外解除、双方立场、Narrative Tension Resolution、Character
 > Review Trigger、Reflection Sensitivity、Character Deliberation、Deliberation
 > Ensemble 等词描述已经接受但留给 v0.5 及后续版本的领域方向，
-> 除非条目明确写明当前实现，否则不应据此调用不存在的 b1 API。权威交付边界见
+> 除非条目明确写明当前实现，否则不应据此调用不存在的 API。权威交付边界见
 > [`docs/b1-implementation-contract.md`](docs/b1-implementation-contract.md) 与
 > [`ROADMAP.md`](ROADMAP.md)。
 

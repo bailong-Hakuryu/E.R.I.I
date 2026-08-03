@@ -2,13 +2,15 @@
 
 Milestone prepared: 2026-08-03
 Distribution status: source milestone; no standalone package release planned
+Acceptance status: accepted source baseline
+Baseline commit: `f6dca322379c4ea88320c69d752cab471d035e95`
 
 The last historical GitHub release remains `v0.4.0a8`. This document describes
-the implemented b1 source milestone. The project does not plan to publish a
-standalone package for every `0.x` milestone; reproduce b1 by pinning a reviewed
-commit SHA.
+the accepted b1 source milestone. The project does not plan to publish a
+standalone package for every `0.x` milestone; reproduce b1 by pinning the full
+baseline commit SHA above.
 
-The implemented `0.4.0b1` candidate completes the planned v0.4 feature set. It
+The accepted `0.4.0b1` source baseline completes the planned v0.4 feature set. It
 turns data portability from
 “export a pack and hope” into an explicit, verifiable lifecycle: inspect,
 zero-write plan, backup-first execution and terminal verification. It also adds
@@ -78,7 +80,7 @@ Executable examples are in [`data-lifecycle.md`](data-lifecycle.md).
 
 | Axis | Value |
 | --- | --- |
-| Package | `0.4.0b1` candidate |
+| Package | `0.4.0b1` accepted source identity |
 | Python | 3.11–3.14 |
 | SQLite schema | 9 |
 | FileStorage format | 1 |
@@ -144,9 +146,9 @@ Historical records remain readable.
 
 ## What comes next
 
-After this source milestone passes final verification, work can move directly
-to `0.4.0rc1`; no b1 tag, GitHub Release, uploaded wheel/sdist, or package
-registry publication is required.
+The accepted source baseline moves directly to `0.4.0rc1` development; no b1
+tag, GitHub Release, uploaded wheel/sdist, or package-registry publication is
+required.
 
 v0.4 remains feature-frozen during RC. RC work is limited to compatibility,
 defects, documentation, local build verification, and source closure,

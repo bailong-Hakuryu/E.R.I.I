@@ -1,11 +1,11 @@
 # v0.4.0b1 Implementation Contract
 
-Status (2026-08-03): implemented and awaiting the final `0.4.0b1` source
-acceptance gate. This document describes implemented milestone behavior, not a
-proposal. The project does not require a b1 tag or distribution package; pin a
-reviewed commit SHA to reproduce it. `0.4.0a8` remains the last historical
-release, and historical alpha contracts and ADRs remain immutable records of
-the decisions that led here.
+Status (2026-08-03): accepted source baseline at commit
+`f6dca322379c4ea88320c69d752cab471d035e95`. This document describes implemented
+milestone behavior, not a proposal. The project does not require a b1 tag or
+distribution package; pin that full commit SHA to reproduce it. `0.4.0a8`
+remains the last historical release, and historical Alpha contracts and ADRs
+remain immutable records of the decisions that led here.
 
 ## Source milestone boundary
 
@@ -203,12 +203,15 @@ tracked for v0.6.
 
 ## Release evidence and change control
 
-The b1 acceptance gate includes complete tests on the minimum and maximum supported Python
-versions, Ruff, `compileall`, wheel/sdist builds, clean artifact installation,
-contract snapshots, historical fixtures, lifecycle fault injection and the full
-longitudinal suite. Exact counts can change when a regression test is added, so
-the release claim is “all committed gates pass,” not a hand-maintained test
-count.
+The accepted b1 baseline ran the complete Linux test gate on the minimum and
+maximum Python versions then declared by its workflow, plus targeted Windows
+storage, lifecycle, and clean-artifact smoke paths. It also included Ruff,
+`compileall`, wheel/sdist builds, contract snapshots, historical fixtures,
+lifecycle fault injection, and the full longitudinal suite. This is precise
+evidence for those committed environments and paths, not a claim that every
+operating-system/interpreter combination was tested. Exact test counts can
+change when a regression test is added, so the acceptance claim is “all
+committed gates passed at the baseline commit,” not a hand-maintained count.
 
 Public Python exports, REST OpenAPI, compatibility catalog and storage/wire
 snapshots are frozen for the v0.4 Beta line. A change that alters an authority

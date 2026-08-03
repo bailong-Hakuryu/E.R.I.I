@@ -2,10 +2,11 @@
 
 **简体中文** · [English](USAGE.md)
 
-> 本手册描述 `0.4.0b1` 源码树。项目不计划为每个 `0.x` 源码里程碑单独发布包；
-> GitHub 上最后一个历史发布仍是 `v0.4.0a8`，其 Python 3.9 和兼容契约以标签内
-> 文档为准。复现当前 b1 时请固定经过验证的 commit。两者都不是可直接公开部署的
-> 完整产品安全边界。
+> 本手册描述 `0.4.0rc1.dev0` 开发源码；其持久语义来自已接受 b1 基线
+> `f6dca322379c4ea88320c69d752cab471d035e95`。项目不计划为每个 `0.x` 源码里程碑
+> 单独发布包。GitHub 上最后一个历史发布仍是 `v0.4.0a8`，其 Python 3.9 和兼容契约
+> 以标签内文档为准。复现后续源码请固定经过验证的 full commit SHA。两者都不是可
+> 直接公开部署的完整产品安全边界。
 
 E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的角色连续性与长期记忆
 内核。它不负责生成聊天回复，也不绑定某一种模型；它负责保存角色与某个用户共同经历
@@ -56,16 +57,16 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的角�
 
 ### 环境要求
 
-- `0.4.0b1` 要求 Python 3.11+，CI 验证 3.11 与 3.14，并额外运行 Windows
-  存储和构建产物安装测试；不可移动的 `v0.4.0a8` 是最后一个承诺支持 Python 3.9
-  的版本；
+- `0.4.0rc1.dev0` 要求 Python 3.11–3.14。当前工作流在 Linux 上运行声明矩阵，并在
+  Windows 上运行明确列出的存储、构建与 Demo smoke；这不代表未列出的平台组合已经
+  验证。不可移动的 `v0.4.0a8` 是最后一个承诺支持 Python 3.9 的版本；
 - 基础安装只依赖 Pydantic；
 - SQLite 使用 Python 标准库，无需单独安装数据库服务。
 
 ### 从 GitHub 安装当前版本
 
-如需当前 b1 源码，先克隆仓库；长期部署必须固定经过验证的 commit SHA。项目不会把
-创建 `v0.4.0b1` 分发包作为下一阶段前提：
+如需当前 rc1 开发源码，先克隆仓库；长期部署必须固定经过验证的 full commit SHA。
+项目不会把创建 `0.x` 分发包作为下一阶段前提：
 
 ```bash
 git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
@@ -112,7 +113,7 @@ python -m pip install -e ".[dev]"
 python -c "import erii; print(erii.__version__)"
 ```
 
-当前 b1 源码应输出 `0.4.0b1`。
+当前开发源码应输出 `0.4.0rc1.dev0`。
 
 长期环境应固定经过验证的 commit 或不可移动 release，不要让部署脚本无条件跟随
 `main`。
@@ -329,7 +330,7 @@ def run_turn(engine, chat_model, conversation_messages, user_text):
 
 ## 模型 Provider 选择
 
-当前 b1 不包含 Character Deliberation 或 DeepSeek 角色审思 Module。`.[openai]`
+当前 rc1 开发源码不包含 Character Deliberation 或 DeepSeek 角色审思 Module。`.[openai]`
 只是给宿主自定义集成准备的可选 SDK；后文的 `OpenAIAdapter` 是旧式记忆提取
 Adapter，不能因为接口格式兼容就被当成规划中的角色审思能力。
 

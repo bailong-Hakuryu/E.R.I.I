@@ -10,32 +10,56 @@ from erii.models.pack import MemoryPack
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
-class WorkflowTriggerContractTests(unittest.TestCase):
-    def test_release_recovery_branch_is_excluded_from_general_ci(self) -> None:
-        ci_lines = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(
-            encoding="utf-8"
-        ).splitlines()
-        release_lines = (
+class SourceMilestoneWorkflowContractTests(unittest.TestCase):
+    def test_zero_x_source_milestones_have_no_github_release_publication_path(self) -> None:
+        release = (
             REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
-        ).read_text(encoding="utf-8").splitlines()
+        ).read_text(encoding="utf-8")
 
-        general_branch_pattern = '      - "**"'
-        recovery_exclusion = '      - "!codex/release-v*"'
-        recovery_trigger = '      - "codex/release-v*"'
+        self.assertIn("workflow_dispatch:", release)
+        self.assertIn("commit_sha:", release)
+        self.assertIn("full 40-character commit SHA", release)
+        self.assertNotIn('      - "v*"', release)
+        self.assertNotIn("codex/release-v*", release)
+        self.assertNotIn("gh release create", release)
+        self.assertNotIn("gh release upload", release)
+        self.assertNotIn("contents: write", release)
 
-        self.assertIn(recovery_trigger, release_lines)
-        self.assertIn(general_branch_pattern, ci_lines)
-        self.assertIn(recovery_exclusion, ci_lines)
-        self.assertLess(
-            ci_lines.index(general_branch_pattern),
-            ci_lines.index(recovery_exclusion),
-            "GitHub evaluates branch patterns in order, so the exclusion must follow **",
+    def test_source_verification_preserves_build_and_clean_install_checks(self) -> None:
+        ci = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
         )
+        source_verification = (
+            REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("python -m build", ci)
+        self.assertIn("package-install-windows:", ci)
+        self.assertIn("python -m pip install $installSpec httpx", ci)
+        self.assertNotIn("!codex/release-v*", ci)
+
+        self.assertIn("python -m build", source_verification)
+        self.assertIn("python -m twine check --strict dist/*", source_verification)
+        self.assertIn('python -m pip install "${artifact}[server]" httpx', source_verification)
+        self.assertIn("python -m pip install $installSpec httpx", source_verification)
+
+    def test_clean_base_install_runs_the_golden_demo(self) -> None:
+        ci = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        source_verification = (
+            REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("erii demo --output-dir", ci)
+        self.assertIn("erii demo --output-dir", source_verification)
+        self.assertIn("MemoryPack.from_json", ci)
+        self.assertIn("MemoryPack.from_json", source_verification)
 
 
 class BetaContractTests(unittest.TestCase):
     def test_package_and_memory_pack_versions_have_independent_lifecycles(self) -> None:
-        self.assertEqual(erii.__version__, "0.4.0b1")
+        self.assertEqual(erii.__version__, "0.4.0rc1.dev0")
         self.assertEqual(MemoryPack.CURRENT_VERSION, "0.4.0a8")
 
     def test_python_support_contract_is_synchronized(self) -> None:
@@ -56,21 +80,42 @@ class BetaContractTests(unittest.TestCase):
         self.assertNotIn("Programming Language :: Python :: 3.9", pyproject)
         self.assertNotIn("Programming Language :: Python :: 3.10", pyproject)
         self.assertIn("Programming Language :: Python :: 3.14", pyproject)
-        self.assertIn('python-version: ["3.11", "3.14"]', ci)
+        self.assertIn(
+            'python-version: ["3.11", "3.12", "3.13", "3.14"]',
+            ci,
+        )
         self.assertIn("windows-smoke:", ci)
         self.assertIn("runs-on: windows-latest", ci)
         self.assertIn('test_lifecycle_inspection.py" -v', ci)
         self.assertIn('test_lifecycle_backup_restore.py" -v', ci)
-        self.assertIn('python-version: ["3.11", "3.14"]', release)
+        self.assertIn(
+            'python-version: ["3.11", "3.12", "3.13", "3.14"]',
+            release,
+        )
         self.assertNotIn('python-version: "3.9"', release)
 
-    def test_prerelease_title_is_not_tied_to_an_old_feature_release(self) -> None:
+    def test_source_package_metadata_describes_the_actual_project(self) -> None:
+        pyproject = (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'description = "Character continuity and long-term memory kernel for AI agents"',
+            pyproject,
+        )
+        self.assertIn('{ name = "bailong-Hakuryu" }', pyproject)
+        self.assertIn("[project.urls]", pyproject)
+        self.assertIn(
+            'Repository = "https://github.com/bailong-Hakuryu/E.R.I.I"',
+            pyproject,
+        )
+        self.assertIn("keywords = [", pyproject)
+        self.assertNotIn("Operating System :: OS Independent", pyproject)
+
+    def test_source_verification_is_not_tied_to_an_old_feature_release(self) -> None:
         release = (
             REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
         ).read_text(encoding="utf-8")
 
-        self.assertIn('--title "E.R.I.I. ${RELEASE_TAG}"', release)
-        self.assertIn("for example v0.4.0b1", release)
+        self.assertIn("source milestone", release.lower())
         self.assertNotIn("for example v0.4.0a8", release)
         self.assertNotIn("Continuity Audit and Release Closeout", release)
 

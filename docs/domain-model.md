@@ -1,6 +1,6 @@
 # E.R.I.I. Domain Model
 
-本文记录截至 2026-08-03 等待最终验收的 `0.4.0b1` 源码里程碑所实现的角色连续性、
+本文记录已由 `0.4.0b1` 接受源码基线实现、并由 `0.4.0rc1.dev0` 继续收口的角色连续性、
 长期记忆与数据生命周期结构；最后一个历史发布仍是 `0.4.0a8`，b1 应通过固定 commit
 SHA 复现。角色领域语义仍以 a8 已冻结能力为基础；b1 增加的是迁移、删除、重建和
 长期验证，不把 v0.5 的关系
@@ -135,7 +135,7 @@ Agent-private Markdown 分别渲染 `Verified Memories` 与 `Legacy Context - pr
 ## Storage 与 MemoryPack
 
 FileStorage 与 SQLiteStorage 遵循相同的关系隔离、事件追加、处理运行、反思决定与
-幂等语义。b1 候选的当前身份分别是 FileStorage format v1 与 SQLite schema v9；
+幂等语义。b1 接受基线的身份分别是 FileStorage format v1 与 SQLite schema v9；
 SQLite v7-v9 为最近 Timeline 增加有界读取、规范 UTC 排序键和稳定的等时刻顺序。
 旧 SQLite 不再在 Storage 构造时静默原地迁移，而是显式失败。生命周期只验证
 schema `6 → 9` 的 backup-first、并排升级；其他可识别旧 schema 不因能够 inspect

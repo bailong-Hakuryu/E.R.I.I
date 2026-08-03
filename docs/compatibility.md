@@ -2,12 +2,13 @@
 
 ## Python 与源码版本
 
-截至 2026-08-03，`0.4.0b1` 待验收源码里程碑支持 Python 3.11–3.14；`requires-python`
-的下限是 3.11，CI 在最低与
-最高支持版本上验证 Linux，并在 Windows 上补充文件、SQLite、生命周期和构建产物
-安装路径。历史 `0.4.0a8` 仍是最后一个承诺 Python 3.9 的发布；不会回写它的 wheel、
-sdist、标签或文档来伪造新的兼容范围。后续 `0.x` 复现应固定 commit SHA，正式包
-发布留到 `1.0`。
+截至 2026-08-03，`0.4.0rc1.dev0` 源码快照要求 Python 3.11–3.14；`requires-python`
+的下限是 3.11。当前工作流在 Linux 上覆盖 3.11–3.14，并在 Windows 上运行明确列出的
+存储、生命周期、构建产物和 Demo smoke；这不代表未列出的操作系统/解释器组合已经
+验证。`0.4.0b1` 已在
+`f6dca322379c4ea88320c69d752cab471d035e95` 接受为源码基线。历史 `0.4.0a8`
+仍是最后一个承诺 Python 3.9 的发布；不会回写它的 wheel、sdist、标签或文档来伪造
+新的兼容范围。后续 `0.x` 复现应固定 full commit SHA，正式包发布留到 `1.0`。
 
 项目仍处于 `0.x`：补丁版本优先保持兼容，次版本可以有经过说明和迁移支持的受控
 变化。已弃用 API 原则上至少真实警告一个次版本。`remember()` 与接收 transient
@@ -25,7 +26,7 @@ Source Turn 的 `adjudicate_relationship_candidates()` 在 b1 发出
 
 | 格式/运行时 | 当前值 | 当前 Reader 接受 |
 | --- | --- | --- |
-| Package metadata | `0.4.0b1` source identity | 待验收源码里程碑；最后一个历史发布是 `0.4.0a8` |
+| Package metadata | `0.4.0rc1.dev0` source identity | b1 之后的源码收口快照；最后一个历史发布是 `0.4.0a8` |
 | Python | `>=3.11`，测试至 `3.14` | 3.11–3.14 |
 | SQLite | schema `9` | `0`–`9` 可识别；旧 schema 不由 Storage 自动升级 |
 | FileStorage | format `1` | `legacy`, `1` |

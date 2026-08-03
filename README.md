@@ -1,322 +1,201 @@
 # E.R.I.I.
 
-> Experiential Recall & Impression Integration — 让角色保留共同经历，并维持连续的人格与关系。
+> Experiential Recall & Impression Integration — 让角色记得共同经历，并在每段独立关系中保持连续的人格。
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Latest published release](https://img.shields.io/badge/published-v0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
-[![Current source](https://img.shields.io/badge/source-v0.4.0b1-blue.svg)](CHANGELOG.md)
+[![Historical release](https://img.shields.io/badge/historical-v0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
+[![Source](https://img.shields.io/badge/source-v0.4.0rc1.dev0-blue.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11--3.14-green.svg)](pyproject.toml)
 
-E.R.I.I. 是一个可嵌入 Python 应用的角色连续性与长期记忆内核，主要面向 AI
-伴侣、虚拟角色和长期叙事型 Agent。
+[English README](README_EN.md)
 
-普通检索系统关心“哪些文本与当前问题相似”；E.R.I.I. 还关心：
+## 为什么是 E.R.I.I.
 
-- 这段经历属于哪个 `Agent × User` 关系；
-- 角色为什么会记住、相信或重新理解一件事；
+普通 RAG 解决“哪些文本和现在相似”；E.R.I.I. 还要回答：
+
+- 这段经历属于哪一个 `Agent × User`；
+- 角色为什么可以记得、相信或重新理解它；
 - 当前关系状态由哪些不可变事件推导而来；
 - 一次说过的话能否成为记忆、关系或人格变化的权威依据；
-- 数据升级、迁移、删除和重建之后，这条因果链是否仍然成立。
+- 重启、迁移、导出、删除和重建之后，这条因果链是否仍然成立。
 
-项目目前由单人维护，不提供 SLA。核心记忆内核和用户数据携带能力将长期开放；
-正式产品仍需在内核外补齐身份、授权、加密、多租户隔离和运营能力。
-
-## 项目原则
-
-E.R.I.I. 的核心定义是：
+项目的核心定义是：
 
 > E.R.I.I. 是一个角色连续性与长期记忆内核。它让角色从既定人设与形成性经历出发，
 > 在每段独立关系中继续生活；角色可以因真实经历而成长，但任何重要变化都必须保持
 > 心理与经历上的因果连续性。
 
-这意味着：
+因此：
 
-- **人设是底色，不是每轮重写的 Prompt。** 原始人设原文永久保留；结构化编译结果
-  只能解释和激活它，不能静默覆盖它。
-- **每段关系独立。** “我们第一次一起看雪”只属于发生过这件事的
-  `Agent × User`；另一个 Agent 或用户不会自动继承记忆与亲密度。
-- **成长需要来源。** 普通关系状态可渐进更新；触及核心人格或巨大跃迁时，只形成
-  可审查提案，不能由一次模型输出自动生效。
-- **连续性判断对情绪中立。** 温柔不天然正确，拒绝、生气或让用户受伤也不天然
-  OOC；判断依据是角色、人设、经历、知识和关系是否连续。选择造成的关系后果及后续
-  修复能力属于 v0.5 的领域工作。
-- **模型提出，规则裁决。** LLM 可以提出候选事件、反思或语气解释；稳定 ID、关系
-  边界、来源权威、状态变化和人格审批由内核确定。
+- 原始 Character Blueprint 是人设底色，结构化解释不能静默覆盖它；
+- “我们第一次一起看雪”只属于实际经历它的那段关系；
+- 普通关系状态可以渐进更新，核心人格变化和巨大跃迁只能先形成可审查提案；
+- 温柔不天然正确，拒绝、生气或造成伤害也不天然 OOC；
+- 模型提出候选，内核核验身份、范围、来源和状态变化。
 
-更完整的领域术语见 [Domain Model](docs/domain-model.md)，未来版本边界见
-[Roadmap](ROADMAP.md)。
+E.R.I.I. 是可嵌入 Python 宿主的内核，不是聊天模型、万能 Agent 框架或开箱即用的
+多租户聊天产品。
 
-## 发展路径
+## 从源码安装
 
-项目按两条不同稳定性的轨道发展：
+当前开发快照身份是 `0.4.0rc1.dev0`，要求 Python 3.11–3.14：
 
-- **内核演进轨**：`0.4.0b1 → 0.4.0rc1 → 0.4.0 → v0.5`，维护角色、关系、来源、
-  召回和数据生命周期的长期兼容语义；
-- **Labs 与集成轨**：DeepSeek、其他模型、本地模型、宿主 Adapter 与未来多模型
-  审查，可以独立实验、替换和删除，不阻塞内核演进。
+```bash
+git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
+cd E.R.I.I
+python -m venv .venv
+```
 
-`0.x` 版本号是源码演进里程碑，不要求逐个创建 GitHub Release、wheel/sdist 资产或
-PyPI 包。近期直接在 rc1 收敛安装、Golden Continuity Demo 和公共 Interface；正式
-包发布与完整发布流程留到 `1.0`。v0.5 的第一步不是完整多 Agent，而是“最终交付的
-角色选择 → 关系后果 → 未解决张力 → 后续带来源召回”的最小纵切。
+Linux 或 macOS：
 
-完整取舍、采用目标和功能准入标准见
-[中文发展战略](docs/development-strategy.md) /
-[English Development Strategy](docs/development-strategy.en.md)；版本级交付见
-[Roadmap](ROADMAP.md)。
+```bash
+source .venv/bin/activate
+python -m pip install .
+```
 
-## 当前版本
+Windows PowerShell：
 
-当前源码身份为 `0.4.0b1`，支持 Python 3.11–3.14。GitHub 上最后一个历史发布仍是
-`v0.4.0a8`；项目不计划为后续每个 `0.x` 源码里程碑单独发布包。需要复现当前源码时
-应固定经过验证的 commit SHA。
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install .
+```
 
-各版本轴独立：
+确认源码身份：
 
-| 轴 | b1 值 |
+```bash
+python -c "import erii; print(erii.__version__)"
+```
+
+`0.x` 是源码演进里程碑，不要求每个阶段都有 Git tag、GitHub Release、wheel/sdist
+上传或 PyPI 包。需要复现时请固定经过审查的 **full commit SHA**。正式包发布流程计划
+在 `1.0` 建立；`v0.4.0a8` 只是已有的历史发布，不会被回写。
+
+按需安装扩展：
+
+```bash
+python -m pip install ".[server]"  # FastAPI / Uvicorn 参考服务
+python -m pip install ".[openai]"  # 宿主自定义集成使用的可选 SDK
+python -m pip install ".[vector]"  # 可选向量检索
+python -m pip install ".[dev]"     # 测试、构建和静态检查
+```
+
+## 一键运行 Golden Continuity Demo
+
+基础安装即可运行，不需要模型 API Key 或网络：
+
+```bash
+erii demo --output-dir ./erii-demo
+```
+
+这个自校验 Demo 使用原创合成角色与真实 SQLite，证明：
+
+1. User A 与角色共同经历第一次看雪；
+2. 关闭并重新打开 Engine 后，User A 仍能带来源召回；
+3. User B 不知道这件事、不继承 User A 的亲密度，也不会获得只绑定于
+   User A 的已批准 Persona 投影；
+4. User A 的关系可以导出为 `user-a.erii` MemoryPack。
+
+预期输出包含四项 `[PASS]`。目录还会保存数据库、渲染召回和
+`demo-report.json`。输出目录必须不存在；命令不会覆盖旧结果。
+
+完整解释见 [Getting Started](docs/getting-started.md)。
+
+## 接入真实聊天宿主
+
+新宿主只有一条推荐主路径：
+
+```text
+Turn Recording
+  → archive_turn() / process_relationship_turn()
+  → recall_structured()
+  → export_memory()
+```
+
+双方可见消息已经存在时使用 `record_turn()`；仍在生成与交付回复时，使用更严格的
+`begin_turn() → complete_turn()`。随后由宿主显式启动记忆归档和/或关系处理；下一轮
+通过结构化召回取得同一关系的长期上下文，最后始终保留 MemoryPack 导出能力。
+
+E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，也不会替宿主选择模型。
+`remember()` 和 transient `adjudicate_relationship_candidates()` 是弃用兼容路径，
+不要用于新集成。
+
+详见 [Host Integration](docs/host-integration.md) 和
+[API Stability](docs/api-stability.md)。
+
+## Reference
+
+- [Getting Started：一键关系隔离与重启证明](docs/getting-started.md)
+- [Host Integration：真实聊天唯一推荐路径](docs/host-integration.md)
+- [API Stability：Golden / Advanced / Experimental / Internal](docs/api-stability.md)
+- [中文完整使用手册](docs/USAGE_zh-CN.md)
+- [English User Guide](docs/USAGE.md)
+- [数据生命周期](docs/data-lifecycle.md)
+- [兼容性策略](docs/compatibility.md)
+- [领域模型](docs/domain-model.md)
+- [发展战略（中文）](docs/development-strategy.md)
+- [Development Strategy (English)](docs/development-strategy.en.md)
+- [安全策略](SECURITY.md)
+- [支持政策](SUPPORT.md)
+- [路线图](ROADMAP.md)
+- [变更记录](CHANGELOG.md)
+- [贡献指南](CONTRIBUTING.md)
+
+## 当前源码边界
+
+`0.4.0b1` 已在 commit
+`f6dca322379c4ea88320c69d752cab471d035e95` 接受为不可移动的源码基线。
+`0.4.0rc1.dev0` 在它之上只做 v0.4 源码收口：Golden Demo、首次采用、公共 Interface
+分级、契约/构建验证、文档和缺陷修复。
+
+版本轴彼此独立：
+
+| 轴 | 当前值 |
 | --- | --- |
-| Python 包 | `0.4.0b1` |
-| Python | `>=3.11`，测试至 `3.14` |
+| Python 源码身份 | `0.4.0rc1.dev0` |
+| Python | `3.11`–`3.14` |
 | SQLite | schema `9` |
 | FileStorage | format `1` |
 | MemoryPack | `0.4.0a8` |
 | Lifecycle Backup | `1` |
 | Lifecycle Plan | writer `3`，readers `1`–`3` |
 
-包升级为 b1 不会把现有 MemoryPack 重命名为 b1，也不会把 SQLite schema 改成
-“b1”。机器可读版本目录位于 `erii.compatibility.COMPATIBILITY_CATALOG`。
+RC 不新增关系维度、记忆类型或人格变化渠道，也没有实现 v0.5 的 Relationship
+Consequence、Narrative Tension、伤害后修复或 Character Deliberation 持久语义。
 
-## b1 已交付的能力
+## 已有内核能力
 
-### 角色、关系与长期记忆
+- 同一角色可在多个用户关系中复用同一个 `agent_id`（共享角色身份）；每个
+  `Agent × User` 组合仍有独立的 `relationship_id`、`persona_id`，以及只属于该关系的
+  记忆、事件、状态和亲密度；
+- 原始 Character Blueprint 与经审批的结构化 Persona Manifest；
+- 完整可见 Source Transcript、两阶段 Turn 生命周期和追加式来源账本；
+- 消息级证据归档，以及 Ordinary / Legacy / Quarantined 召回权威；
+- 追加式 Relationship Event、五维状态投影、Promise 与 Open Loop；
+- Persona Reflection、需审批的 Persona Growth Proposal、Episode 与 Chapter 投影；
+- 五轴 Continuity Review、Delivery Exception、Context Baseline 与 Voice Trace；
+- FileStorage、SQLiteStorage、结构化 Recall 和 MemoryPack；
+- 备份、恢复、窄范围升级、fresh import、删除、重建与长期合成回归。
 
-- 每个 `Agent × User` 独立、稳定的 relationship、persona 和 identity ID；
-- 原始 Character Blueprint 与可审查、版本化的 Persona Compilation；
-- 完整保存实际可见 User/Agent Source Transcript 的 Turn Record；
-- `begin_turn()` / `complete_turn()` / `record_turn()` / `abandon_turn()` 生命周期；
-- 带消息级证据的可靠归档，明确区分 `artifacts` 与 `no_memory`；
-- Ordinary、Legacy Context 与 Quarantined History 三种召回权威；
-- 追加式 Relationship Event 与可重建的当前认知、五维关系状态及解释；
-- Promise、Condition、Open Loop 与显式 Resolution；
-- Persona Reflection、关系处理 Run 和需宿主审批的 Persona Growth Proposal；
-- Episode 与 Relationship Chapter 等可重建分层投影；
-- 五轴 Continuity Review、Delivery Exception 与来源约束的 Contextual Voice；
-- FileStorage、SQLiteStorage、结构化 Recall、MemoryPack 和可选 REST 参考宿主。
+详细能力和限制以 [API Stability](docs/api-stability.md)、
+[Compatibility Policy](docs/compatibility.md) 与机器可读 contract snapshots 为准。
 
-### 可验证数据生命周期
+## 模型与实验
 
-所有公开生命周期变更都经过同一个入口：
+内核 Provider-neutral。DeepSeek、其他远程模型和本地模型都只能作为可拆卸
+Adapter/实验；E.R.I.I. 不强制使用某个 Provider，也不建议为了使用它改造原本正常的
+宿主。raw thinking、完整 Prompt、凭据和 Provider 错误正文不会被保存成“角色内心”。
 
-```python
-assessment = lifecycle.inspect(target)  # 只读检查
-plan = lifecycle.plan(request)          # 零写入 dry-run
-report = lifecycle.execute(plan)        # 执行并做终态验证
-```
+未来多模型协同与 DeepSeek 没有设计绑定。即使引入 Deliberation Ensemble，也只能有
+一名 Character Actor；Reviewer 不能投票定义角色或直接写入人格、关系和记忆。
 
-b1 已实现：
+## 安全、数据与维护
 
-- FileStorage、SQLite、MemoryPack 的 verified Backup v1；
-- 保持原格式、发布到缺失目标的 no-replace restore；
-- FileStorage `legacy → 1` 并排升级；
-- SQLite schema `6 → 9` 并排升级；
-- 所有已声明旧可读 MemoryPack 到 `0.4.0a8` 的显式升级；
-- MemoryPack 到全新 FileStorage v1 / SQLite v9 的隔离 staging import；
-- relationship、Source Turn、Relationship Event、complete-user 四种 backup-first
-  删除范围；
-- 删除早期历史时沿冻结账本依赖撤销派生 Run/Event/长期记忆，保留未命中的原始聊天，
-  不伪造历史重审；
-- 从剩余权威历史确定性重建关系投影，并在发布前执行真实 MemoryPack 语义往返；
-- 分块文件复制、流式 SQLite 语义摘要、资源上限和崩溃恢复；
-- FileStorage / SQLite 上三条固定长期轨迹与回归基线。
+当前项目由单人长期维护，不提供 SLA。FileStorage、SQLite、MemoryPack 和 Lifecycle
+Backup 默认明文；参考 REST 服务只有单一 owner key，不是每用户授权或多租户安全边界。
+正式产品仍需在宿主侧补齐身份、对象授权、TLS、加密、密钥管理、限流、租户隔离和
+外部副本删除编排。
 
-生命周期不提供任意在线 merge、覆盖 restore、通用 downgrade 或静默原地升级。详细
-操作、恢复语义和可运行示例见 [Data Lifecycle Guide](docs/data-lifecycle.md)。
-
-## 安装
-
-当前源码要求 Python 3.11–3.14：
-
-```bash
-git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
-cd E.R.I.I
-python -m pip install .
-```
-
-按需安装扩展：
-
-```bash
-python -m pip install ".[server]"  # FastAPI / Uvicorn
-python -m pip install ".[openai]"  # 宿主自定义集成的可选 SDK；不是角色审思 Module
-python -m pip install ".[vector]"  # ChromaDB / NumPy
-python -m pip install ".[dev]"     # 测试、构建与静态检查
-```
-
-确认安装身份：
-
-```bash
-python -c "import erii; print(erii.__version__)"
-```
-
-当前源码应输出 `0.4.0b1`。若你安装不可移动的 `v0.4.0a8`，请使用该标签内的文档和
-Python 兼容约定。
-
-## 最小关系示例
-
-下面的例子由可信宿主直接记录一条关系事件，适合展示内核边界。真实聊天产品应先走
-Turn Recording，再让宿主提供的提取器提出候选，不能把未经裁决的模型文本直接当成
-权威历史。
-
-```python
-from erii import ERIIEngine, RecallOptions, RecallRequest
-
-
-with ERIIEngine(storage_dir="./erii-data") as engine:
-    engine.initialize_relationship(
-        "agent_lumi",
-        "user_chen",
-        persona_source="Lumi is gentle, candid, curious, and respects other people's choices.",
-    )
-
-    engine.record_relationship_event(
-        "agent_lumi",
-        "user_chen",
-        "shared_experience",
-        "Lumi and Chen watched the first snow together.",
-        event_id="snow-001",
-    )
-
-    result = engine.recall_structured(
-        RecallRequest(
-            agent_id="agent_lumi",
-            user_id="user_chen",
-            query="What did we experience together?",
-            audience="agent_private",
-            # A real product should approve a Persona Manifest and use the
-            # default planned delivery. FULL is the explicit compatibility
-            # mode for this minimal uncompiled Blueprint example.
-            options=RecallOptions(persona_delivery="full"),
-        )
-    )
-    print(engine.render_recall(result))
-```
-
-完整聊天接入包含四个显式阶段：
-
-```mermaid
-flowchart LR
-    A["宿主保存可见 Source Turn"] --> B["提取器提出记忆/关系候选"]
-    B --> C["内核核验证据并裁决"]
-    C --> D["关系内召回与 Prompt 渲染"]
-    C --> E["事件、反思和可重建投影"]
-```
-
-请从[中文使用手册](docs/USAGE_zh-CN.md)或
-[English User Guide](docs/USAGE.md)继续。官方例子位于 [`examples/`](examples/)。
-
-## 可选模型实验
-
-E.R.I.I. 内核不绑定聊天模型，当前 b1 也没有内置 Character Deliberation Module。
-截至 2026-08-03，维护者会在预算敏感的 Shadow 实验中优先评估 DeepSeek；其
-[thinking 模式](https://api-docs.deepseek.com/guides/thinking_mode/)和
-[官方定价](https://api-docs.deepseek.com/quick_start/pricing/)会随时间变化，因此这
-只是带日期的实验建议，不是质量、价格或支持承诺。不要仅为接入一个模型改造本来正常
-工作的宿主、存储或部署。
-
-未来若提供 DeepSeek Adapter，它必须独立安装、可禁用且可替换；不安装时 Turn、
-Recall、Continuity、MemoryPack 和生命周期仍可使用。raw thinking、完整 Prompt、
-凭据和 Provider 错误正文不会被持久化成“角色内心”。未来 Deliberation Ensemble
-也保持 Provider-neutral：一名 Character Actor 可以接受不同 Reviewer 的审查，但
-不会由多数票决定人格，也不会让 Reviewer 直接改写历史。详见
-[ADR-0117](docs/adr/0117-keep-character-deliberation-provider-neutral.md)。
-
-## 后台处理由宿主控制
-
-构造 `ERIIEngine`、配置参考服务器或运行 `erii serve` 都不会自动启动隐藏线程。
-可靠归档使用：
-
-- `archive_turn()` 接受任务；
-- `process_pending()` 处理有限数量任务；
-- `drain()` 显式排空；
-- `close()` / `shutdown()` 做协作式关闭。
-
-`start()` 只保留给旧 `remember()` 队列兼容路径。`remember()` 与接收 transient
-Source Turn 的旧关系裁决入口在 b1 会发出 `DeprecationWarning`，计划于 v0.5 删除；
-新接入不要再以它们作为主路径。
-
-## 存储、携带与迁移
-
-- FileStorage 适合可检查的本地目录；
-- SQLiteStorage 提供单文件事务存储和 WAL；
-- MemoryPack 是开放、可读取、关系范围内的数据携带格式；
-- Lifecycle Backup 是物理恢复包，不等同于 MemoryPack；
-- backup / restore 保持原格式，upgrade 改变格式，fresh import 把 Pack 语义写入新
-  Storage——三者不能互相替代。
-
-旧 SQLite 不再因构造 `SQLiteStorage` 而静默迁移。当前唯一经过真实 fixture 验证的
-SQLite lifecycle 升级是 schema `6 → 9`；其他已识别旧 schema 必须先保留原数据，
-等待或实现对应的显式升级策略。
-
-## 安全边界
-
-E.R.I.I. b1 是可信本地宿主中的内核，不是完整 SaaS 安全边界：
-
-- 内置数据、MemoryPack 与 Backup 默认明文；
-- SHA-256 用于完整性与执行漂移检测，不是签名、MAC 或来源认证；
-- REST 参考服务器使用单一 owner API key，不是每用户授权；
-- 未内置 TLS、速率限制、对象权限和多租户隔离；
-- 生命周期锁只协调遵守协议的可信进程；
-- 删除成功只证明选中数据已从当前受验证 live store 移除并重建本地投影。
-
-特别注意：backup-first 删除会保留含删除前数据的 Lifecycle Backup；外部向量库、
-导出的 Pack、日志、复制数据库、云端留存和模型提供商副本也不会自动消失。宿主必须
-执行自己的留存和删除策略。
-
-处理真实数据前请阅读 [SECURITY.md](SECURITY.md)。
-
-## 长期评测与验证
-
-仓库包含三条原创合成轨迹，并在 FileStorage 与 SQLite 上验证：
-
-- 单关系 128 轮；
-- 两段相似但隔离的关系，各 72 轮交错执行；
-- 120 轮纠错、冲突与成长轨迹。
-
-基线覆盖重启、重试、File↔SQLite 携带、重复导入、正负召回、来源权威、关系隔离、
-删除和重建。性能数字只是维护者机器上的回归观测，不是 SLA。
-
-```bash
-python -m pytest -q
-python -m ruff check erii tests examples benchmarks scripts
-python scripts/freeze_contracts.py --check
-python benchmarks/run_longitudinal.py --adapter both --scenario all
-```
-
-冻结契约位于 [`docs/contracts/`](docs/contracts/)；它们不含聊天、人设或记忆正文。
-
-## 文档索引
-
-- [中文使用手册](docs/USAGE_zh-CN.md)
-- [English User Guide](docs/USAGE.md)
-- [Data Lifecycle Guide](docs/data-lifecycle.md)
-- [b1 Implementation Contract](docs/b1-implementation-contract.md)
-- [Compatibility Policy](docs/compatibility.md)
-- [Domain Model](docs/domain-model.md)
-- [发展战略（中文）](docs/development-strategy.md)
-- [Development Strategy (English)](docs/development-strategy.en.md)
-- [Security Policy](SECURITY.md)
-- [Support Policy / 支持政策](SUPPORT.md)
-- [Roadmap](ROADMAP.md)
-- [Changelog](CHANGELOG.md)
-- [Contributing](CONTRIBUTING.md)
-- [b1 Development Notes](docs/release-notes-0.4.0b1.md)
-
-## 项目状态与许可证
-
-v0.4 在 b1 进入功能冻结；当前可以直接进入 `0.4.0rc1` 的兼容、缺陷、Golden
-Path、文档和源码收口。`0.x` 不以发布包为阶段门槛，正式包发布链路留到 `1.0`。真实
-关系后果、伤害后的记忆与修复、角色内在审视仍属于 v0.5；完整产品宿主安全边界属于
-v0.6。
-
-项目采用 [Apache License 2.0](LICENSE)。项目名称保留；第三方角色、人设和作品内容
-不属于内核，也不应提交到仓库。使用者应自行确认其导入内容的著作权、商标、隐私和
-平台合规责任。
+核心记忆、连续性语义和用户数据携带能力长期开放。项目采用
+[Apache License 2.0](LICENSE)；第三方角色、人设与作品内容不属于内核，使用者须自行
+承担著作权、商标、隐私和平台合规责任。公开 Issue 与 fixture 只接受原创合成数据，
+不要上传真实聊天、私人人设、生产数据库或密钥。

@@ -2,12 +2,13 @@
 
 **English** · [简体中文](USAGE_zh-CN.md)
 
-> This guide describes the `0.4.0b1` source tree. The project does not plan to
-> distribute a package for every `0.x` source milestone. The last historical
-> GitHub release remains `v0.4.0a8`; use the documentation inside that tag for
-> its Python 3.9 and compatibility contract, and pin a reviewed commit to
-> reproduce b1. Neither version is a complete public-production security
-> boundary.
+> This guide describes the `0.4.0rc1.dev0` development source. Its durable
+> behavior starts from the accepted b1 baseline at
+> `f6dca322379c4ea88320c69d752cab471d035e95`. The project does not distribute a
+> package for every `0.x` source milestone. The last historical GitHub release
+> remains `v0.4.0a8`; use the documentation inside that tag for its Python 3.9
+> contract. Pin a reviewed full commit SHA for later source states. Neither
+> state is a complete public-production security boundary.
 
 E.R.I.I. is a character-continuity and long-term-memory kernel for
 relationship-oriented AI characters, companions, and narrative applications.
@@ -66,15 +67,18 @@ relationship processing. The deprecated `remember()` and transient
 
 ### Requirements
 
-- `0.4.0b1` requires Python 3.11+ and CI verifies Python 3.11 and 3.14, with additional Windows storage and built-artifact installation tests. The immutable `v0.4.0a8` release is the last version that promises Python 3.9 support.
+- `0.4.0rc1.dev0` requires Python 3.11–3.14. The current workflow runs the
+  declared matrix on Linux and named storage/build/Demo smoke paths on Windows;
+  this is not a claim about unlisted platform combinations. The immutable
+  `v0.4.0a8` release is the last version that promises Python 3.9 support.
 - The base installation depends only on Pydantic.
 - SQLite uses Python's standard library and does not require a separate database service.
 
 ### Install the Current Version from GitHub
 
-Clone the repository to work with the b1 source tree. Pin the reviewed commit
-SHA in any long-lived deployment. Publishing a `v0.4.0b1` distribution is not
-a prerequisite for the next development stage:
+Clone the repository to work with the rc1 development source. Pin a reviewed
+full commit SHA in any long-lived deployment. Publishing an `0.x` distribution
+is not a prerequisite for the next development stage:
 
 ```bash
 git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
@@ -137,7 +141,7 @@ Confirm that installation succeeded:
 python -c "import erii; print(erii.__version__)"
 ```
 
-The b1 source tree should print `0.4.0b1`.
+The current development source should print `0.4.0rc1.dev0`.
 
 For long-lived deployments, pin a verified commit or immutable release instead
 of allowing deployment scripts to follow `main` unconditionally.
@@ -358,7 +362,7 @@ If generation or continuity evaluation fails in a retryable way, leave the Turn 
 
 ## Model Provider Selection
 
-The current b1 source does not include Character Deliberation or a DeepSeek
+The current rc1 development source does not include Character Deliberation or a DeepSeek
 character-deliberation module. The `.[openai]` extra only supplies an optional
 SDK for custom host integrations. The `OpenAIAdapter` described later is a
 legacy memory-extraction Adapter; sharing a wire format does not turn it into

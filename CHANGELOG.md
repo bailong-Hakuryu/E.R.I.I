@@ -4,9 +4,40 @@
 
 ## [Unreleased]
 
-以下内容是截至 2026-08-03 已完成实现、仍在验收的 `0.4.0b1` 源码里程碑。仓库
-最后一个历史发布仍是 `0.4.0a8`；项目不计划为每个 `0.x` 里程碑单独发布包，复现
-b1 时应固定经过验证的 commit SHA。
+当前开发身份是 `0.4.0rc1.dev0`。它是 accepted b1 基线之上的源码收口快照，不是
+已上传的 Release Candidate 包。`0.x` 继续按 full commit SHA 复现；正式分发流程留到
+`1.0`。
+
+### Added
+
+- 新增 `erii demo --output-dir <fresh-dir>` Golden Continuity Demo：使用原创合成角色、
+  确定性宿主提取器和真实 SQLite，自校验进程重启、User A/User B 的事件、关系状态与
+  已批准 Persona 投影隔离、来源链及 User A MemoryPack 导出。
+- 新增 Getting Started、唯一推荐 Host Integration 路径和
+  `Golden Path | Advanced | Experimental | Internal` API 分级文档，以及中英文首次
+  采用 README。
+- 新增文档相对链接检查与最小 Bug/Feature/PR 模板；公开复现材料只接受原创合成数据，
+  不接收真实聊天、私人人设、生产数据库或凭据。
+
+### Changed
+
+- 源码身份进入 `0.4.0rc1.dev0`；Python、SQLite、FileStorage、MemoryPack、Backup 与
+  Lifecycle Plan 版本轴保持独立。
+- 源码验证工作流覆盖文档契约、Frozen Contracts、本地 wheel/sdist 构建、干净安装、
+  Golden Demo 和参考服务 smoke，但不上传发行资产。
+
+### Compatibility
+
+- RC 不新增持久领域语义，不修改 MemoryPack `0.4.0a8`、SQLite schema 9、
+  FileStorage format 1、Lifecycle Backup v1 或 Plan writer v3。
+- RC 没有实现 v0.5 Relationship Consequence、Narrative Tension、伤害后的修复/拒绝
+  修复，也没有把 DeepSeek、raw thinking 或 Character Deliberation 写入持久格式。
+
+## [0.4.0b1] - 2026-08-03
+
+`0.4.0b1` 已接受为 feature-complete v0.4 源码基线，固定于 commit
+`f6dca322379c4ea88320c69d752cab471d035e95`。它不是独立分发包；最后一个历史
+GitHub Release 仍是 `v0.4.0a8`。
 
 ### Added
 

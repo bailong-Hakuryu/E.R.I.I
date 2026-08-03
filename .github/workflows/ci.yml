@@ -7,7 +7,6 @@ on:
   push:
     branches:
       - "**"
-      - "!codex/release-v*"
   pull_request:
 
 permissions:
@@ -19,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
@@ -80,6 +79,11 @@ jobs:
         run: |
           $artifact = Get-ChildItem -Path dist -Filter $env:ARTIFACT_PATTERN | Select-Object -First 1
           if ($null -eq $artifact) { throw "built artifact is missing" }
+          python -m pip install $artifact.FullName
+          $demoOutput = Join-Path $env:RUNNER_TEMP "erii-golden-demo"
+          erii demo --output-dir $demoOutput
+          $env:ERII_DEMO_OUTPUT = $demoOutput
+          python -c "import os; from pathlib import Path; from erii import MemoryPack; root = Path(os.environ['ERII_DEMO_OUTPUT']); MemoryPack.from_json((root / 'user-a.erii').read_text(encoding='utf-8'))"
           $installSpec = "$($artifact.FullName)[server]"
           python -m pip install $installSpec httpx
           python -c "import erii; print(erii.__version__)"
@@ -125,7 +129,7 @@ jobs:
           python benchmarks/run_longitudinal.py \
             --adapter both \
             --scenario all \
-            --output longitudinal-results/v0.4.0b1-longitudinal.json
+            --output longitudinal-results/v0.4.0rc1-longitudinal.json
       - uses: actions/upload-artifact@v4
         with:
           name: longitudinal-${{ github.run_id }}-${{ github.run_attempt }}

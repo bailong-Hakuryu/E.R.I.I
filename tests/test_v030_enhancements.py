@@ -9,7 +9,7 @@ from erii.security.sanitizer import SecuritySanitizer
 
 class TestV030Enhancements(unittest.TestCase):
     def test_public_package_version(self):
-        self.assertEqual(__version__, "0.4.0b1")
+        self.assertEqual(__version__, "0.4.0rc1.dev0")
 
 
     def setUp(self):

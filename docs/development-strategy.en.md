@@ -245,26 +245,27 @@ The following remain planned or experimental:
 
 ### Source and published state
 
-As of this review, `0.4.0b1` identifies the current source. The last immutable
-historical release cited by the repository is `v0.4.0a8`. The project does not
-plan to publish each later `0.x` source milestone. Reproducible integrations
-should pin a reviewed commit SHA until the formal `1.0` release line exists.
+As of this review, `0.4.0rc1.dev0` identifies the current development source;
+the accepted b1 baseline is
+`f6dca322379c4ea88320c69d752cab471d035e95`. The last immutable historical
+release cited by the repository is `v0.4.0a8`. The project does not plan to
+publish each later `0.x` source milestone. Reproducible integrations should pin
+a reviewed full commit SHA until the formal `1.0` release line exists.
 This decision is recorded in
 [ADR-0119](adr/0119-defer-formal-package-distribution-until-v1.md).
 
 ## 6. Version path and exit criteria
 
-### `0.4.0b1`: establish the source baseline
+### `0.4.0b1`: accepted source baseline
 
-Before adding RC work:
+The accepted checkpoint is fixed at commit
+`f6dca322379c4ea88320c69d752cab471d035e95`. Its evidence applies to the complete
+Linux gates and targeted Windows paths actually named by that baseline
+workflow; it does not imply validation on every platform.
 
-- commit the accepted documentation and architecture decisions;
-- run the complete supported-version, package, contract, and longitudinal
-  verification;
-- verify installation from a pinned commit in a clean environment;
-- optionally build and smoke-test wheel and sdist locally without uploading
-  release artifacts;
-- preserve exact package, schema, format, and compatibility identities.
+It preserves the accepted documentation and architecture decisions, exact
+package/schema/format identities, source installation, build smoke, contract,
+and longitudinal evidence. RC work starts from that immutable source state.
 
 ### `0.4.0rc1`: source closure and first adoption
 
@@ -277,7 +278,8 @@ channels, consequence semantics, or durable deliberation data.
 Its work is:
 
 - correctness, compatibility, recoverability, and performance fixes;
-- stable CI across supported Python versions and operating systems;
+- stable CI across the explicitly declared Python/platform matrix, without
+  extending claims to combinations the workflow does not run;
 - clean source installation, local build, and reference-host verification;
 - a clear supported public Interface and explicitly advanced/internal surface;
 - documentation, migration, recovery, and source-state audits;
@@ -505,16 +507,20 @@ Accordingly:
 The project should prefer fewer, deeper, recoverable capabilities over a broad
 surface that a sole maintainer cannot verify.
 
-## 11. Near-term execution order
+## 11. Near-term execution status and order
 
-Unless new evidence changes the priority, the next work should proceed in this
-order:
+As of the current `0.4.0rc1.dev0` source snapshot, completed and remaining work
+is ordered as follows unless new evidence changes the priority:
 
-1. freeze and verify the `0.4.0b1` source checkpoint;
-2. add the one-command Golden Continuity Demo;
-3. audit and narrow the supported public Interface;
+1. **Accepted:** preserve the verified `0.4.0b1` source checkpoint at its
+   immutable full commit SHA;
+2. **Implemented in rc1:** maintain the one-command Golden Continuity Demo as
+   the first-adoption proof;
+3. **In progress for rc1:** finish auditing and narrowing the supported public
+   Interface, then close the milestone without adding v0.5 domain semantics;
 4. recruit the first external host integrations and convert failures to tests;
-5. complete `0.4.0rc1` without adding v0.5 domain semantics;
+5. accept the `0.4.0rc1` source milestone after its documentation, contracts,
+   clean-install path, and CI evidence agree;
 6. complete the `0.4.0` stable source milestone;
 7. implement the smallest complete v0.5 Relationship Consequence slice;
 8. continue source milestones and establish the formal package-release
