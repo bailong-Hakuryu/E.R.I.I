@@ -7,6 +7,10 @@ on:
         description: Full 40-character commit SHA to verify as a source milestone
         required: true
         type: string
+      expected_version:
+        description: Exact PEP 440 source version expected at that commit
+        required: true
+        type: string
 
 concurrency:
   group: source-milestone-verification
@@ -20,19 +24,26 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       commit_sha: ${{ steps.target.outputs.commit_sha }}
+      expected_version: ${{ steps.target.outputs.expected_version }}
       version: ${{ steps.identity.outputs.version }}
     steps:
       - name: Validate source milestone target
         id: target
         env:
           REQUESTED_COMMIT_SHA: ${{ github.event.inputs.commit_sha }}
+          REQUESTED_VERSION: ${{ github.event.inputs.expected_version }}
         run: |
           set -euo pipefail
           if [[ ! "${REQUESTED_COMMIT_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
             echo "::error title=Invalid source milestone::a full 40-character commit SHA is required"
             exit 1
           fi
+          if [[ ! "${REQUESTED_VERSION}" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]{0,63}$ ]]; then
+            echo "::error title=Invalid source version::a safe exact expected version is required"
+            exit 1
+          fi
           echo "commit_sha=${REQUESTED_COMMIT_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "expected_version=${REQUESTED_VERSION}" >> "${GITHUB_OUTPUT}"
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.target.outputs.commit_sha }}
@@ -44,6 +55,7 @@ jobs:
       - name: Verify checkout and source identity
         id: identity
         env:
+          EXPECTED_VERSION: ${{ steps.target.outputs.expected_version }}
           REQUESTED_COMMIT_SHA: ${{ steps.target.outputs.commit_sha }}
         run: |
           set -euo pipefail
@@ -53,7 +65,10 @@ jobs:
             exit 1
           fi
           source_version="$(python -c "import runpy; print(runpy.run_path('erii/_version.py')['__version__'])")"
-          test -n "${source_version}"
+          if [ "${source_version}" != "${EXPECTED_VERSION}" ]; then
+            echo "::error title=Source version mismatch::expected=${EXPECTED_VERSION}, actual=${source_version}"
+            exit 1
+          fi
           echo "version=${source_version}" >> "${GITHUB_OUTPUT}"
 
   verify:
@@ -83,8 +98,36 @@ jobs:
       - name: Compile sources
         run: python -m compileall -q erii examples tests benchmarks scripts
 
+  longitudinal:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install package and development tools
+        run: python -m pip install -e ".[dev]"
+      - name: Run all fixed trajectories on FileStorage and SQLite
+        run: |
+          mkdir -p longitudinal-results
+          python benchmarks/run_longitudinal.py \
+            --adapter both \
+            --scenario all \
+            --output longitudinal-results/v0.4.0-longitudinal.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-verification-longitudinal-${{ needs.preflight.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: longitudinal-results/v0.4.0-longitudinal.json
+          if-no-files-found: error
+          retention-days: 30
+
   package:
-    needs: [preflight, verify]
+    needs: [preflight, verify, longitudinal]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

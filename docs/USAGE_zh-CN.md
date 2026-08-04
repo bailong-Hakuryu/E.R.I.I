@@ -2,7 +2,7 @@
 
 **简体中文** · [English](USAGE.md)
 
-> 本手册描述 `0.4.0rc1.dev0` 开发源码；其持久语义来自已接受 b1 基线
+> 本手册描述 `0.4.0` 稳定源码里程碑；其持久语义来自已接受 b1 基线
 > `f6dca322379c4ea88320c69d752cab471d035e95`。项目不计划为每个 `0.x` 源码里程碑
 > 单独发布包。GitHub 上最后一个历史发布仍是 `v0.4.0a8`，其 Python 3.9 和兼容契约
 > 以标签内文档为准。复现后续源码请固定经过验证的 full commit SHA。两者都不是可
@@ -17,7 +17,7 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的角�
 ## 目录
 
 [开始路径](#你应该从哪条路径开始) · [安装](#安装) ·
-[模型 Provider](#模型-provider-选择) · [Beta 数据生命周期](#beta-数据生命周期) ·
+[模型 Provider](#模型-provider-选择) · [v0.4 数据生命周期](#v04-数据生命周期) ·
 [当前限制](#当前限制)
 
 ## 先理解四条规则
@@ -57,7 +57,7 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的角�
 
 ### 环境要求
 
-- `0.4.0rc1.dev0` 要求 Python 3.11–3.14。当前工作流在 Linux 上运行声明矩阵，并在
+- `0.4.0` 要求 Python 3.11–3.14。当前工作流在 Linux 上运行声明矩阵，并在
   Windows 上运行明确列出的存储、构建与 Demo smoke；这不代表未列出的平台组合已经
   验证。不可移动的 `v0.4.0a8` 是最后一个承诺支持 Python 3.9 的版本；
 - 基础安装只依赖 Pydantic；
@@ -65,7 +65,7 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的角�
 
 ### 从 GitHub 安装当前版本
 
-如需当前 rc1 开发源码，先克隆仓库；长期部署必须固定经过验证的 full commit SHA。
+如需当前 v0.4 稳定源码，先克隆仓库；长期部署必须固定经过验证的 full commit SHA。
 项目不会把创建 `0.x` 分发包作为下一阶段前提：
 
 ```bash
@@ -113,7 +113,7 @@ python -m pip install -e ".[dev]"
 python -c "import erii; print(erii.__version__)"
 ```
 
-当前开发源码应输出 `0.4.0rc1.dev0`。
+当前源码应输出 `0.4.0`。
 
 长期环境应固定经过验证的 commit 或不可移动 release，不要让部署脚本无条件跟随
 `main`。
@@ -330,7 +330,7 @@ def run_turn(engine, chat_model, conversation_messages, user_text):
 
 ## 模型 Provider 选择
 
-当前 rc1 开发源码不包含 Character Deliberation 或 DeepSeek 角色审思 Module。`.[openai]`
+当前 v0.4 源码不包含 Character Deliberation 或 DeepSeek 角色审思 Module。`.[openai]`
 只是给宿主自定义集成准备的可选 SDK；后文的 `OpenAIAdapter` 是旧式记忆提取
 Adapter，不能因为接口格式兼容就被当成规划中的角色审思能力。
 
@@ -1899,7 +1899,7 @@ with ERIIEngine(storage_driver=storage) as engine:
 
 当前版本仍以 FileStorage 为默认；选择 SQLite 必须显式传入 `SQLiteStorage`。两者都不是多租户授权边界，也都默认以明文保存数据。
 
-## Beta 数据生命周期
+## v0.4 数据生命周期
 
 `0.4.0b1` 可以在迁移代码接触数据前，先识别一个 FileStorage
 目录、SQLite 数据库或 MemoryPack：
@@ -1931,7 +1931,7 @@ print(assessment.fingerprint)        # SHA-256，不含聊天正文
 检查严格零写入：它不会实例化 `FileStorage`/`SQLiteStorage`、创建不存在的
 路径、切换 SQLite journal mode、恢复事务、执行迁移或写入 FileStorage v1
 manifest。因此，没有 manifest 的 FileStorage 目录会报告为 `legacy` /
-`migration_required`，即使当前开发版仍能读取它。检查前应停止写入；非空
+`migration_required`，即使当前源码 reader 仍能读取它。检查前应停止写入；非空
 SQLite WAL/journal，或检查期间发生变化的数据源，会以
 `StorageIntegrityError` 失败。
 

@@ -18,7 +18,10 @@ class SourceMilestoneWorkflowContractTests(unittest.TestCase):
 
         self.assertIn("workflow_dispatch:", release)
         self.assertIn("commit_sha:", release)
+        self.assertIn("expected_version:", release)
         self.assertIn("full 40-character commit SHA", release)
+        self.assertIn("EXPECTED_VERSION", release)
+        self.assertIn("Source version mismatch", release)
         self.assertNotIn('      - "v*"', release)
         self.assertNotIn("codex/release-v*", release)
         self.assertNotIn("gh release create", release)
@@ -56,10 +59,22 @@ class SourceMilestoneWorkflowContractTests(unittest.TestCase):
         self.assertIn("MemoryPack.from_json", ci)
         self.assertIn("MemoryPack.from_json", source_verification)
 
+    def test_exact_sha_verification_includes_longitudinal_continuity(self) -> None:
+        source_verification = (
+            REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"
+        ).read_text(encoding="utf-8")
 
-class BetaContractTests(unittest.TestCase):
+        self.assertIn("longitudinal:", source_verification)
+        self.assertIn("Run all fixed trajectories on FileStorage and SQLite", source_verification)
+        self.assertIn("--adapter both", source_verification)
+        self.assertIn("--scenario all", source_verification)
+        self.assertIn("v0.4.0-longitudinal.json", source_verification)
+        self.assertIn("needs: [preflight, verify, longitudinal]", source_verification)
+
+
+class StableSourceContractTests(unittest.TestCase):
     def test_package_and_memory_pack_versions_have_independent_lifecycles(self) -> None:
-        self.assertEqual(erii.__version__, "0.4.0rc1.dev0")
+        self.assertEqual(erii.__version__, "0.4.0")
         self.assertEqual(MemoryPack.CURRENT_VERSION, "0.4.0a8")
 
     def test_python_support_contract_is_synchronized(self) -> None:
@@ -75,6 +90,8 @@ class BetaContractTests(unittest.TestCase):
         self.assertIn('requires = ["setuptools>=77.0.0"]', pyproject)
         self.assertIn('license = "Apache-2.0"', pyproject)
         self.assertIn('license-files = ["LICENSE"]', pyproject)
+        self.assertIn("Development Status :: 4 - Beta", pyproject)
+        self.assertNotIn("Development Status :: 3 - Alpha", pyproject)
         self.assertNotIn("License :: OSI Approved :: Apache Software License", pyproject)
         self.assertIn('target-version = "py311"', pyproject)
         self.assertNotIn("Programming Language :: Python :: 3.9", pyproject)

@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Historical release](https://img.shields.io/badge/historical-v0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
-[![Source](https://img.shields.io/badge/source-v0.4.0rc1.dev0-blue.svg)](CHANGELOG.md)
+[![Source](https://img.shields.io/badge/source-v0.4.0-blue.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11--3.14-green.svg)](pyproject.toml)
 
 [简体中文](README.md)
@@ -47,7 +47,7 @@ framework, or turnkey multi-tenant chat product.
 
 ## Install from source
 
-The current development identity is `0.4.0rc1.dev0` and requires Python
+The current stable source-milestone identity is `0.4.0` and requires Python
 3.11–3.14:
 
 ```bash
@@ -107,11 +107,18 @@ prove:
    reopened.
 3. User B neither knows the event, inherits User A's intimacy, nor receives
    the approved Persona projection bound only to User A.
-4. User A's relationship exports as a `user-a.erii` MemoryPack.
+4. User A's relationship exports as `user-a.erii`, atomically imports into a
+   fresh SQLite database, and survives another restart with the same
+   relationship, Persona, memories, Source Turns, and content-fingerprint
+   commitments while carrying no User B data. MemoryPack carries content-free
+   archival Tombstones rather than pretending to preserve full operational
+   receipts, so imported Recall honestly reports that portion as
+   `partial_source` while retaining ordinary generation authority.
 
 Expected output contains four `[PASS]` lines. The directory also contains the
-database, rendered recall, and `demo-report.json`. The destination must not
-already exist, so the command never overwrites an old run.
+original database, independently imported database, rendered recall, and
+`demo-report.json`. The destination must not already exist, so the command
+never overwrites an old run.
 
 See [Getting Started](docs/getting-started.md) for the full proof.
 
@@ -143,6 +150,7 @@ Read [Host Integration](docs/host-integration.md) and
 ## Reference
 
 - [Getting Started: one-command isolation and restart proof](docs/getting-started.md)
+- [0.4.0 stable source milestone notes](docs/release-notes-0.4.0.md)
 - [Host Integration: the canonical real-chat path](docs/host-integration.md)
 - [API Stability: Golden / Advanced / Experimental / Internal](docs/api-stability.md)
 - [English User Guide](docs/USAGE.md)
@@ -162,15 +170,16 @@ Read [Host Integration](docs/host-integration.md) and
 
 `0.4.0b1` is an accepted source baseline at commit
 `f6dca322379c4ea88320c69d752cab471d035e95`.
-`0.4.0rc1.dev0` builds only v0.4 source-closure work on top: the Golden Demo,
-first adoption, public-Interface classification, contract/build verification,
-documentation, and defect fixes.
+The `0.4.0rc1` source-closure evidence is fixed at commit
+`58ea8e69df28bec8e755e0a0d2a175679c18a694`. The current `0.4.0` accepts that
+work as the stable v0.4 source milestone; it is not an uploaded GitHub or
+package-registry distribution.
 
 The version axes remain independent:
 
 | Axis | Current value |
 | --- | --- |
-| Python source identity | `0.4.0rc1.dev0` |
+| Python source identity | `0.4.0` |
 | Python | `3.11`–`3.14` |
 | SQLite | schema `9` |
 | FileStorage | format `1` |
@@ -178,7 +187,7 @@ The version axes remain independent:
 | Lifecycle Backup | `1` |
 | Lifecycle Plan | writer `3`, readers `1`–`3` |
 
-RC does not add a relationship dimension, memory kind, or persona-change
+`v0.4.0` does not add a relationship dimension, memory kind, or persona-change
 channel. It does not implement v0.5 Relationship Consequence, Narrative
 Tension, post-harm repair, or durable Character Deliberation semantics.
 

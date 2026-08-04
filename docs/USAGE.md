@@ -2,7 +2,7 @@
 
 **English** · [简体中文](USAGE_zh-CN.md)
 
-> This guide describes the `0.4.0rc1.dev0` development source. Its durable
+> This guide describes the stable `0.4.0` source milestone. Its durable
 > behavior starts from the accepted b1 baseline at
 > `f6dca322379c4ea88320c69d752cab471d035e95`. The project does not distribute a
 > package for every `0.x` source milestone. The last historical GitHub release
@@ -27,7 +27,7 @@ If you only want to get something running, complete the “Installation” and �
 
 [Relationship adjudication](#advanced-write-relationship-changes-separate-trusted-and-model-generated-input) · [Persona growth](#advanced-persona-growth-is-not-an-ordinary-relationship-event) · [Recall](#recall-memories) · [Promises and Open Loops](#promises-and-unfinished-matters)
 
-[Storage](#filestorage-or-sqlite) · [Beta data lifecycle](#beta-data-lifecycle) · [MemoryPack](#memorypack-backup-migration-and-user-data-portability) · [REST](#reference-rest-service) · [Troubleshooting](#troubleshooting) · [Production checklist](#pre-production-checklist) · [Examples](#more-runnable-examples)
+[Storage](#filestorage-or-sqlite) · [v0.4 data lifecycle](#v04-data-lifecycle) · [MemoryPack](#memorypack-backup-migration-and-user-data-portability) · [REST](#reference-rest-service) · [Troubleshooting](#troubleshooting) · [Production checklist](#pre-production-checklist) · [Examples](#more-runnable-examples)
 
 ## Four Rules to Understand First
 
@@ -67,7 +67,7 @@ relationship processing. The deprecated `remember()` and transient
 
 ### Requirements
 
-- `0.4.0rc1.dev0` requires Python 3.11–3.14. The current workflow runs the
+- `0.4.0` requires Python 3.11–3.14. The current workflow runs the
   declared matrix on Linux and named storage/build/Demo smoke paths on Windows;
   this is not a claim about unlisted platform combinations. The immutable
   `v0.4.0a8` release is the last version that promises Python 3.9 support.
@@ -76,7 +76,7 @@ relationship processing. The deprecated `remember()` and transient
 
 ### Install the Current Version from GitHub
 
-Clone the repository to work with the rc1 development source. Pin a reviewed
+Clone the repository to work with the stable v0.4 source milestone. Pin a reviewed
 full commit SHA in any long-lived deployment. Publishing an `0.x` distribution
 is not a prerequisite for the next development stage:
 
@@ -141,7 +141,7 @@ Confirm that installation succeeded:
 python -c "import erii; print(erii.__version__)"
 ```
 
-The current development source should print `0.4.0rc1.dev0`.
+The current source should print `0.4.0`.
 
 For long-lived deployments, pin a verified commit or immutable release instead
 of allowing deployment scripts to follow `main` unconditionally.
@@ -362,7 +362,7 @@ If generation or continuity evaluation fails in a retryable way, leave the Turn 
 
 ## Model Provider Selection
 
-The current rc1 development source does not include Character Deliberation or a DeepSeek
+The current v0.4 source does not include Character Deliberation or a DeepSeek
 character-deliberation module. The `.[openai]` extra only supplies an optional
 SDK for custom host integrations. The `OpenAIAdapter` described later is a
 legacy memory-extraction Adapter; sharing a wire format does not turn it into
@@ -1910,7 +1910,7 @@ In `0.4.0a6`, reliable commands, leases, frozen batches, structured Timeline ent
 
 In `0.4.0a7`, relationship processing runs, explicit zero-result decisions, formal persona reflections, and their minimal provenance are persisted under the same relationship-wide file lock. Separate FileStorage instances therefore cannot overwrite each other's append-only relationship history during concurrent writes.
 
-On `0.4.0b1`, the legacy `nodes.json`, `core_memory.json`, and `timeline.json` paths also use flush, fsync, and atomic replacement. A missing file retains its documented empty/default meaning, but malformed JSON, an invalid record, or an I/O failure raises `StorageIntegrityError` instead of pretending that the data is empty. A failed publication raises `StorageWriteError` and leaves the previous valid document in place. Do not catch either error and immediately write an empty replacement; preserve the affected files for inspection or the explicit Beta migration/recovery tooling.
+On `0.4.0b1`, the legacy `nodes.json`, `core_memory.json`, and `timeline.json` paths also use flush, fsync, and atomic replacement. A missing file retains its documented empty/default meaning, but malformed JSON, an invalid record, or an I/O failure raises `StorageIntegrityError` instead of pretending that the data is empty. A failed publication raises `StorageWriteError` and leaves the previous valid document in place. Do not catch either error and immediately write an empty replacement; preserve the affected files for inspection or the explicit v0.4 lifecycle migration/recovery tooling.
 
 ### SQLiteStorage
 
@@ -1948,7 +1948,7 @@ On `0.4.0b1`, malformed or identity-inconsistent SQLite MemoryNode and structure
 
 FileStorage remains the default in the current release. To select SQLite, explicitly pass a `SQLiteStorage` instance. Neither storage implementation is a multi-tenant authorization boundary, and both store data in plaintext by default.
 
-## Beta Data Lifecycle
+## v0.4 Data Lifecycle
 
 `0.4.0b1` can identify a FileStorage directory, a
 SQLite database, or a MemoryPack before migration code is allowed to touch it:
@@ -1982,7 +1982,7 @@ Inspection is deliberately zero-write: it does not instantiate `FileStorage`
 or `SQLiteStorage`, create a missing path, switch SQLite journal mode, recover
 transactions, run migrations, or write the FileStorage v1 manifest. A
 manifest-less FileStorage directory is therefore reported as `legacy` /
-`migration_required`, even when the current development build can still read
+`migration_required`, even when the current source reader can still read
 it. Stop writers before inspection; a non-empty SQLite WAL/journal or a source
 that changes during the scan fails with `StorageIntegrityError`.
 

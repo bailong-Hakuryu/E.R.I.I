@@ -1,4 +1,4 @@
-"""Generate or verify deterministic v0.4.0rc1 contract snapshots.
+"""Generate or verify deterministic v0.4.0 contract snapshots.
 
 The snapshots are deliberately content-free: they freeze public symbol names,
 HTTP shapes, durable-format envelopes, lifecycle protocol identifiers, and the
@@ -52,7 +52,7 @@ from erii.server.app import app as reference_app  # noqa: E402
 from erii.storage.sqlite_storage import SQLiteStorage  # noqa: E402
 
 
-SNAPSHOT_RELEASE = "0.4.0rc1"
+SNAPSHOT_RELEASE = "0.4.0"
 SNAPSHOT_FILENAMES = (
     f"v{SNAPSHOT_RELEASE}-python-api.json",
     f"v{SNAPSHOT_RELEASE}-openapi.json",

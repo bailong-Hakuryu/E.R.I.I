@@ -4,6 +4,9 @@ import hashlib
 import json
 from pathlib import Path
 
+from erii.core.memory_pack_import_compatibility import (
+    memory_pack_matches_legacy_persona_reason_loss,
+)
 from erii.engine import ERIIEngine
 from erii.lifecycle_memory_pack_import_contracts import (
     MemoryPackStagingAdapter,
@@ -69,18 +72,60 @@ class MemoryPackStagingImporter:
         ):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{label} must be a non-empty string")
-        storage = self._open_storage(adapter, staging_path)
-        engine = ERIIEngine(storage_driver=storage)
-        try:
-            exported = engine.export_memory(agent_id, user_id)
-        finally:
-            engine.close()
+        exported = self._export_target(
+            adapter=adapter,
+            path=staging_path,
+            agent_id=agent_id,
+            user_id=user_id,
+        )
         relationship_id = (
             exported.relationship.relationship_id
             if exported.relationship is not None
             else None
         )
         return _report_from_export(adapter, exported, relationship_id)
+
+    def target_matches_import_with_legacy_compatibility(
+        self,
+        *,
+        adapter: MemoryPackStagingAdapter,
+        existing_path: str,
+        desired_path: str,
+        agent_id: str,
+        user_id: str,
+    ) -> bool:
+        """Compares two private targets under the old importer loss rule."""
+        existing = self._export_target(
+            adapter=adapter,
+            path=existing_path,
+            agent_id=agent_id,
+            user_id=user_id,
+        )
+        desired = self._export_target(
+            adapter=adapter,
+            path=desired_path,
+            agent_id=agent_id,
+            user_id=user_id,
+        )
+        return memory_pack_matches_legacy_persona_reason_loss(
+            existing,
+            desired,
+        )
+
+    def _export_target(
+        self,
+        *,
+        adapter: MemoryPackStagingAdapter,
+        path: str,
+        agent_id: str,
+        user_id: str,
+    ) -> MemoryPack:
+        storage = self._open_storage(adapter, path)
+        engine = ERIIEngine(storage_driver=storage)
+        try:
+            return engine.export_memory(agent_id, user_id)
+        finally:
+            engine.close()
 
     @staticmethod
     def _open_storage(adapter: MemoryPackStagingAdapter, staging_path: str):

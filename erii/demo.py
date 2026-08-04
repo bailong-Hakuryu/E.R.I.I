@@ -12,6 +12,13 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
+from erii.data_lifecycle import (
+    DataLifecycleCoordinator,
+    LifecycleOutcome,
+    LifecycleTarget,
+    LifecycleTargetKind,
+    MemoryPackImportRequest,
+)
 from erii.models.archival import (
     ArchivalArtifactsDecision,
     ArchivalStatus,
@@ -42,7 +49,7 @@ DEMO_AGENT_ID = "agent-lumi"
 DEMO_PRIMARY_USER_ID = "user-a"
 DEMO_ISOLATED_USER_ID = "user-b"
 DEMO_SOURCE_TURN_ID = "golden-first-snow-turn"
-DEMO_REPORT_SCHEMA = "erii.golden-continuity-demo.v1"
+DEMO_REPORT_SCHEMA = "erii.golden-continuity-demo.v2"
 DEMO_CHARACTER_PERSONA_SOURCE = (
     "Lumi is an original, curious, and gentle fictional character. She values "
     "experiences that truly happened and respects the independent history of "
@@ -103,7 +110,7 @@ class GoldenContinuityDemoResult:
             "[PASS] restart persistence",
             "[PASS] relationship isolation",
             "[PASS] provenance",
-            "[PASS] portable export",
+            "[PASS] portable round trip",
             f"Artifacts: {self.output_dir}",
         )
 
@@ -357,6 +364,7 @@ def _execute_golden_continuity_demo(
     root = Path(output_dir).expanduser().resolve()
     database_path = root / "erii-demo.sqlite3"
     memory_pack_path = root / "user-a.erii"
+    imported_database_path = root / "user-a-imported.sqlite3"
     recall_path = root / "user-a-recall.md"
 
     with ERIIEngine(
@@ -457,6 +465,46 @@ def _execute_golden_continuity_demo(
     portable_memory_pack = MemoryPack.from_json(
         memory_pack_path.read_text(encoding="utf-8")
     )
+    lifecycle = DataLifecycleCoordinator()
+    memory_pack_target = LifecycleTarget(
+        LifecycleTargetKind.MEMORY_PACK,
+        str(memory_pack_path),
+    )
+    imported_database_target = LifecycleTarget(
+        LifecycleTargetKind.SQLITE,
+        str(imported_database_path),
+    )
+    import_plan = lifecycle.plan(
+        MemoryPackImportRequest(
+            source=lifecycle.inspect(memory_pack_target),
+            destination=imported_database_target,
+        )
+    )
+    import_report = lifecycle.execute(import_plan)
+
+    imported_storage = SQLiteStorage(str(imported_database_path))
+    isolated_relationship_absent_after_import = (
+        imported_storage.get_relationship(
+            DEMO_AGENT_ID,
+            DEMO_ISOLATED_USER_ID,
+        )
+        is None
+    )
+    with ERIIEngine(storage_driver=imported_storage) as imported_engine:
+        imported_recall = _recall(imported_engine, DEMO_PRIMARY_USER_ID)
+        imported_snapshot = imported_engine.get_relationship_snapshot(
+            DEMO_AGENT_ID,
+            DEMO_PRIMARY_USER_ID,
+        )
+        imported_manifest = imported_engine.get_persona_manifest(
+            DEMO_AGENT_ID,
+            DEMO_PRIMARY_USER_ID,
+        )
+        imported_memory_pack = imported_engine.export_memory(
+            DEMO_AGENT_ID,
+            DEMO_PRIMARY_USER_ID,
+        )
+
     primary_events = {
         event.source_id: event
         for event in primary_recall.events
@@ -488,6 +536,46 @@ def _execute_golden_continuity_demo(
             }
         )
         for memory in linked_memories
+    )
+    imported_portable_memories = [
+        memory
+        for memory in imported_recall.memories
+        if memory.source_kind in {"memory_node", "experiential_timeline"}
+    ]
+    source_memory_by_id = {
+        memory.source_id: memory
+        for memory in linked_memories
+    }
+    imported_memory_by_id = {
+        memory.source_id: memory
+        for memory in imported_portable_memories
+    }
+    portable_source_reference = {
+        ("source_turn", source_turn.source_turn_id, "1")
+    }
+    imported_compacted_provenance_valid = (
+        len(imported_portable_memories) == 2
+        and set(imported_memory_by_id) == set(source_memory_by_id)
+        and all(
+            imported_memory.provenance
+            == RecallArtifactProvenance.PARTIAL_SOURCE
+            and imported_memory.authority_tier
+            == source_memory_by_id[source_id].authority_tier
+            and imported_memory.source_kind
+            == source_memory_by_id[source_id].source_kind
+            and imported_memory.content
+            == source_memory_by_id[source_id].content
+            and {
+                (
+                    reference.source_kind,
+                    reference.source_id,
+                    reference.source_revision,
+                )
+                for reference in imported_memory.source_references
+            }
+            == portable_source_reference
+            for source_id, imported_memory in imported_memory_by_id.items()
+        )
     )
     primary_persona_context = primary_recall.persona_context
     isolated_persona_context = isolated_recall.persona_context
@@ -570,6 +658,30 @@ def _execute_golden_continuity_demo(
         manifest.manifest_id
         for manifest in portable_memory_pack.persona_manifests
     }
+    portable_archival_by_id = {
+        tombstone.archival_id: tombstone
+        for tombstone in portable_memory_pack.archival_ledger
+    }
+    portable_archival_tombstone = portable_archival_by_id.get(
+        archival_receipt.archival_id
+    )
+    portable_commitment_ids = (
+        {
+            commitment.artifact_id
+            for commitment in portable_archival_tombstone.artifact_commitments
+        }
+        if portable_archival_tombstone is not None
+        and portable_archival_tombstone.artifact_commitments is not None
+        else set()
+    )
+    portable_document = portable_memory_pack.to_dict()
+    imported_document = imported_memory_pack.to_dict()
+    portable_document["metadata"].pop("exported_at", None)
+    imported_document["metadata"].pop("exported_at", None)
+    imported_event_ids = {
+        event.source_id
+        for event in imported_recall.events
+    }
     checks: Dict[str, bool] = {
         "restart_persistence": (
             pipeline_ready
@@ -592,8 +704,9 @@ def _execute_golden_continuity_demo(
             and persona_isolated
         ),
         "provenance": source_chain_complete,
-        "portable_export": (
+        "portable_round_trip": (
             memory_pack_path.is_file()
+            and imported_database_path.is_file()
             and portable_memory_pack.agent_id == DEMO_AGENT_ID
             and portable_memory_pack.user_id == DEMO_PRIMARY_USER_ID
             and shared_event_id in pack_event_ids
@@ -604,6 +717,23 @@ def _execute_golden_continuity_demo(
             and bool(portable_memory_pack.relationship_processing_runs)
             and primary_manifest.manifest_id in pack_manifest_ids
             and isolated_manifest.manifest_id not in pack_manifest_ids
+            and import_report.outcome == LifecycleOutcome.APPLIED
+            and isolated_relationship_absent_after_import
+            and imported_snapshot.profile.relationship_id
+            == primary_snapshot.profile.relationship_id
+            and imported_snapshot.profile.persona_id
+            == primary_snapshot.profile.persona_id
+            and imported_snapshot.state.to_dict()
+            == primary_snapshot.state.to_dict()
+            and shared_event_id in imported_event_ids
+            and imported_compacted_provenance_valid
+            and set(source_memory_by_id).issubset(portable_commitment_ids)
+            and imported_manifest is not None
+            and imported_manifest.manifest_id == primary_manifest.manifest_id
+            and imported_recall.persona_context is not None
+            and imported_recall.persona_context.manifest_id
+            == primary_manifest.manifest_id
+            and imported_document == portable_document
         ),
     }
 
@@ -639,6 +769,10 @@ def _execute_golden_continuity_demo(
             "isolated_intimacy": isolated_snapshot.state.intimacy,
             "isolated_initial_state": isolated_initial_state,
             "isolated_initial_state_reasons": isolated_initial_state_reasons,
+            "import_outcome": import_report.outcome.value,
+            "imported_relationship_id": (
+                imported_snapshot.profile.relationship_id
+            ),
             "source_kind": shared_projection.source_kind,
             "source_references": [
                 {
@@ -653,6 +787,9 @@ def _execute_golden_continuity_demo(
         },
         "artifacts": {
             "database": database_path.relative_to(root).as_posix(),
+            "imported_database": (
+                imported_database_path.relative_to(root).as_posix()
+            ),
             "memory_pack": memory_pack_path.relative_to(root).as_posix(),
             "recall": recall_path.relative_to(root).as_posix(),
         },

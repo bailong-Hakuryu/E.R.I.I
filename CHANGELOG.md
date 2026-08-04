@@ -4,33 +4,51 @@
 
 ## [Unreleased]
 
-当前开发身份是 `0.4.0rc1.dev0`。它是 accepted b1 基线之上的源码收口快照，不是
-已上传的 Release Candidate 包。`0.x` 继续按 full commit SHA 复现；正式分发流程留到
-`1.0`。
+后续缺陷、安全与兼容修复将在这里记录。`0.4.x` 不会静默改变人格、关系或来源权威
+语义。
+
+## [0.4.0] - 2026-08-04
+
+`0.4.0` 是已完成 rc1 收口后的 v0.4 稳定源码里程碑。它不是 GitHub Release、PyPI
+发布或已上传的正式分发包；`0.x` 继续按经过验证的 full commit SHA 复现，正式包发布
+流程留到 `1.0`。
 
 ### Added
 
 - 新增 `erii demo --output-dir <fresh-dir>` Golden Continuity Demo：使用原创合成角色、
   确定性宿主提取器和真实 SQLite，自校验进程重启、User A/User B 的事件、关系状态与
-  已批准 Persona 投影隔离、来源链及 User A MemoryPack 导出。
+  已批准 Persona 投影隔离、来源链，以及 User A MemoryPack 导出到全新 SQLite 的
+  原子导入、重启与语义往返。
 - 新增 Getting Started、唯一推荐 Host Integration 路径和
   `Golden Path | Advanced | Experimental | Internal` API 分级文档，以及中英文首次
   采用 README。
 - 新增文档相对链接检查与最小 Bug/Feature/PR 模板；公开复现材料只接受原创合成数据，
   不接收真实聊天、私人人设、生产数据库或凭据。
+- 新增最终 `v0.4.0` Python API、OpenAPI、数据格式和 SQLite schema 快照；b1 与 rc1
+  快照继续保留为不可改写的历史比较基线。
 
 ### Changed
 
-- 源码身份进入 `0.4.0rc1.dev0`；Python、SQLite、FileStorage、MemoryPack、Backup 与
-  Lifecycle Plan 版本轴保持独立。
+- Python 源码身份从 `0.4.0rc1.dev0` 收敛为 `0.4.0`，包成熟度元数据进入 Beta；
+  Python、SQLite、FileStorage、MemoryPack、Backup 与 Lifecycle Plan 版本轴保持独立。
 - 源码验证工作流覆盖文档契约、Frozen Contracts、本地 wheel/sdist 构建、干净安装、
-  Golden Demo 和参考服务 smoke，但不上传发行资产。
+  Golden Demo、参考服务 smoke 和 FileStorage/SQLite 完整纵向轨迹，并要求调用方同时
+  提供精确 commit SHA 与预期源码版本，但不上传发行资产。
+
+### Fixed
+
+- MemoryPack 导入现在保留已批准 Persona Compilation Proposal 的
+  `decision_reason`。对旧导入器已经写成 `None` 的历史目标，重试只做单向兼容识别，
+  不以新 Pack 反向改写旧审计记录；反方向缺失或两个不同的非空理由仍然冲突。
+- SQLite MemoryPack 原子导入会清理暂存关系处理锁目录；同一旧 Plan 重试时，只清理
+  形状严格符合 `64-hex.lock`、单字节普通文件的历史孤儿目录，链接、异常名称和其他
+  数据继续失败关闭。
 
 ### Compatibility
 
-- RC 不新增持久领域语义，不修改 MemoryPack `0.4.0a8`、SQLite schema 9、
+- `0.4.0` 不新增持久领域语义，不修改 MemoryPack `0.4.0a8`、SQLite schema 9、
   FileStorage format 1、Lifecycle Backup v1 或 Plan writer v3。
-- RC 没有实现 v0.5 Relationship Consequence、Narrative Tension、伤害后的修复/拒绝
+- `0.4.0` 没有实现 v0.5 Relationship Consequence、Narrative Tension、伤害后的修复/拒绝
   修复，也没有把 DeepSeek、raw thinking 或 Character Deliberation 写入持久格式。
 
 ## [0.4.0b1] - 2026-08-03
@@ -63,15 +81,15 @@ GitHub Release 仍是 `v0.4.0a8`。
 - `remember()` 与接收 transient Source Turn 的 `adjudicate_relationship_candidates()` 发出带替代 Interface 的 `DeprecationWarning`，计划在 v0.5 删除；持久数据和旧 Pack 的可读性不受影响。
 - 包许可证元数据采用 PEP 639/SPDX `Apache-2.0`，Ruff 目标调整为 `py311`，本地
   构建验证覆盖 wheel/sdist 干净安装，但不要求上传发行资产。
-- v0.4 在 b1 进入功能冻结；下一源码阶段是 `0.4.0rc1` 的缺陷、兼容、文档与采用
-  收口。关系后果和角色内在审视仍属于 v0.5。
+- v0.4 在 b1 进入功能冻结；随后由 `0.4.0rc1` 完成缺陷、兼容、文档与采用收口。
+  关系后果和角色内在审视仍属于 v0.5。
 - 项目发展改为“内核演进轨 + Labs 与集成轨”：DeepSeek、其他 Provider、宿主 Adapter
   和多模型实验保持可拆卸，不进入 b1 持久契约。ADR-0118 把 `0.5.0a1` 收窄为
   “最终交付的角色选择 → 关系后果 → 未解决张力 → 后续带来源召回”最小纵切；
   历史例外重处理、Character Review 与 Deliberation 延后到后续 v0.5 阶段。
 - 文档明确 `0.x` 是源码演进里程碑，不以 tag、GitHub Release、wheel/sdist 上传或
-  PyPI 发布作为阶段门槛。rc1 将补齐 Golden Continuity Demo、公共 Interface 分级、
-  采用路径与支持政策；正式包发布流程留到 `1.0`，且 rc1 不新增领域语义。
+  PyPI 发布作为阶段门槛。rc1 已补齐 Golden Continuity Demo、公共 Interface 分级、
+  采用路径与支持政策；正式包发布流程留到 `1.0`，且 rc1 未新增领域语义。
 
 ### Fixed
 

@@ -1,4 +1,4 @@
-"""Inspection, durable planning, backup, upgrade, and restore for v0.4 Beta."""
+"""Inspection, durable planning, backup, upgrade, and restore for v0.4."""
 
 from contextlib import ExitStack, closing, contextmanager
 import ctypes
@@ -2657,12 +2657,89 @@ def _remove_staging_path(path: Path) -> None:
         raise LifecycleConflictError("could not clean an owned lifecycle staging path") from exc
 
 
+def _staging_auxiliary_paths(
+    plan: LifecyclePlan,
+    staging: Path,
+) -> tuple[Path, ...]:
+    if (
+        plan.operation is LifecycleOperation.IMPORT
+        and plan.destination.target.kind is LifecycleTargetKind.SQLITE
+    ):
+        return (Path(f"{staging}.relationship_processing_locks"),)
+    return ()
+
+
+def _is_sqlite_relationship_processing_lock(relative_name: str) -> bool:
+    path = PurePosixPath(relative_name)
+    if len(path.parts) != 1 or not path.name.endswith(".lock"):
+        return False
+    digest = path.name.removesuffix(".lock")
+    return len(digest) == 64 and all(
+        character in "0123456789abcdef"
+        for character in digest
+    )
+
+
+def _remove_legacy_sqlite_staging_locks(path: Path) -> None:
+    try:
+        files, directories = _scan_directory_entries(
+            path,
+            label="legacy SQLite staging relationship locks",
+        )
+    except StorageIntegrityError as exc:
+        raise LifecycleConflictError(
+            "legacy SQLite staging locks are not a private runtime directory"
+        ) from exc
+    if directories or any(
+        not _is_sqlite_relationship_processing_lock(name)
+        or signature[3] != 1
+        or signature[5] != 1
+        for name, signature in files.items()
+    ):
+        raise LifecycleConflictError(
+            "legacy SQLite staging locks contain non-runtime data"
+        )
+    try:
+        if any(
+            _read_stable_bytes(path / name) != b"\0"
+            for name in files
+        ):
+            raise LifecycleConflictError(
+                "legacy SQLite staging locks contain non-runtime data"
+            )
+    except StorageIntegrityError as exc:
+        raise LifecycleConflictError(
+            "legacy SQLite staging locks changed during inspection"
+        ) from exc
+    try:
+        _remove_staging_path(path)
+    except StorageIntegrityError as exc:
+        raise LifecycleConflictError(
+            "legacy SQLite staging locks changed during cleanup"
+        ) from exc
+    _fsync_directory(path.parent)
+
+
 def _prepare_staging(plan: LifecyclePlan, staging: Path, owner: Path) -> None:
     expected_owner = {
         "operation_id": plan.operation_id,
         "plan_digest": plan.plan_digest,
     }
-    if _lexists(staging) or _lexists(owner):
+    auxiliary_paths = _staging_auxiliary_paths(plan, staging)
+    if not _lexists(staging) and not _lexists(owner):
+        for path in auxiliary_paths:
+            if not _lexists(path):
+                continue
+            if not _lexists(Path(plan.destination.target.path)):
+                raise LifecycleConflictError(
+                    "unowned lifecycle staging data remains"
+                )
+            _remove_legacy_sqlite_staging_locks(path)
+    if (
+        _lexists(staging)
+        or _lexists(owner)
+        or any(_lexists(path) for path in auxiliary_paths)
+    ):
         if not _lexists(owner):
             raise LifecycleConflictError("lifecycle staging path belongs to another operation")
         try:
@@ -2674,6 +2751,8 @@ def _prepare_staging(plan: LifecyclePlan, staging: Path, owner: Path) -> None:
         if _read_owner(owner) != expected_owner:
             raise LifecycleConflictError("lifecycle staging path belongs to another operation")
         _remove_staging_path(staging)
+        for path in auxiliary_paths:
+            _remove_staging_path(path)
         try:
             owner.unlink()
         except OSError as exc:
@@ -2683,6 +2762,7 @@ def _prepare_staging(plan: LifecyclePlan, staging: Path, owner: Path) -> None:
 
 
 def _cleanup_staging(plan: LifecyclePlan, staging: Path, owner: Path) -> None:
+    auxiliary_paths = _staging_auxiliary_paths(plan, staging)
     if _lexists(owner):
         try:
             _require_regular_file(owner, label="lifecycle staging ownership")
@@ -2692,12 +2772,14 @@ def _cleanup_staging(plan: LifecyclePlan, staging: Path, owner: Path) -> None:
         if _read_owner(owner) != expected:
             raise LifecycleConflictError("lifecycle staging ownership changed")
         _remove_staging_path(staging)
+        for path in auxiliary_paths:
+            _remove_staging_path(path)
         try:
             owner.unlink()
         except OSError as exc:
             raise LifecycleConflictError("could not clear lifecycle staging ownership") from exc
         _fsync_directory(owner.parent)
-    elif _lexists(staging):
+    elif _lexists(staging) or any(_lexists(path) for path in auxiliary_paths):
         raise LifecycleConflictError("unowned lifecycle staging data remains")
 
 
@@ -3914,7 +3996,20 @@ class DataLifecycleCoordinator:
                             raise LifecycleConflictError(
                                 "MemoryPack import destination contains unreadable data"
                             ) from exc
-                        if existing_details.to_dict() == details.to_dict():
+                        import_matches = (
+                            existing_details.to_dict() == details.to_dict()
+                        )
+                        if not import_matches:
+                            import_matches = (
+                                importer.target_matches_import_with_legacy_compatibility(
+                                    adapter=staging_adapter,
+                                    existing_path=plan.destination.target.path,
+                                    desired_path=str(staging),
+                                    agent_id=details.agent_id,
+                                    user_id=details.user_id,
+                                )
+                            )
+                        if import_matches:
                             _cleanup_staging(plan, staging, owner)
                             assert current_destination.fingerprint is not None
                             return _report(

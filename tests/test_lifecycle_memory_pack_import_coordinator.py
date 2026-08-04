@@ -232,6 +232,16 @@ class LifecycleMemoryPackImportCoordinatorTests(unittest.TestCase):
                         self.assertEqual(report.details.agent_id, source_pack.agent_id)
                         self.assertEqual(report.details.user_id, source_pack.user_id)
                         self.assertEqual(source_path.read_bytes(), source_bytes)
+                        staging_path = root / (
+                            f".{destination_path.name}.{plan.operation_id[:12]}."
+                            f"{plan.operation.value}.tmp"
+                        )
+                        self.assertFalse(
+                            Path(
+                                f"{staging_path}.relationship_processing_locks"
+                            ).exists(),
+                            "SQLite staging relationship lock directory was not cleaned",
+                        )
                         final = lifecycle.inspect(destination)
                         self.assertEqual(final.status, LifecycleStatus.CURRENT)
                         self.assertEqual(report.artifact_fingerprint, final.fingerprint)
@@ -253,6 +263,16 @@ class LifecycleMemoryPackImportCoordinatorTests(unittest.TestCase):
                             source_pack.relationship.relationship_id,
                         )
 
+                        legacy_lock_directory = Path(
+                            f"{staging_path}.relationship_processing_locks"
+                        )
+                        if kind is LifecycleTargetKind.SQLITE:
+                            legacy_lock_directory.mkdir()
+                            (
+                                legacy_lock_directory
+                                / f"{'0' * 64}.lock"
+                            ).write_bytes(b"\0")
+
                         retried = DataLifecycleCoordinator().execute(
                             LifecyclePlan.from_json(plan_json)
                         )
@@ -262,6 +282,7 @@ class LifecycleMemoryPackImportCoordinatorTests(unittest.TestCase):
                         )
                         self.assertEqual(retried.operation_id, report.operation_id)
                         self.assertEqual(retried.details, report.details)
+                        self.assertFalse(legacy_lock_directory.exists())
 
                         rendered = json.dumps(report.to_dict(), ensure_ascii=False)
                         rendered += repr(report)
@@ -289,6 +310,37 @@ class LifecycleMemoryPackImportCoordinatorTests(unittest.TestCase):
                     sqlite_report.semantic_sha256,
                 )
                 self.assertEqual(file_report.counts, sqlite_report.counts)
+
+    def test_noncanonical_legacy_sqlite_staging_locks_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as root_dir:
+            root = Path(root_dir)
+            source_path = self._sources(root)["current"]
+            destination_path = root / "imported.sqlite3"
+            lifecycle = DataLifecycleCoordinator()
+            source = lifecycle.inspect(
+                self._target(LifecycleTargetKind.MEMORY_PACK, source_path)
+            )
+            destination = self._target(
+                LifecycleTargetKind.SQLITE,
+                destination_path,
+            )
+            plan = lifecycle.plan(self._request(source, destination))
+            lifecycle.execute(plan)
+
+            staging_path = root / (
+                f".{destination_path.name}.{plan.operation_id[:12]}."
+                f"{plan.operation.value}.tmp"
+            )
+            legacy_lock_directory = Path(
+                f"{staging_path}.relationship_processing_locks"
+            )
+            legacy_lock_directory.mkdir()
+            unexpected = legacy_lock_directory / "not-a-runtime-lock.txt"
+            unexpected.write_bytes(b"\0")
+
+            with self.assertRaises(LifecycleConflictError):
+                DataLifecycleCoordinator().execute(plan)
+            self.assertEqual(unexpected.read_bytes(), b"\0")
 
     def test_existing_destination_is_rejected_during_zero_write_planning(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:

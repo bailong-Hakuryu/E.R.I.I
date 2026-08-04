@@ -1,17 +1,19 @@
-# E.R.I.I. 0.4.0rc1 Source-Closure Development Notes
+# E.R.I.I. 0.4.0rc1 Accepted Source-Closure Checkpoint
 
 Source identity: `0.4.0rc1.dev0`
-Status: source-closure development snapshot
-Distribution status: no standalone RC package or GitHub Release planned
+Status: accepted source-closure checkpoint
+Accepted commit: `58ea8e69df28bec8e755e0a0d2a175679c18a694`
+Distribution status: no standalone RC package or GitHub Release was published
 
-This document tracks work in progress on top of the accepted `0.4.0b1` source
-baseline at commit
-`f6dca322379c4ea88320c69d752cab471d035e95`. It is not an immutable release
-note and must be updated until the rc1 source checkpoint is accepted.
+This document records the completed source-closure work on top of the accepted
+`0.4.0b1` source baseline at commit
+`f6dca322379c4ea88320c69d752cab471d035e95`. The checkpoint was accepted at the
+commit above and is retained as historical evidence for the final `0.4.0`
+source milestone.
 
 ## Purpose
 
-rc1 makes the v0.4 kernel easier to install, understand, integrate, and verify
+rc1 made the v0.4 kernel easier to install, understand, integrate, and verify
 without changing its durable character-domain meaning. The checkpoint focuses
 on source closure:
 
@@ -26,9 +28,9 @@ on source closure:
 - correctness, recovery, compatibility, and performance defects found while
   closing the source line.
 
-The name `rc1` preserves the existing source-version sequence. It does not mean
-that a Release Candidate wheel, sdist, GitHub Release, or package-registry
-artifact will be published. Formal distribution remains planned for `1.0`.
+The name `rc1` preserved the existing source-version sequence. No Release
+Candidate wheel, sdist, GitHub Release, or package-registry artifact was
+published. Formal distribution remains planned for `1.0`.
 
 ## Golden Continuity Demo
 
@@ -50,9 +52,9 @@ an earlier run.
 
 ## Compatibility boundary
 
-rc1 keeps the accepted b1 data identities:
+rc1 kept the accepted b1 data identities:
 
-| Axis | rc1 development value |
+| Axis | accepted rc1 value |
 | --- | --- |
 | Python source identity | `0.4.0rc1.dev0` |
 | Python | `3.11`–`3.14` |
@@ -66,10 +68,10 @@ Only the source identity changes. A documentation or Demo change cannot
 silently advance an authority rule, storage schema, MemoryPack wire, Backup,
 or Lifecycle Plan.
 
-Platform statements remain evidence-scoped. Current workflows run the full
-declared Python matrix on Linux and named storage/build/Demo smoke paths on
-Windows. This document does not claim validation for an operating-system and
-interpreter combination that the committed workflow does not run.
+Platform statements remain evidence-scoped. The accepted rc1 workflow ran the
+full declared Python matrix on Linux and named storage/build/Demo smoke paths
+on Windows. This document does not claim validation for an operating-system
+and interpreter combination that the committed workflow did not run.
 
 ## Explicit non-goals
 
@@ -86,14 +88,15 @@ rc1 also does not add authentication, per-user object authorization,
 encryption, tenant isolation, TLS, rate limiting, or a product SLA. Those
 remain host/product responsibilities and later roadmap work.
 
-## Verification before acceptance
+## Acceptance evidence
 
-The rc1 checkpoint is not accepted merely because this note exists. Acceptance
-requires the committed source to pass its actual Python/OS matrix, Ruff,
-`compileall`, public tests, document contracts, relative-link checks, frozen
-contract checks, local wheel/sdist build, clean installation, Golden Demo,
-reference-host smoke, and the relevant longitudinal regression suite.
+The accepted commit passed the committed Python 3.11–3.14 Linux CI matrix,
+targeted Windows paths, Ruff, `compileall`, public tests, document contracts,
+relative-link checks, frozen contract checks, wheel/sdist build, clean
+installation, Golden Demo, and reference-host smoke. The reviewed local
+acceptance run also exercised the fixed FileStorage/SQLite longitudinal suite.
 
-Exact commands and observed results belong in the final source-checkpoint
-handoff. Until then, this file describes a development target rather than a
-published capability claim.
+This evidence accepts a source checkpoint, not a published package or
+production-security boundary. The final stable source identity and its added
+export/import Demo round trip are described in
+[0.4.0 notes](release-notes-0.4.0.md).

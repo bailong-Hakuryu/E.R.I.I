@@ -3,7 +3,7 @@
 **English** · [简体中文](development-strategy.md)
 
 > Status: project direction, not a release-date promise or an SLA
-> Last reviewed: 2026-08-03
+> Last reviewed: 2026-08-04
 
 This document explains how E.R.I.I. should grow, what it should deliberately
 avoid, and what evidence is required before an experiment becomes part of the
@@ -202,12 +202,12 @@ capable models without making one Provider part of E.R.I.I.'s identity.
 ## 5. Current implementation and planned work
 
 The distinction in this section is normative: **current** means present in the
-`0.4.0b1` source tree; **planned** means it must not be advertised as already
+`0.4.0` source tree; **planned** means it must not be advertised as already
 implemented.
 
-### Current in `0.4.0b1`
+### Current in `0.4.0`
 
-The current source is the feature-complete v0.4 Beta and includes:
+The current source is the stable v0.4 source milestone and includes:
 
 - stable, independent relationship, persona, and identity IDs;
 - preserved Character Blueprint source plus reviewable Persona Compilation;
@@ -227,7 +227,7 @@ The current source is the feature-complete v0.4 Beta and includes:
 The current reference host is designed for a trusted local owner. It is not a
 complete public multi-user security system.
 
-### Not implemented in `0.4.0b1`
+### Not implemented in `0.4.0`
 
 The following remain planned or experimental:
 
@@ -245,9 +245,10 @@ The following remain planned or experimental:
 
 ### Source and published state
 
-As of this review, `0.4.0rc1.dev0` identifies the current development source;
-the accepted b1 baseline is
-`f6dca322379c4ea88320c69d752cab471d035e95`. The last immutable historical
+As of this review, `0.4.0` identifies the current stable source milestone. The
+accepted b1 baseline is
+`f6dca322379c4ea88320c69d752cab471d035e95`, and the rc1 source-closure evidence
+is `58ea8e69df28bec8e755e0a0d2a175679c18a694`. The last immutable historical
 release cited by the repository is `v0.4.0a8`. The project does not plan to
 publish each later `0.x` source milestone. Reproducible integrations should pin
 a reviewed full commit SHA until the formal `1.0` release line exists.
@@ -267,15 +268,16 @@ It preserves the accepted documentation and architecture decisions, exact
 package/schema/format identities, source installation, build smoke, contract,
 and longitudinal evidence. RC work starts from that immutable source state.
 
-### `0.4.0rc1`: source closure and first adoption
+### `0.4.0rc1`: accepted source closure and first adoption
 
-The existing `rc1` name is retained as a source-closure checkpoint; it does not
-promise an uploaded Release Candidate package.
+The existing `rc1` name is retained as a source-closure checkpoint; it did not
+produce an uploaded Release Candidate package. Its evidence is fixed at commit
+`58ea8e69df28bec8e755e0a0d2a175679c18a694`.
 
-RC1 does not add new relationship dimensions, memory kinds, personality-change
+RC1 did not add new relationship dimensions, memory kinds, personality-change
 channels, consequence semantics, or durable deliberation data.
 
-Its work is:
+Its completed work is:
 
 - correctness, compatibility, recoverability, and performance fixes;
 - stable CI across the explicitly declared Python/platform matrix, without
@@ -284,23 +286,26 @@ Its work is:
 - a clear supported public Interface and explicitly advanced/internal surface;
 - documentation, migration, recovery, and source-state audits;
 - a one-command Golden Continuity Demo;
-- first external host integrations and feedback.
+- a documented canonical host-integration path.
 
-The Golden Continuity Demo should show, without private or copyrighted data:
+The Golden Continuity Demo shows, without private or copyrighted data:
 
 1. User A and an original synthetic character experience the first snow
    together.
 2. User B cannot recall or inherit that experience or intimacy.
 3. User A's relationship survives a process restart.
 4. Recall explains the relationship scope and source.
-5. The relationship can be exported and independently inspected.
+5. The relationship can be exported as a MemoryPack and inspected without
+   carrying User B data.
 
 The target is for an unfamiliar developer to install the project and see the
 relationship-isolation result in no more than ten minutes.
 
-### `0.4.0` and `0.4.x`: stable source milestone
+### `0.4.0` and `0.4.x`: current stable source milestone
 
-The stable source line maintains data readability, migration, recovery,
+`0.4.0` completes the final source identity, contract snapshots, and the Golden
+Demo export/fresh-import round trip. The stable source line maintains data
+readability, migration, recovery,
 regression coverage, and open export. `0.4.x` source identifiers describe
 defect, security, and compatibility work; they are not a promise that a package
 has been distributed and do not silently change persona, relationship, or
@@ -509,25 +514,24 @@ surface that a sole maintainer cannot verify.
 
 ## 11. Near-term execution status and order
 
-As of the current `0.4.0rc1.dev0` source snapshot, completed and remaining work
+As of the current `0.4.0` stable source milestone, completed and remaining work
 is ordered as follows unless new evidence changes the priority:
 
 1. **Accepted:** preserve the verified `0.4.0b1` source checkpoint at its
    immutable full commit SHA;
-2. **Implemented in rc1:** maintain the one-command Golden Continuity Demo as
-   the first-adoption proof;
-3. **In progress for rc1:** finish auditing and narrowing the supported public
-   Interface, then close the milestone without adding v0.5 domain semantics;
-4. recruit the first external host integrations and convert failures to tests;
-5. accept the `0.4.0rc1` source milestone after its documentation, contracts,
-   clean-install path, and CI evidence agree;
-6. complete the `0.4.0` stable source milestone;
-7. implement the smallest complete v0.5 Relationship Consequence slice;
-8. continue source milestones and establish the formal package-release
+2. **Completed:** accept the `0.4.0rc1` public-Interface, adoption, contract,
+   build, and documentation closure;
+3. **Current:** maintain the `0.4.0` stable source identity, final contracts,
+   and reproducible Golden Demo;
+4. **Next:** recruit the first external host integrations and convert failures
+   into synthetic regressions and compatibility fixes;
+5. accept only defect, security, and compatibility maintenance in `0.4.x`;
+6. implement the smallest complete v0.5 Relationship Consequence slice;
+7. continue source milestones and establish the formal package-release
    workflow only for `1.0`.
 
 In parallel from now onward, DeepSeek and other model experiments may run in
-the independent Labs & Integrations track. They never block steps 1–8 and do
+the independent Labs & Integrations track. They never block steps 1–7 and do
 not acquire durable compatibility promises merely by producing a promising
 result. Character Deliberation or multi-model collaboration enters the kernel
 only after its evaluation and admission criteria are met.

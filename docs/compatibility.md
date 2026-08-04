@@ -2,7 +2,7 @@
 
 ## Python 与源码版本
 
-截至 2026-08-03，`0.4.0rc1.dev0` 源码快照要求 Python 3.11–3.14；`requires-python`
+截至 2026-08-04，`0.4.0` 稳定源码里程碑要求 Python 3.11–3.14；`requires-python`
 的下限是 3.11。当前工作流在 Linux 上覆盖 3.11–3.14，并在 Windows 上运行明确列出的
 存储、生命周期、构建产物和 Demo smoke；这不代表未列出的操作系统/解释器组合已经
 验证。`0.4.0b1` 已在
@@ -26,7 +26,7 @@ Source Turn 的 `adjudicate_relationship_candidates()` 在 b1 发出
 
 | 格式/运行时 | 当前值 | 当前 Reader 接受 |
 | --- | --- | --- |
-| Package metadata | `0.4.0rc1.dev0` source identity | b1 之后的源码收口快照；最后一个历史发布是 `0.4.0a8` |
+| Package metadata | `0.4.0` source identity | v0.4 稳定源码里程碑；最后一个历史发布是 `0.4.0a8` |
 | Python | `>=3.11`，测试至 `3.14` | 3.11–3.14 |
 | SQLite | schema `9` | `0`–`9` 可识别；旧 schema 不由 Storage 自动升级 |
 | FileStorage | format `1` | `legacy`, `1` |
@@ -34,12 +34,12 @@ Source Turn 的 `adjudicate_relationship_candidates()` 在 b1 发出
 | Lifecycle Backup | `1` | `1` |
 | Lifecycle Plan | writer `3` | readers `1`, `2`, `3` |
 
-这些轴分别演进。包版本 b1 不把 MemoryPack 重命名为 b1，也不自动改变 SQLite
+这些轴分别演进。包版本 `0.4.0` 不把 MemoryPack 重命名为 `0.4.0`，也不自动改变 SQLite
 schema、提取器 schema、评估器或关系策略版本。
 
 ## “可读、恢复、升级、导入”不是一件事
 
-| 动作 | 含义 | b1 保证 |
+| 动作 | 含义 | v0.4 保证 |
 | --- | --- | --- |
 | inspect/readable | 能识别并严格校验格式身份 | 不等于 Storage 可以直接打开或数据已升级 |
 | backup | 捕获完整逻辑 payload 到 Backup v1 | 保持被检测到的原格式；不迁移 |
@@ -52,7 +52,7 @@ schema、提取器 schema、评估器或关系策略版本。
 创建 FileStorage/SQLite。`ERIIEngine.import_memory(overwrite=True)` 的在线合并语义
 不等于 lifecycle fresh import，也不提供全库原子替换。
 
-## b1 数据生命周期支持矩阵
+## v0.4 数据生命周期支持矩阵
 
 - `LifecycleInspector` 对 FileStorage、SQLite、MemoryPack 和 Lifecycle Backup
   零写入地返回 `missing | empty | current | migration_required`、版本、文件数、警告和
@@ -61,7 +61,7 @@ schema、提取器 schema、评估器或关系策略版本。
   live target 的缺失路径。
 - FileStorage `legacy → 1`、SQLite `6 → 9`、以及所有已声明的旧可读 MemoryPack →
   `0.4.0a8` 有显式 `UpgradeRequest` 路线。
-- SQLite schema `0`–`5`、`7`、`8` 虽可由 inspector 识别，但 b1 没有为它们声明经过
+- SQLite schema `0`–`5`、`7`、`8` 虽可由 inspector 识别，但 v0.4 没有为它们声明经过
   fixture 验证的 lifecycle upgrade 路线；不得把“可识别”写成“可升级”。
 - 当前 Storage 构造不会把旧 SQLite 作为隐式迁移入口；需要升级的 schema 失败关闭并
   要求使用 lifecycle 流程。

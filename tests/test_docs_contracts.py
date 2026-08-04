@@ -1,4 +1,4 @@
-"""Public documentation contracts for the rc1 source milestone."""
+"""Public documentation contracts for the stable v0.4 source milestone."""
 
 from pathlib import Path
 import subprocess
@@ -75,8 +75,9 @@ class FirstAdoptionDocumentationContractTests(unittest.TestCase):
             self.assertIn("0.x", text)
             self.assertIn("1.0", text)
             self.assertIn("full commit SHA", text)
+            self.assertIn("0.4.0", text)
 
-    def test_identity_and_rc1_execution_status_are_described_precisely(self) -> None:
+    def test_identity_and_v040_execution_status_are_described_precisely(self) -> None:
         readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
         readme_en = (REPOSITORY_ROOT / "README_EN.md").read_text(encoding="utf-8")
         strategy = (
@@ -102,14 +103,17 @@ class FirstAdoptionDocumentationContractTests(unittest.TestCase):
         )
 
         self.assertIn("**已接受：**", strategy)
-        self.assertIn("**已在 rc1 实现：**", strategy)
-        self.assertIn("**rc1 进行中：**", strategy)
+        self.assertIn("**已完成：**", strategy)
+        self.assertIn("**当前：**", strategy)
+        self.assertIn("**下一步：**", strategy)
         self.assertIn("**Accepted:**", strategy_en)
-        self.assertIn("**Implemented in rc1:**", strategy_en)
-        self.assertIn("**In progress for rc1:**", strategy_en)
+        self.assertIn("**Completed:**", strategy_en)
+        self.assertIn("**Current:**", strategy_en)
+        self.assertIn("**Next:**", strategy_en)
 
-    def test_b1_is_an_accepted_source_baseline_and_rc1_stays_in_scope(self) -> None:
+    def test_b1_rc1_and_v040_have_distinct_source_milestone_records(self) -> None:
         baseline_commit = "f6dca322379c4ea88320c69d752cab471d035e95"
+        rc1_commit = "58ea8e69df28bec8e755e0a0d2a175679c18a694"
         changelog = (REPOSITORY_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         b1_contract = (
             REPOSITORY_ROOT / "docs" / "b1-implementation-contract.md"
@@ -120,7 +124,11 @@ class FirstAdoptionDocumentationContractTests(unittest.TestCase):
         rc1_notes = (
             REPOSITORY_ROOT / "docs" / "release-notes-0.4.0rc1.md"
         ).read_text(encoding="utf-8")
+        final_notes = (
+            REPOSITORY_ROOT / "docs" / "release-notes-0.4.0.md"
+        ).read_text(encoding="utf-8")
 
+        self.assertIn("## [0.4.0] - 2026-08-04", changelog)
         self.assertIn("## [0.4.0b1] - 2026-08-03", changelog)
         self.assertIn(baseline_commit, changelog)
         self.assertIn("accepted source baseline", b1_contract.lower())
@@ -129,10 +137,16 @@ class FirstAdoptionDocumentationContractTests(unittest.TestCase):
         self.assertIn(baseline_commit, b1_notes)
         self.assertNotIn("awaiting the final", b1_contract.lower())
 
-        self.assertIn("0.4.0rc1.dev0", rc1_notes)
-        self.assertIn("source-closure development snapshot", rc1_notes.lower())
+        self.assertIn(rc1_commit, rc1_notes)
+        self.assertIn("accepted source-closure checkpoint", rc1_notes.lower())
         self.assertIn("does not implement v0.5 relationship consequence", rc1_notes.lower())
         self.assertIn("does not persist deepseek", rc1_notes.lower())
+
+        self.assertIn("Source identity: `0.4.0`", final_notes)
+        self.assertIn("stable source milestone", final_notes.lower())
+        self.assertIn("no standalone package or github release", final_notes.lower())
+        self.assertIn("does not implement v0.5 relationship consequence", final_notes.lower())
+        self.assertIn("MemoryPack `0.4.0a8`", final_notes)
 
     def test_relative_link_checker_validates_repository_and_reports_failures(self) -> None:
         checker = REPOSITORY_ROOT / "scripts" / "check_docs.py"

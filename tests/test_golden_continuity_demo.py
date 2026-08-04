@@ -11,8 +11,13 @@ import unittest
 from unittest import mock
 
 from erii import (
+    DataLifecycleCoordinator,
     ERIIEngine,
+    LifecycleOutcome,
+    LifecycleTarget,
+    LifecycleTargetKind,
     MemoryPack,
+    MemoryPackImportRequest,
     RecallArtifactProvenance,
     RecallBudget,
     RecallOptions,
@@ -54,14 +59,16 @@ class GoldenContinuityDemoTest(unittest.TestCase):
             self.assertIn("[PASS] restart persistence", result.stdout)
             self.assertIn("[PASS] relationship isolation", result.stdout)
             self.assertIn("[PASS] provenance", result.stdout)
-            self.assertIn("[PASS] portable export", result.stdout)
+            self.assertIn("[PASS] portable round trip", result.stdout)
 
             report = json.loads(
                 (output_dir / "demo-report.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(report["schema_version"], "erii.golden-continuity-demo.v1")
+            self.assertEqual(report["schema_version"], "erii.golden-continuity-demo.v2")
             self.assertEqual(report["status"], "passed")
             self.assertTrue(all(report["checks"].values()))
+            self.assertIn("portable_round_trip", report["checks"])
+            self.assertNotIn("portable_export", report["checks"])
 
             database_path = output_dir / report["artifacts"]["database"]
             engine = ERIIEngine(
@@ -263,6 +270,205 @@ class GoldenContinuityDemoTest(unittest.TestCase):
                     for manifest in memory_pack.persona_manifests
                 },
             )
+
+            imported_database = output_dir / report["artifacts"]["imported_database"]
+            imported_storage = SQLiteStorage(str(imported_database))
+            self.assertIsNone(
+                imported_storage.get_relationship(
+                    report["agent_id"],
+                    report["isolated_user_id"],
+                )
+            )
+            with ERIIEngine(storage_driver=imported_storage) as imported_engine:
+                imported_recall = imported_engine.recall_structured(
+                    RecallRequest(
+                        agent_id=report["agent_id"],
+                        user_id=report["primary_user_id"],
+                        query="first snow",
+                        audience="agent_private",
+                        options=RecallOptions(
+                            persona_delivery="planned",
+                            budget=RecallBudget(max_cost=50_000),
+                        ),
+                    )
+                )
+                imported_snapshot = imported_engine.get_relationship_snapshot(
+                    report["agent_id"],
+                    report["primary_user_id"],
+                )
+                imported_pack = imported_engine.export_memory(
+                    report["agent_id"],
+                    report["primary_user_id"],
+                )
+
+            self.assertEqual(
+                imported_snapshot.profile.relationship_id,
+                primary_snapshot.profile.relationship_id,
+            )
+            self.assertEqual(
+                imported_snapshot.profile.persona_id,
+                primary_snapshot.profile.persona_id,
+            )
+            self.assertEqual(
+                imported_snapshot.state.to_dict(),
+                primary_snapshot.state.to_dict(),
+            )
+            self.assertEqual(
+                {event.source_id for event in imported_recall.events},
+                {event.source_id for event in primary.events},
+            )
+            self.assertEqual(
+                imported_recall.persona_context.manifest_id,
+                primary.persona_context.manifest_id,
+            )
+            source_memories = {
+                memory.source_id: memory
+                for memory in linked_memories
+            }
+            imported_memories = {
+                memory.source_id: memory
+                for memory in imported_recall.memories
+                if memory.source_kind
+                in {"memory_node", "experiential_timeline"}
+            }
+            self.assertEqual(set(imported_memories), set(source_memories))
+            for source_id, imported_memory in imported_memories.items():
+                source_memory = source_memories[source_id]
+                self.assertEqual(
+                    imported_memory.provenance,
+                    RecallArtifactProvenance.PARTIAL_SOURCE,
+                )
+                self.assertEqual(
+                    imported_memory.authority_tier,
+                    source_memory.authority_tier,
+                )
+                self.assertEqual(imported_memory.content, source_memory.content)
+                self.assertEqual(
+                    {
+                        (
+                            reference.source_kind,
+                            reference.source_id,
+                            reference.source_revision,
+                        )
+                        for reference in imported_memory.source_references
+                    },
+                    {("source_turn", report["source_turn_id"], "1")},
+                )
+            archival_tombstone = {
+                item.archival_id: item
+                for item in memory_pack.archival_ledger
+            }[report["archival_id"]]
+            self.assertIsNotNone(archival_tombstone.artifact_commitments)
+            self.assertLessEqual(
+                set(source_memories),
+                {
+                    item.artifact_id
+                    for item in archival_tombstone.artifact_commitments
+                },
+            )
+            self.assertEqual(
+                {node.node_id for node in imported_pack.nodes},
+                {node.node_id for node in memory_pack.nodes},
+            )
+            self.assertEqual(
+                {turn.turn_id for turn in imported_pack.turn_records},
+                {turn.turn_id for turn in memory_pack.turn_records},
+            )
+            self.assertEqual(
+                {
+                    (proposal.proposal_id, proposal.revision): proposal.decision_reason
+                    for proposal in imported_pack.persona_compilation_proposals
+                },
+                {
+                    (proposal.proposal_id, proposal.revision): proposal.decision_reason
+                    for proposal in memory_pack.persona_compilation_proposals
+                },
+            )
+
+    def test_legacy_missing_persona_decision_reason_is_retry_compatible(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            result = run_golden_continuity_demo(root / "source-demo")
+            source_path = result.output_dir / "user-a.erii"
+            source_pack = MemoryPack.from_json(
+                source_path.read_text(encoding="utf-8")
+            )
+            legacy_document = source_pack.to_dict()
+            for proposal in legacy_document["persona_compilation_proposals"]:
+                proposal["decision_reason"] = None
+            legacy_pack = MemoryPack.from_dict(legacy_document)
+
+            destination_path = root / "legacy-import.sqlite3"
+            lifecycle = DataLifecycleCoordinator()
+            source_target = LifecycleTarget(
+                LifecycleTargetKind.MEMORY_PACK,
+                str(source_path),
+            )
+            destination_target = LifecycleTarget(
+                LifecycleTargetKind.SQLITE,
+                str(destination_path),
+            )
+            plan = lifecycle.plan(
+                MemoryPackImportRequest(
+                    source=lifecycle.inspect(source_target),
+                    destination=destination_target,
+                )
+            )
+
+            with ERIIEngine(
+                storage_driver=SQLiteStorage(str(destination_path))
+            ) as engine:
+                engine.import_memory(legacy_pack)
+                engine.import_memory(source_pack)
+                directly_retried = engine.export_memory(
+                    source_pack.agent_id,
+                    source_pack.user_id,
+                )
+            self.assertTrue(
+                directly_retried.persona_compilation_proposals
+            )
+            self.assertTrue(
+                all(
+                    proposal.decision_reason is None
+                    for proposal in directly_retried.persona_compilation_proposals
+                )
+            )
+
+            report = lifecycle.execute(plan)
+            self.assertEqual(report.outcome, LifecycleOutcome.ALREADY_COMPLETE)
+            with ERIIEngine(
+                storage_driver=SQLiteStorage(str(destination_path))
+            ) as engine:
+                after_lifecycle_retry = engine.export_memory(
+                    source_pack.agent_id,
+                    source_pack.user_id,
+                )
+            self.assertTrue(
+                all(
+                    proposal.decision_reason is None
+                    for proposal in after_lifecycle_retry.persona_compilation_proposals
+                )
+            )
+
+            strict_path = root / "strict-import.sqlite3"
+            with ERIIEngine(
+                storage_driver=SQLiteStorage(str(strict_path))
+            ) as strict_engine:
+                strict_engine.import_memory(source_pack)
+                with self.assertRaises(ValueError):
+                    strict_engine.import_memory(legacy_pack)
+
+                conflicting_document = source_pack.to_dict()
+                for proposal in conflicting_document[
+                    "persona_compilation_proposals"
+                ]:
+                    proposal["decision_reason"] = (
+                        "A conflicting non-empty historical reason."
+                    )
+                with self.assertRaises(ValueError):
+                    strict_engine.import_memory(
+                        MemoryPack.from_dict(conflicting_document)
+                    )
 
     def test_cli_distinguishes_self_verification_failure_from_bad_arguments(self):
         failure = GoldenContinuityDemoVerificationError(

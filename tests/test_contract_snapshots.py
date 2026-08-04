@@ -1,7 +1,8 @@
-"""Source-contract snapshot tests for the v0.4.0rc1 development line."""
+"""Source-contract snapshot tests for the stable v0.4.0 source line."""
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 import subprocess
@@ -14,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "freeze_contracts.py"
 COMMITTED = ROOT / "docs" / "contracts"
 BASELINE_RELEASE = "0.4.0b1"
-CURRENT_RELEASE = "0.4.0rc1"
+RC_RELEASE = "0.4.0rc1"
+CURRENT_RELEASE = "0.4.0"
 CONTRACT_KINDS = (
     "data-formats",
     "openapi",
@@ -57,14 +59,15 @@ class ContractSnapshotTests(unittest.TestCase):
                 self.assertEqual(generated_bytes, committed_bytes, name)
                 self.assertIsInstance(json.loads(generated_bytes), dict)
 
-    def test_b1_contracts_are_retained_and_rc1_is_backward_compatible(self) -> None:
+    def test_b1_rc1_and_final_contracts_are_retained_without_final_drift(self) -> None:
         for kind in CONTRACT_KINDS:
             with self.subTest(kind=kind):
                 self.assertTrue(contract_path(BASELINE_RELEASE, kind).is_file())
+                self.assertTrue(contract_path(RC_RELEASE, kind).is_file())
                 self.assertTrue(contract_path(CURRENT_RELEASE, kind).is_file())
 
         b1_python = read_contract(BASELINE_RELEASE, "python-api")
-        rc1_python = read_contract(CURRENT_RELEASE, "python-api")
+        rc1_python = read_contract(RC_RELEASE, "python-api")
         self.assertLessEqual(
             set(b1_python["public_api"]["symbols"]),
             set(rc1_python["public_api"]["symbols"]),
@@ -72,15 +75,26 @@ class ContractSnapshotTests(unittest.TestCase):
 
         exact_contracts = ("openapi", "data-formats", "sqlite-schema")
         for kind in exact_contracts:
-            with self.subTest(kind=kind):
+            with self.subTest(transition="b1-to-rc1", kind=kind):
                 b1 = read_contract(BASELINE_RELEASE, kind)
-                rc1 = read_contract(CURRENT_RELEASE, kind)
-                b1["snapshot_release"] = CURRENT_RELEASE
+                rc1 = read_contract(RC_RELEASE, kind)
+                b1["snapshot_release"] = RC_RELEASE
                 if kind == "openapi":
-                    b1["openapi"]["info"]["version"] = CURRENT_RELEASE
+                    b1["openapi"]["info"]["version"] = RC_RELEASE
                 elif kind == "data-formats":
-                    b1["compatibility_catalog"]["package_version"] = CURRENT_RELEASE
+                    b1["compatibility_catalog"]["package_version"] = RC_RELEASE
                 self.assertEqual(rc1, b1)
+
+        for kind in CONTRACT_KINDS:
+            with self.subTest(transition="rc1-to-final", kind=kind):
+                rc1 = deepcopy(read_contract(RC_RELEASE, kind))
+                final = read_contract(CURRENT_RELEASE, kind)
+                rc1["snapshot_release"] = CURRENT_RELEASE
+                if kind == "openapi":
+                    rc1["openapi"]["info"]["version"] = CURRENT_RELEASE
+                elif kind == "data-formats":
+                    rc1["compatibility_catalog"]["package_version"] = CURRENT_RELEASE
+                self.assertEqual(final, rc1)
 
     def test_check_mode_reports_a_readable_diff_without_rewriting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

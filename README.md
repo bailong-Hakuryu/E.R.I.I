@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Historical release](https://img.shields.io/badge/historical-v0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
-[![Source](https://img.shields.io/badge/source-v0.4.0rc1.dev0-blue.svg)](CHANGELOG.md)
+[![Source](https://img.shields.io/badge/source-v0.4.0-blue.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11--3.14-green.svg)](pyproject.toml)
 
 [English README](README_EN.md)
@@ -38,7 +38,7 @@ E.R.I.I. 是可嵌入 Python 宿主的内核，不是聊天模型、万能 Agent
 
 ## 从源码安装
 
-当前开发快照身份是 `0.4.0rc1.dev0`，要求 Python 3.11–3.14：
+当前稳定源码里程碑身份是 `0.4.0`，要求 Python 3.11–3.14：
 
 ```bash
 git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
@@ -93,9 +93,13 @@ erii demo --output-dir ./erii-demo
 2. 关闭并重新打开 Engine 后，User A 仍能带来源召回；
 3. User B 不知道这件事、不继承 User A 的亲密度，也不会获得只绑定于
    User A 的已批准 Persona 投影；
-4. User A 的关系可以导出为 `user-a.erii` MemoryPack。
+4. User A 的关系可以导出为 `user-a.erii`，再原子导入全新 SQLite；导入后重启仍能
+   恢复同一关系、Persona、记忆及其 Source Turn 与内容指纹承诺，且不夹带 User B
+   数据。MemoryPack 的 `archival_ledger` 只携带内容无关的归档 Tombstone，不携带完整
+   运行时回执，因此导入后的 Recall 会如实把这部分来源标为 `partial_source`，但仍
+   保持普通生成权限。
 
-预期输出包含四项 `[PASS]`。目录还会保存数据库、渲染召回和
+预期输出包含四项 `[PASS]`。目录还会保存原数据库、导入后的独立数据库、渲染召回和
 `demo-report.json`。输出目录必须不存在；命令不会覆盖旧结果。
 
 完整解释见 [Getting Started](docs/getting-started.md)。
@@ -125,6 +129,7 @@ E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，�
 ## Reference
 
 - [Getting Started：一键关系隔离与重启证明](docs/getting-started.md)
+- [0.4.0 稳定源码里程碑说明](docs/release-notes-0.4.0.md)
 - [Host Integration：真实聊天唯一推荐路径](docs/host-integration.md)
 - [API Stability：Golden / Advanced / Experimental / Internal](docs/api-stability.md)
 - [中文完整使用手册](docs/USAGE_zh-CN.md)
@@ -144,14 +149,15 @@ E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，�
 
 `0.4.0b1` 已在 commit
 `f6dca322379c4ea88320c69d752cab471d035e95` 接受为不可移动的源码基线。
-`0.4.0rc1.dev0` 在它之上只做 v0.4 源码收口：Golden Demo、首次采用、公共 Interface
-分级、契约/构建验证、文档和缺陷修复。
+`0.4.0rc1` 的源码收口证据固定于 commit
+`58ea8e69df28bec8e755e0a0d2a175679c18a694`。当前 `0.4.0` 将这些能力接受为 v0.4
+稳定源码里程碑；它不是已上传的 GitHub/PyPI 分发包。
 
 版本轴彼此独立：
 
 | 轴 | 当前值 |
 | --- | --- |
-| Python 源码身份 | `0.4.0rc1.dev0` |
+| Python 源码身份 | `0.4.0` |
 | Python | `3.11`–`3.14` |
 | SQLite | schema `9` |
 | FileStorage | format `1` |
@@ -159,7 +165,7 @@ E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，�
 | Lifecycle Backup | `1` |
 | Lifecycle Plan | writer `3`，readers `1`–`3` |
 
-RC 不新增关系维度、记忆类型或人格变化渠道，也没有实现 v0.5 的 Relationship
+`v0.4.0` 不新增关系维度、记忆类型或人格变化渠道，也没有实现 v0.5 的 Relationship
 Consequence、Narrative Tension、伤害后修复或 Character Deliberation 持久语义。
 
 ## 已有内核能力

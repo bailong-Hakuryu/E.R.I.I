@@ -45,6 +45,9 @@ from erii.core.continuity_evidence import (
 )
 from erii.core.evidence_authority import quarantined_agent_source_ids
 from erii.core.memory_pack_evidence import validate_memory_pack_archival_evidence
+from erii.core.memory_pack_import_compatibility import (
+    has_legacy_persona_decision_reason_loss,
+)
 from erii.core.persona_context import (
     PersonaManifestRequiredError,
     validate_persona_premise_binding,
@@ -5018,7 +5021,7 @@ class ERIIEngine:
                 status=PersonaCompilationStatus.APPROVED,
                 decided_by=source_manifest.approved_by,
                 decided_at=source_manifest.approved_at,
-                decision_reason=None,
+                decision_reason=source_proposal.decision_reason,
             )
             expected_source_manifest = PersonaCompiler.manifest_from_approved(
                 source_approval
@@ -5109,7 +5112,7 @@ class ERIIEngine:
                 status=PersonaCompilationStatus.APPROVED,
                 decided_by=source_manifest.approved_by,
                 decided_at=source_manifest.approved_at,
-                decision_reason=None,
+                decision_reason=mapped_proposal.decision_reason,
             )
             mapped_manifest_by_source_id[
                 source_manifest.manifest_id
@@ -5145,6 +5148,7 @@ class ERIIEngine:
             (item.approved_proposal_id, item.approved_revision): item
             for item in existing_manifests
         }
+        legacy_reason_loss_keys = set()
         for mapped in mapped_proposals:
             key = (mapped.proposal_id, mapped.revision)
             existing = existing_compilations.get(key)
@@ -5154,7 +5158,14 @@ class ERIIEngine:
                 raise ValueError("MemoryPack proposal identity conflicts with stored content")
             if existing.status == mapped.status:
                 if proposal_lifecycle(existing) != proposal_lifecycle(mapped):
-                    raise ValueError("MemoryPack proposal lifecycle conflicts with storage")
+                    if not has_legacy_persona_decision_reason_loss(
+                        existing,
+                        mapped,
+                    ):
+                        raise ValueError(
+                            "MemoryPack proposal lifecycle conflicts with storage"
+                        )
+                    legacy_reason_loss_keys.add(key)
             elif not (
                 existing.status == PersonaCompilationStatus.PENDING
                 or (
@@ -5198,6 +5209,11 @@ class ERIIEngine:
         for mapped in mapped_proposals:
             key = (mapped.proposal_id, mapped.revision)
             current = existing_compilations[key]
+            applied_mapped = (
+                current
+                if key in legacy_reason_loss_keys
+                else mapped
+            )
             if mapped.status == PersonaCompilationStatus.PENDING:
                 continue
             matching_manifest = next(
@@ -5219,11 +5235,11 @@ class ERIIEngine:
                 if matching_manifest is None:
                     raise ValueError("approved MemoryPack proposal is missing its Manifest")
                 approved = replace(
-                    mapped,
+                    applied_mapped,
                     status=PersonaCompilationStatus.APPROVED,
                     decided_by=matching_manifest.approved_by,
                     decided_at=matching_manifest.approved_at,
-                    decision_reason=None,
+                    decision_reason=applied_mapped.decision_reason,
                 )
                 manifest_already_exists = (
                     matching_manifest.manifest_id in existing_manifest_by_id
@@ -5266,7 +5282,7 @@ class ERIIEngine:
                         mapped,
                         PersonaCompilationStatus.APPROVED,
                     )
-                existing_compilations[key] = mapped
+                existing_compilations[key] = applied_mapped
                 existing_manifest_by_id[matching_manifest.manifest_id] = matching_manifest
             elif (
                 mapped.status == PersonaCompilationStatus.REJECTED
