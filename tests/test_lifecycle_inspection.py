@@ -37,9 +37,9 @@ class CompatibilityCatalogTests(unittest.TestCase):
     def test_package_and_data_format_versions_are_independent(self) -> None:
         catalog = COMPATIBILITY_CATALOG
 
-        self.assertEqual(catalog.package_version, "0.4.0")
-        self.assertEqual(catalog.sqlite.current_version, "9")
-        self.assertEqual(catalog.file_storage.current_version, "1")
+        self.assertEqual(catalog.package_version, "0.5.0a1")
+        self.assertEqual(catalog.sqlite.current_version, "10")
+        self.assertEqual(catalog.file_storage.current_version, "2")
         self.assertEqual(catalog.memory_pack.current_version, "0.4.0a8")
         self.assertEqual(catalog.lifecycle_backup.current_version, "1")
         self.assertEqual(catalog.lifecycle_plan.current_version, "3")
@@ -102,7 +102,7 @@ class LifecycleInspectorTests(unittest.TestCase):
             root.mkdir()
             manifest = root / ".erii-store.json"
             manifest.write_text(
-                '{"format":"erii.file-storage","version":1}',
+                '{"format":"erii.file-storage","version":2}',
                 encoding="utf-8",
             )
             before = file_snapshot(root)
@@ -112,7 +112,7 @@ class LifecycleInspectorTests(unittest.TestCase):
             )
 
             self.assertEqual(assessment.status, LifecycleStatus.CURRENT)
-            self.assertEqual(assessment.detected_version, "1")
+            self.assertEqual(assessment.detected_version, "2")
             self.assertEqual(file_snapshot(root), before)
 
     def test_sqlite_inspection_is_immutable_and_future_schema_fails_closed(self) -> None:
@@ -127,7 +127,7 @@ class LifecycleInspectorTests(unittest.TestCase):
             )
 
             self.assertEqual(assessment.status, LifecycleStatus.CURRENT)
-            self.assertEqual(assessment.detected_version, "9")
+            self.assertEqual(assessment.detected_version, "10")
             self.assertEqual(file_snapshot(Path(root_dir)), before)
 
             future_path = Path(root_dir) / "future.db"
@@ -137,7 +137,7 @@ class LifecycleInspectorTests(unittest.TestCase):
                     "version INTEGER PRIMARY KEY, name TEXT, applied_at TEXT)"
                 )
                 connection.execute(
-                    "INSERT INTO schema_migrations VALUES (10, 'future', 'future')"
+                    "INSERT INTO schema_migrations VALUES (11, 'future', 'future')"
                 )
                 connection.commit()
             future_before = future_path.read_bytes()

@@ -1,0 +1,189 @@
+{
+  "compatibility_catalog": {
+    "formats": {
+      "file_storage": {
+        "current_version": "2",
+        "format_id": "erii.file-storage",
+        "readable_versions": [
+          "1",
+          "2",
+          "legacy"
+        ]
+      },
+      "lifecycle_backup": {
+        "current_version": "1",
+        "format_id": "erii.lifecycle-backup",
+        "readable_versions": [
+          "1"
+        ]
+      },
+      "lifecycle_plan": {
+        "current_version": "3",
+        "format_id": "erii.lifecycle-plan",
+        "readable_versions": [
+          "1",
+          "2",
+          "3"
+        ]
+      },
+      "memory_pack": {
+        "current_version": "0.4.0a8",
+        "format_id": "erii.memory-pack",
+        "readable_versions": [
+          "0.1.0",
+          "0.2.0",
+          "0.4.0",
+          "0.4.0a2",
+          "0.4.0a3",
+          "0.4.0a4",
+          "0.4.0a5",
+          "0.4.0a6",
+          "0.4.0a7",
+          "0.4.0a8"
+        ]
+      },
+      "sqlite": {
+        "current_version": "10",
+        "format_id": "erii.sqlite",
+        "readable_versions": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10"
+        ]
+      }
+    },
+    "package_version": "0.5.0a1",
+    "python_requires": ">=3.11",
+    "python_tested_through": "3.14"
+  },
+  "lifecycle_plan": {
+    "current_contract_version": "3",
+    "current_document_fields": [
+      "backup_destination",
+      "backup_destination_parent",
+      "content",
+      "contract_version",
+      "destination",
+      "destination_parent",
+      "operation",
+      "operation_id",
+      "plan_digest",
+      "selector",
+      "source",
+      "strategy_id"
+    ],
+    "operations": [
+      "backup",
+      "erase",
+      "import",
+      "rebuild",
+      "restore",
+      "upgrade"
+    ],
+    "outcomes": [
+      "already_complete",
+      "applied"
+    ],
+    "plan_dataclass_fields": [
+      "backup_destination",
+      "backup_destination_parent",
+      "content",
+      "contract_version",
+      "destination",
+      "destination_parent",
+      "operation",
+      "operation_id",
+      "plan_digest",
+      "selector",
+      "source",
+      "strategy_id"
+    ],
+    "readable_contract_versions": [
+      "1",
+      "2",
+      "3"
+    ],
+    "request_types": [
+      "BackupRequest",
+      "EraseRequest",
+      "MemoryPackImportRequest",
+      "RebuildRequest",
+      "RestoreRequest",
+      "UpgradeRequest"
+    ],
+    "selector_contracts": {
+      "erasure": {
+        "fields": [
+          "agent_id",
+          "relationship_event_id",
+          "relationship_id",
+          "scope",
+          "source_turn_id",
+          "user_id",
+          "user_identity_id"
+        ],
+        "scopes": [
+          "complete_user",
+          "relationship",
+          "relationship_event",
+          "source_turn"
+        ]
+      },
+      "memory_pack_import": {
+        "fields": [
+          "target_agent_id",
+          "target_user_id"
+        ]
+      }
+    },
+    "statuses": [
+      "current",
+      "empty",
+      "migration_required",
+      "missing"
+    ],
+    "target_kinds": [
+      "backup",
+      "file_storage",
+      "memory_pack",
+      "sqlite"
+    ]
+  },
+  "memory_pack_envelope": {
+    "metadata_fields": [
+      "agent_id",
+      "exported_at",
+      "user_id",
+      "version"
+    ],
+    "root_fields": [
+      "archival_ledger",
+      "core_memory",
+      "metadata",
+      "narrative_tension_links",
+      "nodes",
+      "persona_compilation_proposals",
+      "persona_growth_proposals",
+      "persona_manifests",
+      "persona_reflection_decisions",
+      "relationship",
+      "relationship_adjudications",
+      "relationship_consequences",
+      "relationship_direct_event_ids",
+      "relationship_events",
+      "relationship_processing_runs",
+      "timeline",
+      "timeline_entries",
+      "turn_records"
+    ]
+  },
+  "snapshot_release": "0.5.0a1"
+}

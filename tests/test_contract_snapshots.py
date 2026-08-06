@@ -1,4 +1,4 @@
-"""Source-contract snapshot tests for the stable v0.4.0 source line."""
+"""Source-contract snapshot tests for the stable v0.5.0 source line."""
 
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ SCRIPT = ROOT / "scripts" / "freeze_contracts.py"
 COMMITTED = ROOT / "docs" / "contracts"
 BASELINE_RELEASE = "0.4.0b1"
 RC_RELEASE = "0.4.0rc1"
-CURRENT_RELEASE = "0.4.0"
+STABLE_040_RELEASE = "0.4.0"
+CURRENT_RELEASE = "0.5.0a1"
 CONTRACT_KINDS = (
     "data-formats",
     "openapi",

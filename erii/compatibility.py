@@ -47,7 +47,7 @@ FILE_STORAGE_FORMAT = FormatCompatibility(
 )
 MEMORY_PACK_FORMAT = FormatCompatibility(
     format_id="erii.memory-pack",
-    current_version="0.5.0a1",
+    current_version="0.4.0a8",
     readable_versions=(
         "0.1.0",
         "0.2.0",
@@ -59,7 +59,6 @@ MEMORY_PACK_FORMAT = FormatCompatibility(
         "0.4.0a6",
         "0.4.0a7",
         "0.4.0a8",
-        "0.5.0a1",
     ),
 )
 LIFECYCLE_BACKUP_FORMAT = FormatCompatibility(

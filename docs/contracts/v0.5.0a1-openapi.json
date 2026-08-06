@@ -1,0 +1,2907 @@
+{
+  "openapi": {
+    "components": {
+      "schemas": {
+        "ArchivalSubmissionBody": {
+          "description": "Submits one existing completed Source Turn for reliable archival.",
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Idempotency Key",
+              "type": "string"
+            },
+            "source_turn_id": {
+              "title": "Source Turn Id",
+              "type": "string"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "source_turn_id",
+            "idempotency_key"
+          ],
+          "title": "ArchivalSubmissionBody",
+          "type": "object"
+        },
+        "ContinuityEvaluationBody": {
+          "additionalProperties": false,
+          "description": "Evaluates one unpersisted reply against an already-open Turn.",
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "persona_context_refs": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Persona Context Refs",
+              "type": "array"
+            },
+            "proposed_reply": {
+              "title": "Proposed Reply",
+              "type": "string"
+            },
+            "relationship_context_refs": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Relationship Context Refs",
+              "type": "array"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "proposed_reply",
+            "persona_context_refs"
+          ],
+          "title": "ContinuityEvaluationBody",
+          "type": "object"
+        },
+        "CoreMemoryRequest": {
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "content": {
+              "title": "Content",
+              "type": "string"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "content"
+          ],
+          "title": "CoreMemoryRequest",
+          "type": "object"
+        },
+        "DeliveryDisposition": {
+          "description": "How the host delivered this exact reply after applying its gate.\n\n``OVERRIDDEN`` means the host displayed the same evaluated text despite the\ngate verdict. It never means that a different reply replaced the draft.",
+          "enum": [
+            "shown",
+            "overridden",
+            "shown_unreviewed"
+          ],
+          "title": "DeliveryDisposition",
+          "type": "string"
+        },
+        "EvidenceCitation": {
+          "additionalProperties": false,
+          "description": "An extractor's claim that an exact source span supports a candidate.",
+          "properties": {
+            "end": {
+              "anyOf": [
+                {
+                  "minimum": 1.0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End"
+            },
+            "quote": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Quote",
+              "type": "string"
+            },
+            "source_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Id",
+              "type": "string"
+            },
+            "source_revision": {
+              "default": "1",
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Source Revision",
+              "type": "string"
+            },
+            "start": {
+              "anyOf": [
+                {
+                  "minimum": 0.0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start"
+            }
+          },
+          "required": [
+            "source_id",
+            "quote"
+          ],
+          "title": "EvidenceCitation",
+          "type": "object"
+        },
+        "ExportRequest": {
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id"
+          ],
+          "title": "ExportRequest",
+          "type": "object"
+        },
+        "GrowthTriggerKind": {
+          "description": "Ways accepted history may justify a later independent inner review.",
+          "enum": [
+            "none",
+            "accumulation",
+            "pivotal"
+          ],
+          "title": "GrowthTriggerKind",
+          "type": "string"
+        },
+        "HTTPValidationError": {
+          "properties": {
+            "detail": {
+              "items": {
+                "$ref": "#/components/schemas/ValidationError"
+              },
+              "title": "Detail",
+              "type": "array"
+            }
+          },
+          "title": "HTTPValidationError",
+          "type": "object"
+        },
+        "ImportRequest": {
+          "properties": {
+            "agent_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            },
+            "overwrite": {
+              "default": false,
+              "title": "Overwrite",
+              "type": "boolean"
+            },
+            "pack_data": {
+              "additionalProperties": true,
+              "title": "Pack Data",
+              "type": "object"
+            },
+            "user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "User Id"
+            }
+          },
+          "required": [
+            "pack_data"
+          ],
+          "title": "ImportRequest",
+          "type": "object"
+        },
+        "NarrativeTensionLinkBody": {
+          "additionalProperties": false,
+          "description": "Records a narrative tension link from a later adjudicated event.",
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "consequence_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Consequence Id",
+              "type": "string"
+            },
+            "outcome": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Outcome",
+              "type": "string"
+            },
+            "recorded_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Recorded At"
+            },
+            "source_decision_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Decision Id",
+              "type": "string"
+            },
+            "source_event_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Event Id",
+              "type": "string"
+            },
+            "source_turn_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Turn Id",
+              "type": "string"
+            },
+            "summary": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "title": "Summary",
+              "type": "string"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "consequence_id",
+            "source_turn_id",
+            "source_decision_id",
+            "source_event_id",
+            "outcome",
+            "summary"
+          ],
+          "title": "NarrativeTensionLinkBody",
+          "type": "object"
+        },
+        "OpenLoopResolutionCandidate": {
+          "additionalProperties": false,
+          "description": "Strict candidate for an append-only Open Loop resolution.",
+          "properties": {
+            "note": {
+              "anyOf": [
+                {
+                  "maxLength": 4000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Note"
+            },
+            "open_loop_event_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Open Loop Event Id",
+              "type": "string"
+            },
+            "payload_type": {
+              "const": "open_loop_resolution",
+              "default": "open_loop_resolution",
+              "title": "Payload Type",
+              "type": "string"
+            },
+            "resolution_kind": {
+              "$ref": "#/components/schemas/OpenLoopResolutionKind"
+            },
+            "superseding_open_loop_event_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Superseding Open Loop Event Id"
+            }
+          },
+          "required": [
+            "open_loop_event_id",
+            "resolution_kind"
+          ],
+          "title": "OpenLoopResolutionCandidate",
+          "type": "object"
+        },
+        "OpenLoopResolutionKind": {
+          "description": "Append-only outcomes that close an Open Loop.",
+          "enum": [
+            "completed",
+            "abandoned",
+            "superseded"
+          ],
+          "title": "OpenLoopResolutionKind",
+          "type": "string"
+        },
+        "OpenLoopSpecCandidate": {
+          "additionalProperties": false,
+          "description": "Strict untrusted candidate for an Open Loop without responsibility.",
+          "properties": {
+            "expected_continuation": {
+              "anyOf": [
+                {
+                  "maxLength": 8000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Continuation"
+            },
+            "origin_memory_node_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origin Memory Node Id"
+            },
+            "payload_type": {
+              "const": "open_loop",
+              "default": "open_loop",
+              "title": "Payload Type",
+              "type": "string"
+            },
+            "subject": {
+              "maxLength": 8000,
+              "minLength": 1,
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject"
+          ],
+          "title": "OpenLoopSpecCandidate",
+          "type": "object"
+        },
+        "PersonaDelivery": {
+          "description": "How approved character authority is delivered for this recall.",
+          "enum": [
+            "planned",
+            "full"
+          ],
+          "title": "PersonaDelivery",
+          "type": "string"
+        },
+        "PromiseConditionCandidate": {
+          "additionalProperties": false,
+          "description": "Strict candidate form of one Promise activation condition.",
+          "properties": {
+            "condition_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Condition Id",
+              "type": "string"
+            },
+            "description": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Description",
+              "type": "string"
+            }
+          },
+          "required": [
+            "condition_id",
+            "description"
+          ],
+          "title": "PromiseConditionCandidate",
+          "type": "object"
+        },
+        "PromiseConditionConfirmationCandidate": {
+          "additionalProperties": false,
+          "description": "Strict candidate for append-only Promise activation evidence.",
+          "properties": {
+            "condition_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Condition Id",
+              "type": "string"
+            },
+            "confirmed_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/WorldMomentCandidate"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "payload_type": {
+              "const": "promise_condition_confirmed",
+              "default": "promise_condition_confirmed",
+              "title": "Payload Type",
+              "type": "string"
+            },
+            "promise_event_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Promise Event Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "promise_event_id",
+            "condition_id"
+          ],
+          "title": "PromiseConditionConfirmationCandidate",
+          "type": "object"
+        },
+        "PromiseResolutionCandidate": {
+          "additionalProperties": false,
+          "description": "Strict candidate for an append-only Promise resolution.",
+          "properties": {
+            "note": {
+              "anyOf": [
+                {
+                  "maxLength": 4000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Note"
+            },
+            "payload_type": {
+              "const": "promise_resolution",
+              "default": "promise_resolution",
+              "title": "Payload Type",
+              "type": "string"
+            },
+            "promise_event_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Promise Event Id",
+              "type": "string"
+            },
+            "resolution_kind": {
+              "$ref": "#/components/schemas/PromiseResolutionKind"
+            },
+            "resolved_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/WorldMomentCandidate"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "superseding_promise_event_id": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Superseding Promise Event Id"
+            }
+          },
+          "required": [
+            "promise_event_id",
+            "resolution_kind"
+          ],
+          "title": "PromiseResolutionCandidate",
+          "type": "object"
+        },
+        "PromiseResolutionKind": {
+          "description": "Append-only outcomes that resolve a Promise without rewriting it.",
+          "enum": [
+            "fulfilled",
+            "cancelled",
+            "superseded",
+            "will_not_fulfill"
+          ],
+          "title": "PromiseResolutionKind",
+          "type": "string"
+        },
+        "PromiseResponsibleParty": {
+          "description": "Relationship-local parties that can explicitly accept responsibility.",
+          "enum": [
+            "agent",
+            "user"
+          ],
+          "title": "PromiseResponsibleParty",
+          "type": "string"
+        },
+        "PromiseSpecCandidate": {
+          "additionalProperties": false,
+          "description": "Strict untrusted candidate for a structured Promise event.",
+          "properties": {
+            "action": {
+              "maxLength": 8000,
+              "minLength": 1,
+              "title": "Action",
+              "type": "string"
+            },
+            "activation_condition": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PromiseConditionCandidate"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "due_at": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/WorldMomentCandidate"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "payload_type": {
+              "const": "promise",
+              "default": "promise",
+              "title": "Payload Type",
+              "type": "string"
+            },
+            "responsible_parties": {
+              "items": {
+                "$ref": "#/components/schemas/PromiseResponsibleParty"
+              },
+              "maxItems": 2,
+              "minItems": 1,
+              "title": "Responsible Parties",
+              "type": "array"
+            }
+          },
+          "required": [
+            "responsible_parties",
+            "action"
+          ],
+          "title": "PromiseSpecCandidate",
+          "type": "object"
+        },
+        "RecallAudience": {
+          "description": "The only supported consumers of a structured recall result.",
+          "enum": [
+            "agent_private",
+            "public"
+          ],
+          "title": "RecallAudience",
+          "type": "string"
+        },
+        "RecallBudget": {
+          "additionalProperties": false,
+          "description": "Maximum cost accepted by the host for the assembled projections.",
+          "properties": {
+            "max_cost": {
+              "default": 8192,
+              "minimum": 1.0,
+              "title": "Max Cost",
+              "type": "integer"
+            }
+          },
+          "title": "RecallBudget",
+          "type": "object"
+        },
+        "RecallOptions": {
+          "additionalProperties": false,
+          "description": "Explicit policy choices for one structured recall operation.",
+          "properties": {
+            "budget": {
+              "$ref": "#/components/schemas/RecallBudget"
+            },
+            "max_per_type": {
+              "default": 2,
+              "maximum": 100.0,
+              "minimum": 1.0,
+              "title": "Max Per Type",
+              "type": "integer"
+            },
+            "persona_delivery": {
+              "$ref": "#/components/schemas/PersonaDelivery",
+              "default": "planned"
+            },
+            "reinforce": {
+              "default": false,
+              "title": "Reinforce",
+              "type": "boolean"
+            },
+            "top_k": {
+              "default": 5,
+              "maximum": 100.0,
+              "minimum": 1.0,
+              "title": "Top K",
+              "type": "integer"
+            }
+          },
+          "title": "RecallOptions",
+          "type": "object"
+        },
+        "RecallRequest": {
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "query": {
+              "title": "Query",
+              "type": "string"
+            },
+            "top_k": {
+              "default": 5,
+              "maximum": 100.0,
+              "minimum": 1.0,
+              "title": "Top K",
+              "type": "integer"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "query"
+          ],
+          "title": "RecallRequest",
+          "type": "object"
+        },
+        "RecallTemporalContext": {
+          "additionalProperties": false,
+          "description": "Observation context carried by recall without mutating history.",
+          "properties": {
+            "observed_at": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Observed At"
+            },
+            "world_time": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/WorldTime"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "title": "RecallTemporalContext",
+          "type": "object"
+        },
+        "RelationshipAdjudicationBody": {
+          "additionalProperties": false,
+          "description": "Candidates bound to a canonical persisted Source Turn.",
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "candidates": {
+              "items": {
+                "$ref": "#/components/schemas/RelationshipEventCandidate"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "title": "Candidates",
+              "type": "array"
+            },
+            "extractor_version": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Extractor Version",
+              "type": "string"
+            },
+            "source_turn_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Turn Id",
+              "type": "string"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "source_turn_id",
+            "extractor_version",
+            "candidates"
+          ],
+          "title": "RelationshipAdjudicationBody",
+          "type": "object"
+        },
+        "RelationshipConsequenceBody": {
+          "additionalProperties": false,
+          "description": "Records a relationship consequence from an adjudicated event.",
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "effects": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "title": "Effects",
+              "type": "array"
+            },
+            "recorded_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Recorded At"
+            },
+            "source_decision_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Decision Id",
+              "type": "string"
+            },
+            "source_event_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Event Id",
+              "type": "string"
+            },
+            "source_turn_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Source Turn Id",
+              "type": "string"
+            },
+            "summary": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "title": "Summary",
+              "type": "string"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "source_turn_id",
+            "source_decision_id",
+            "source_event_id",
+            "effects",
+            "summary"
+          ],
+          "title": "RelationshipConsequenceBody",
+          "type": "object"
+        },
+        "RelationshipEventCandidate": {
+          "additionalProperties": false,
+          "description": "One untrusted event candidate. Numeric relationship deltas are absent by design.",
+          "properties": {
+            "candidate_key": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Candidate Key",
+              "type": "string"
+            },
+            "depends_on": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "title": "Depends On",
+              "type": "array"
+            },
+            "event_type": {
+              "$ref": "#/components/schemas/RelationshipEventType"
+            },
+            "evidence": {
+              "items": {
+                "$ref": "#/components/schemas/EvidenceCitation"
+              },
+              "maxItems": 16,
+              "minItems": 1,
+              "title": "Evidence",
+              "type": "array"
+            },
+            "growth_trigger": {
+              "$ref": "#/components/schemas/GrowthTriggerKind",
+              "default": "none"
+            },
+            "occurred_at": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Occurred At"
+            },
+            "occurrence_key": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Occurrence Key"
+            },
+            "persona_reflection": {
+              "anyOf": [
+                {
+                  "maxLength": 4000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Persona Reflection"
+            },
+            "references": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 16,
+              "title": "References",
+              "type": "array"
+            },
+            "signal": {
+              "$ref": "#/components/schemas/RelationshipSignal"
+            },
+            "summary": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Summary",
+              "type": "string"
+            },
+            "temporal_payload": {
+              "anyOf": [
+                {
+                  "discriminator": {
+                    "mapping": {
+                      "open_loop": "#/components/schemas/OpenLoopSpecCandidate",
+                      "open_loop_resolution": "#/components/schemas/OpenLoopResolutionCandidate",
+                      "promise": "#/components/schemas/PromiseSpecCandidate",
+                      "promise_condition_confirmed": "#/components/schemas/PromiseConditionConfirmationCandidate",
+                      "promise_resolution": "#/components/schemas/PromiseResolutionCandidate"
+                    },
+                    "propertyName": "payload_type"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PromiseSpecCandidate"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PromiseConditionConfirmationCandidate"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PromiseResolutionCandidate"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OpenLoopSpecCandidate"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OpenLoopResolutionCandidate"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Temporal Payload"
+            }
+          },
+          "required": [
+            "candidate_key",
+            "event_type",
+            "summary",
+            "signal",
+            "evidence"
+          ],
+          "title": "RelationshipEventCandidate",
+          "type": "object"
+        },
+        "RelationshipEventType": {
+          "description": "Canonical event categories accepted by the relationship kernel.",
+          "enum": [
+            "shared_experience",
+            "observation",
+            "promise",
+            "promise_condition_confirmed",
+            "promise_resolution",
+            "open_loop",
+            "open_loop_resolution",
+            "conflict",
+            "repair",
+            "reflection",
+            "correction"
+          ],
+          "title": "RelationshipEventType",
+          "type": "string"
+        },
+        "RelationshipSignal": {
+          "additionalProperties": false,
+          "description": "A qualitative LLM suggestion interpreted by deterministic rules.",
+          "properties": {
+            "extraction_confidence": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Extraction Confidence",
+              "type": "number"
+            },
+            "interpretation_confidence": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Interpretation Confidence",
+              "type": "number"
+            },
+            "signal_type": {
+              "$ref": "#/components/schemas/RelationshipSignalType"
+            },
+            "strength": {
+              "$ref": "#/components/schemas/SignalStrength",
+              "default": "moderate"
+            }
+          },
+          "required": [
+            "signal_type",
+            "extraction_confidence",
+            "interpretation_confidence"
+          ],
+          "title": "RelationshipSignal",
+          "type": "object"
+        },
+        "RelationshipSignalType": {
+          "description": "Qualitative relationship meanings an extractor may propose.",
+          "enum": [
+            "neutral",
+            "gratitude",
+            "disclosure",
+            "reliability",
+            "boundary_respected",
+            "boundary_violation",
+            "conflict",
+            "repair",
+            "shared_experience",
+            "remembrance",
+            "commitment",
+            "disappointment",
+            "support"
+          ],
+          "title": "RelationshipSignalType",
+          "type": "string"
+        },
+        "RememberRequest": {
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "bot_reply": {
+              "title": "Bot Reply",
+              "type": "string"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            },
+            "user_message": {
+              "title": "User Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "user_message",
+            "bot_reply"
+          ],
+          "title": "RememberRequest",
+          "type": "object"
+        },
+        "ReplyAttemptFailureBody": {
+          "description": "Sanitized metadata for a failed, undisplayed reply attempt.",
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "attempt_number": {
+              "minimum": 1.0,
+              "title": "Attempt Number",
+              "type": "integer"
+            },
+            "capability_descriptor": {
+              "title": "Capability Descriptor",
+              "type": "string"
+            },
+            "failure_classification": {
+              "title": "Failure Classification",
+              "type": "string"
+            },
+            "stage": {
+              "$ref": "#/components/schemas/ReplyAttemptStage"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "attempt_number",
+            "stage",
+            "capability_descriptor",
+            "failure_classification"
+          ],
+          "title": "ReplyAttemptFailureBody",
+          "type": "object"
+        },
+        "ReplyAttemptStage": {
+          "description": "Host stage that failed before any reply became visible.",
+          "enum": [
+            "generation",
+            "continuity_evaluation",
+            "delivery_preparation"
+          ],
+          "title": "ReplyAttemptStage",
+          "type": "string"
+        },
+        "ResolveThoughtRequest": {
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id"
+          ],
+          "title": "ResolveThoughtRequest",
+          "type": "object"
+        },
+        "SignalStrength": {
+          "description": "Bounded qualitative strength, never a numeric state suggestion.",
+          "enum": [
+            "weak",
+            "moderate",
+            "strong"
+          ],
+          "title": "SignalStrength",
+          "type": "string"
+        },
+        "SourceProcessingChannel": {
+          "description": "Independent derived-processing responsibilities frozen at acceptance.",
+          "enum": [
+            "memory_archival",
+            "relationship_adjudication"
+          ],
+          "title": "SourceProcessingChannel",
+          "type": "string"
+        },
+        "StructuredRecallBody": {
+          "additionalProperties": false,
+          "description": "Renderer-neutral structured recall request body.",
+          "properties": {
+            "agent_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "audience": {
+              "$ref": "#/components/schemas/RecallAudience"
+            },
+            "options": {
+              "$ref": "#/components/schemas/RecallOptions"
+            },
+            "query": {
+              "default": "",
+              "maxLength": 200000,
+              "title": "Query",
+              "type": "string"
+            },
+            "temporal_context": {
+              "$ref": "#/components/schemas/RecallTemporalContext"
+            },
+            "user_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "agent_id",
+            "user_id",
+            "audience"
+          ],
+          "title": "StructuredRecallBody",
+          "type": "object"
+        },
+        "ThoughtRequest": {
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "content": {
+              "title": "Content",
+              "type": "string"
+            },
+            "created_at": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Created At"
+            },
+            "emotional_score": {
+              "default": 0.0,
+              "title": "Emotional Score",
+              "type": "number"
+            },
+            "foreshadowing_tags": {
+              "anyOf": [
+                {
+                  "items": {},
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Foreshadowing Tags"
+            },
+            "is_unresolved": {
+              "default": false,
+              "title": "Is Unresolved",
+              "type": "boolean"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            },
+            "visibility": {
+              "default": "public_log",
+              "title": "Visibility",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "content"
+          ],
+          "title": "ThoughtRequest",
+          "type": "object"
+        },
+        "TurnAbandonmentBody": {
+          "description": "Explicitly terminates an unanswered turn.",
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "reason": {
+              "title": "Reason",
+              "type": "string"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "reason"
+          ],
+          "title": "TurnAbandonmentBody",
+          "type": "object"
+        },
+        "TurnCompletionBody": {
+          "additionalProperties": false,
+          "description": "Seals a visible reply into an existing open turn.",
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "agent_message": {
+              "title": "Agent Message",
+              "type": "string"
+            },
+            "continuity_assessment": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continuity Assessment"
+            },
+            "continuity_result": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Continuity Result"
+            },
+            "delivery_disposition": {
+              "$ref": "#/components/schemas/DeliveryDisposition",
+              "default": "shown_unreviewed"
+            },
+            "delivery_exception": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Delivery Exception"
+            },
+            "processing_channels": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/SourceProcessingChannel"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Processing Channels"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "agent_message"
+          ],
+          "title": "TurnCompletionBody",
+          "type": "object"
+        },
+        "TurnOpeningBody": {
+          "description": "Opens a durable turn before reply generation.",
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "interaction_context": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Interaction Context",
+              "type": "array"
+            },
+            "turn_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Turn Id"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            },
+            "user_message": {
+              "title": "User Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "user_message"
+          ],
+          "title": "TurnOpeningBody",
+          "type": "object"
+        },
+        "TurnRecordBody": {
+          "additionalProperties": false,
+          "description": "Atomically records an already-visible complete exchange.",
+          "properties": {
+            "agent_id": {
+              "default": "default_agent",
+              "title": "Agent Id",
+              "type": "string"
+            },
+            "agent_message": {
+              "title": "Agent Message",
+              "type": "string"
+            },
+            "delivery_disposition": {
+              "$ref": "#/components/schemas/DeliveryDisposition",
+              "default": "shown_unreviewed"
+            },
+            "delivery_exception": {
+              "additionalProperties": true,
+              "title": "Delivery Exception",
+              "type": "object"
+            },
+            "processing_channels": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/SourceProcessingChannel"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Processing Channels"
+            },
+            "turn_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Turn Id"
+            },
+            "user_id": {
+              "title": "User Id",
+              "type": "string"
+            },
+            "user_message": {
+              "title": "User Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "user_id",
+            "user_message",
+            "agent_message",
+            "delivery_exception"
+          ],
+          "title": "TurnRecordBody",
+          "type": "object"
+        },
+        "TurnStatus": {
+          "description": "Lifecycle state of one durable source turn.",
+          "enum": [
+            "open",
+            "completed",
+            "abandoned"
+          ],
+          "title": "TurnStatus",
+          "type": "string"
+        },
+        "ValidationError": {
+          "properties": {
+            "ctx": {
+              "title": "Context",
+              "type": "object"
+            },
+            "input": {
+              "title": "Input"
+            },
+            "loc": {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "title": "Location",
+              "type": "array"
+            },
+            "msg": {
+              "title": "Message",
+              "type": "string"
+            },
+            "type": {
+              "title": "Error Type",
+              "type": "string"
+            }
+          },
+          "required": [
+            "loc",
+            "msg",
+            "type"
+          ],
+          "title": "ValidationError",
+          "type": "object"
+        },
+        "WorldMomentCandidate": {
+          "additionalProperties": false,
+          "description": "Strict candidate form of a host-verifiable World Moment.",
+          "properties": {
+            "clock_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Clock Id",
+              "type": "string"
+            },
+            "display_value": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Display Value",
+              "type": "string"
+            },
+            "order_value": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order Value"
+            }
+          },
+          "required": [
+            "clock_id",
+            "display_value"
+          ],
+          "title": "WorldMomentCandidate",
+          "type": "object"
+        },
+        "WorldTime": {
+          "additionalProperties": false,
+          "description": "An explicit time value in one host-owned fictional or real clock.",
+          "properties": {
+            "clock_id": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Clock Id",
+              "type": "string"
+            },
+            "display_value": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Display Value",
+              "type": "string"
+            },
+            "order_value": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Order Value"
+            }
+          },
+          "required": [
+            "clock_id",
+            "display_value"
+          ],
+          "title": "WorldTime",
+          "type": "object"
+        }
+      },
+      "securitySchemes": {
+        "OwnerApiKey": {
+          "description": "Single-owner reference-server key; not a tenant identity.",
+          "in": "header",
+          "name": "X-API-Key",
+          "type": "apiKey"
+        }
+      }
+    },
+    "info": {
+      "description": "Experiential Recall & Impression Integration Engine",
+      "title": "E.R.I.I. Memory Engine REST API",
+      "version": "0.5.0a1"
+    },
+    "openapi": "3.1.0",
+    "paths": {
+      "/api/v1/archivals": {
+        "post": {
+          "description": "Accepts reliable archival and reports its actual lifecycle state.",
+          "operationId": "api_submit_archival_api_v1_archivals_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchivalSubmissionBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Submit Archival"
+        }
+      },
+      "/api/v1/archivals/{archival_id}": {
+        "get": {
+          "description": "Queries one scoped receipt without exposing its Source Transcript.",
+          "operationId": "api_get_archival_api_v1_archivals__archival_id__get",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "archival_id",
+              "required": true,
+              "schema": {
+                "title": "Archival Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "agent_id",
+              "required": true,
+              "schema": {
+                "title": "Agent Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "user_id",
+              "required": true,
+              "schema": {
+                "title": "User Id",
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Get Archival"
+        }
+      },
+      "/api/v1/core_memory": {
+        "get": {
+          "description": "Gets Core Persona Memory string.",
+          "operationId": "api_get_core_memory_api_v1_core_memory_get",
+          "parameters": [
+            {
+              "in": "query",
+              "name": "agent_id",
+              "required": true,
+              "schema": {
+                "title": "Agent Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "user_id",
+              "required": true,
+              "schema": {
+                "title": "User Id",
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Get Core Memory"
+        },
+        "post": {
+          "description": "Sets Core Persona Memory string.",
+          "operationId": "api_set_core_memory_api_v1_core_memory_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoreMemoryRequest"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Set Core Memory"
+        }
+      },
+      "/api/v1/health": {
+        "get": {
+          "description": "Health check endpoint returning engine and version status.",
+          "operationId": "api_health_api_v1_health_get",
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            }
+          },
+          "summary": "Api Health"
+        }
+      },
+      "/api/v1/memory/export": {
+        "post": {
+          "description": "Exports memory into a MemoryPack object.",
+          "operationId": "api_export_memory_api_v1_memory_export_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportRequest"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Export Memory"
+        }
+      },
+      "/api/v1/memory/import": {
+        "post": {
+          "description": "Imports a MemoryPack object.",
+          "operationId": "api_import_memory_api_v1_memory_import_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportRequest"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Import Memory"
+        }
+      },
+      "/api/v1/memory/monologue": {
+        "get": {
+          "description": "Retrieves inner monologue / diary entries.",
+          "operationId": "api_get_monologue_api_v1_memory_monologue_get",
+          "parameters": [
+            {
+              "in": "query",
+              "name": "user_id",
+              "required": true,
+              "schema": {
+                "title": "User Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "agent_id",
+              "required": false,
+              "schema": {
+                "default": "default_agent",
+                "title": "Agent Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "limit",
+              "required": false,
+              "schema": {
+                "default": 10,
+                "maximum": 100,
+                "minimum": 1,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            {
+              "in": "query",
+              "name": "unresolved_only",
+              "required": false,
+              "schema": {
+                "default": false,
+                "title": "Unresolved Only",
+                "type": "boolean"
+              }
+            },
+            {
+              "in": "query",
+              "name": "visibility",
+              "required": false,
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": "public_log",
+                "title": "Visibility"
+              }
+            },
+            {
+              "in": "query",
+              "name": "start_time",
+              "required": false,
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Start Time"
+              }
+            },
+            {
+              "in": "query",
+              "name": "end_time",
+              "required": false,
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "End Time"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Get Monologue"
+        }
+      },
+      "/api/v1/memory/thought": {
+        "post": {
+          "description": "Explicitly records an inner monologue / diary entry.",
+          "operationId": "api_remember_thought_api_v1_memory_thought_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThoughtRequest"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Remember Thought"
+        }
+      },
+      "/api/v1/memory/thought/{node_id}/resolve": {
+        "patch": {
+          "description": "Marks a suspenseful/unresolved thought as resolved.",
+          "operationId": "api_resolve_thought_api_v1_memory_thought__node_id__resolve_patch",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "node_id",
+              "required": true,
+              "schema": {
+                "title": "Node Id",
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveThoughtRequest"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Resolve Thought"
+        }
+      },
+      "/api/v1/recall": {
+        "post": {
+          "description": "Recalls formatted memory context for prompt injection.",
+          "operationId": "api_recall_api_v1_recall_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecallRequest"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Recall"
+        }
+      },
+      "/api/v1/recall/structured": {
+        "post": {
+          "description": "Returns an audience-filtered RecallResult without prompt rendering.",
+          "operationId": "api_recall_structured_api_v1_recall_structured_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StructuredRecallBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Recall Structured"
+        }
+      },
+      "/api/v1/relationship/adjudicate": {
+        "post": {
+          "description": "Adjudicates candidates against a persisted completed Source Turn.",
+          "operationId": "api_adjudicate_relationship_api_v1_relationship_adjudicate_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipAdjudicationBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Adjudicate Relationship"
+        }
+      },
+      "/api/v1/relationship/consequences": {
+        "get": {
+          "description": "Lists all relationship consequences for the given relationship.",
+          "operationId": "api_list_relationship_consequences_api_v1_relationship_consequences_get",
+          "parameters": [
+            {
+              "in": "query",
+              "name": "agent_id",
+              "required": false,
+              "schema": {
+                "default": "default_agent",
+                "title": "Agent Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "user_id",
+              "required": true,
+              "schema": {
+                "title": "User Id",
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api List Relationship Consequences"
+        },
+        "post": {
+          "description": "Records a relationship consequence from an adjudicated event.",
+          "operationId": "api_record_relationship_consequence_api_v1_relationship_consequences_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelationshipConsequenceBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Record Relationship Consequence"
+        }
+      },
+      "/api/v1/relationship/narrative-tension-links": {
+        "get": {
+          "description": "Lists all narrative tension links for the given relationship.",
+          "operationId": "api_list_narrative_tension_links_api_v1_relationship_narrative_tension_links_get",
+          "parameters": [
+            {
+              "in": "query",
+              "name": "agent_id",
+              "required": false,
+              "schema": {
+                "default": "default_agent",
+                "title": "Agent Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "user_id",
+              "required": true,
+              "schema": {
+                "title": "User Id",
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api List Narrative Tension Links"
+        },
+        "post": {
+          "description": "Records a narrative tension link from a later adjudicated event.",
+          "operationId": "api_record_narrative_tension_link_api_v1_relationship_narrative_tension_links_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NarrativeTensionLinkBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Record Narrative Tension Link"
+        }
+      },
+      "/api/v1/remember": {
+        "post": {
+          "description": "Records a conversation turn into memory.",
+          "operationId": "api_remember_api_v1_remember_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RememberRequest"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Remember"
+        }
+      },
+      "/api/v1/tasks/retry-failed": {
+        "post": {
+          "description": "Resets FAILED tasks back to PENDING.",
+          "operationId": "api_retry_failed_tasks_api_v1_tasks_retry_failed_post",
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            }
+          },
+          "summary": "Api Retry Failed Tasks"
+        }
+      },
+      "/api/v1/tasks/status": {
+        "get": {
+          "description": "Retrieves background archival task counts by status.",
+          "operationId": "api_get_tasks_status_api_v1_tasks_status_get",
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            }
+          },
+          "summary": "Api Get Tasks Status"
+        }
+      },
+      "/api/v1/turns": {
+        "get": {
+          "description": "Lists relationship-scoped turns in durable opening order.",
+          "operationId": "api_list_turns_api_v1_turns_get",
+          "parameters": [
+            {
+              "in": "query",
+              "name": "agent_id",
+              "required": true,
+              "schema": {
+                "title": "Agent Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "user_id",
+              "required": true,
+              "schema": {
+                "title": "User Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "status",
+              "required": false,
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/TurnStatus"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Status"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api List Turns"
+        },
+        "post": {
+          "description": "Atomically accepts an already-visible complete exchange.",
+          "operationId": "api_record_turn_api_v1_turns_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnRecordBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Record Turn"
+        }
+      },
+      "/api/v1/turns/open": {
+        "post": {
+          "description": "Persists one visible user message before reply generation.",
+          "operationId": "api_begin_turn_api_v1_turns_open_post",
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnOpeningBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "201": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Begin Turn"
+        }
+      },
+      "/api/v1/turns/{turn_id}": {
+        "get": {
+          "description": "Returns one relationship-scoped durable turn.",
+          "operationId": "api_get_turn_api_v1_turns__turn_id__get",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "turn_id",
+              "required": true,
+              "schema": {
+                "title": "Turn Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "agent_id",
+              "required": true,
+              "schema": {
+                "title": "Agent Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "user_id",
+              "required": true,
+              "schema": {
+                "title": "User Id",
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Get Turn"
+        }
+      },
+      "/api/v1/turns/{turn_id}/abandon": {
+        "post": {
+          "description": "Explicitly terminates an unanswered turn.",
+          "operationId": "api_abandon_turn_api_v1_turns__turn_id__abandon_post",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "turn_id",
+              "required": true,
+              "schema": {
+                "title": "Turn Id",
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnAbandonmentBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Abandon Turn"
+        }
+      },
+      "/api/v1/turns/{turn_id}/complete": {
+        "post": {
+          "description": "Seals the reply actually displayed by the host.",
+          "operationId": "api_complete_turn_api_v1_turns__turn_id__complete_post",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "turn_id",
+              "required": true,
+              "schema": {
+                "title": "Turn Id",
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnCompletionBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Complete Turn"
+        }
+      },
+      "/api/v1/turns/{turn_id}/continuity/evaluate": {
+        "post": {
+          "description": "Returns a strict self-bound result without persisting the draft reply.",
+          "operationId": "api_evaluate_turn_continuity_api_v1_turns__turn_id__continuity_evaluate_post",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "turn_id",
+              "required": true,
+              "schema": {
+                "title": "Turn Id",
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContinuityEvaluationBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Evaluate Turn Continuity"
+        }
+      },
+      "/api/v1/turns/{turn_id}/reply-attempts": {
+        "get": {
+          "description": "Lists sanitized failed attempts for one open or terminal turn.",
+          "operationId": "api_list_reply_attempts_api_v1_turns__turn_id__reply_attempts_get",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "turn_id",
+              "required": true,
+              "schema": {
+                "title": "Turn Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "agent_id",
+              "required": true,
+              "schema": {
+                "title": "Agent Id",
+                "type": "string"
+              }
+            },
+            {
+              "in": "query",
+              "name": "user_id",
+              "required": true,
+              "schema": {
+                "title": "User Id",
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api List Reply Attempts"
+        },
+        "post": {
+          "description": "Records a retryable failure without storing an undisplayed draft.",
+          "operationId": "api_record_reply_attempt_api_v1_turns__turn_id__reply_attempts_post",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "turn_id",
+              "required": true,
+              "schema": {
+                "title": "Turn Id",
+                "type": "string"
+              }
+            }
+          ],
+          "requestBody": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplyAttemptFailureBody"
+                }
+              }
+            },
+            "required": true
+          },
+          "responses": {
+            "201": {
+              "content": {
+                "application/json": {
+                  "schema": {}
+                }
+              },
+              "description": "Successful Response"
+            },
+            "422": {
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/HTTPValidationError"
+                  }
+                }
+              },
+              "description": "Validation Error"
+            }
+          },
+          "summary": "Api Record Reply Attempt"
+        }
+      }
+    },
+    "security": [
+      {
+        "OwnerApiKey": []
+      }
+    ]
+  },
+  "scope": "FastAPI /api/v1 paths and complete component schemas",
+  "snapshot_release": "0.5.0a1"
+}
