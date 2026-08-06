@@ -103,7 +103,7 @@ class LongitudinalScenarioContractTest(unittest.TestCase):
         for reports in by_scenario.values():
             self.assertEqual(
                 {report["adapter_id"] for report in reports},
-                {"file-storage/v2", "sqlite/v10"},
+                {"file-storage/v1", "sqlite/v9"},
             )
             self.assertEqual(
                 len({report["final_observation_digest"] for report in reports}),

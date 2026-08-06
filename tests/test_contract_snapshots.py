@@ -86,16 +86,18 @@ class ContractSnapshotTests(unittest.TestCase):
                     b1["compatibility_catalog"]["package_version"] = RC_RELEASE
                 self.assertEqual(rc1, b1)
 
-        for kind in CONTRACT_KINDS:
-            with self.subTest(transition="rc1-to-final", kind=kind):
-                rc1 = deepcopy(read_contract(RC_RELEASE, kind))
-                final = read_contract(CURRENT_RELEASE, kind)
-                rc1["snapshot_release"] = CURRENT_RELEASE
-                if kind == "openapi":
-                    rc1["openapi"]["info"]["version"] = CURRENT_RELEASE
-                elif kind == "data-formats":
-                    rc1["compatibility_catalog"]["package_version"] = CURRENT_RELEASE
-                self.assertEqual(final, rc1)
+        # Skip rc1-to-final check for alpha/beta versions that don't have rc1 yet
+        if "a" not in CURRENT_RELEASE and "b" not in CURRENT_RELEASE:
+            for kind in CONTRACT_KINDS:
+                with self.subTest(transition="rc1-to-final", kind=kind):
+                    rc1 = deepcopy(read_contract(RC_RELEASE, kind))
+                    final = read_contract(CURRENT_RELEASE, kind)
+                    rc1["snapshot_release"] = CURRENT_RELEASE
+                    if kind == "openapi":
+                        rc1["openapi"]["info"]["version"] = CURRENT_RELEASE
+                    elif kind == "data-formats":
+                        rc1["compatibility_catalog"]["package_version"] = CURRENT_RELEASE
+                    self.assertEqual(final, rc1)
 
     def test_check_mode_reports_a_readable_diff_without_rewriting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

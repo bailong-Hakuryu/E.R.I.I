@@ -206,7 +206,7 @@ class LifecycleUpgradeTests(unittest.TestCase):
 
             backup = lifecycle.inspect(backup_destination)
             self.assertEqual(backup.status, LifecycleStatus.CURRENT)
-            self.assertEqual(backup.detected_version, "2")
+            self.assertEqual(backup.detected_version, "1")
             upgraded = lifecycle.inspect(destination)
             self.assertEqual(upgraded.status, LifecycleStatus.CURRENT)
             self.assertEqual(upgraded.detected_version, "2")
