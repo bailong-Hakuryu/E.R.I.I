@@ -216,7 +216,7 @@ def main():
 
             if result.narrative_tensions:
                 tension = result.narrative_tensions[0]
-                print(f"\nTension details:")
+                print("\nTension details:")
                 print(f"  Tension ID: {tension.tension_id}")
                 print(f"  Outcome: {tension.outcome.value}")
                 print(f"  Effects: {', '.join(e.value for e in tension.effects)}")
@@ -226,7 +226,7 @@ def main():
 
             # Render to markdown
             rendered = engine.render_recall(result)
-            print(f"\n=== Rendered Recall (excerpt) ===")
+            print("\n=== Rendered Recall (excerpt) ===")
             if "Relationship Consequences and Narrative Tensions" in rendered:
                 lines = rendered.split("\n")
                 start = next(
