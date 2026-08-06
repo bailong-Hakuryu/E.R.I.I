@@ -81,11 +81,11 @@ class LifecycleSQLiteCoordinatorTests(unittest.TestCase):
             second = lifecycle.plan(request)
 
             self.assertEqual(first, second)
-            self.assertEqual(first.strategy_id, "sqlite-schema-6-to-9")
+            self.assertEqual(first.strategy_id, "sqlite-schema-6-to-10")
             self.assertEqual(first.source.status, LifecycleStatus.MIGRATION_REQUIRED)
             self.assertEqual(first.source.detected_version, "6")
             self.assertEqual(first.content.status, LifecycleStatus.CURRENT)
-            self.assertEqual(first.content.detected_version, "9")
+            self.assertEqual(first.content.detected_version, "10")
             self.assertEqual(first.content.fingerprint, second.content.fingerprint)
             self.assertEqual(source_path.read_bytes(), source_bytes)
             self.assertFalse(Path(destination.path).exists())
