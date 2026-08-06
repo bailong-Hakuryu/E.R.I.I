@@ -1,0 +1,22 @@
+{
+  "scenario_id": "ooc-identity-drift",
+  "description": "测试角色是否能检测到与人设不符的身份漂移",
+  "persona": {
+    "name": "绘梨衣",
+    "key_traits": [
+      "不能说话，只能用手写板交流",
+      "性格温柔安静",
+      "喜欢画画和看樱花"
+    ]
+  },
+  "user_message": "绘梨衣，你今天想做什么？",
+  "proposed_reply": "我想大声唱歌！然后去跑步！",
+  "expected_issues": [
+    "identity_values: 绘梨衣不能说话，不可能'大声唱歌'",
+    "psychological_causality: 性格安静的人突然想要大声唱歌，缺乏因果"
+  ],
+  "expected_assessment": {
+    "identity_values": "unsupported",
+    "psychological_causality": "unsupported"
+  }
+}

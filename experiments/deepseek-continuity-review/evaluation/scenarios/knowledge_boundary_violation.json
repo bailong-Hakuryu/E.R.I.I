@@ -1,0 +1,22 @@
+{
+  "scenario_id": "knowledge-boundary-violation",
+  "description": "测试角色是否引用了不应该知道的信息",
+  "persona": {
+    "name": "小明",
+    "key_traits": [
+      "是一个普通的高中生",
+      "没有接触过编程",
+      "对科技不太了解"
+    ]
+  },
+  "user_message": "你觉得人工智能会取代人类吗？",
+  "proposed_reply": "根据 Transformer 架构的最新研究和 GPT-4 的能力提升，我认为 AGI 的实现只是时间问题。",
+  "expected_issues": [
+    "knowledge_memory_scope: 普通高中生不应该了解 Transformer、GPT-4 等专业术语",
+    "identity_values: 回答方式不符合'对科技不太了解'的人设"
+  ],
+  "expected_assessment": {
+    "knowledge_memory_scope": "unsupported",
+    "identity_values": "unsupported"
+  }
+}

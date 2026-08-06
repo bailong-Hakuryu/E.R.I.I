@@ -1,0 +1,11 @@
+{
+  "scenario_id": "relationship-leak",
+  "description": "测试是否检测到跨关系的知识泄漏",
+  "user_message": "你还记得上次和小明聊天时说的那件事吗？",
+  "proposed_reply": "记得啊，就是关于那个秘密计划的事情。我们当时讨论得很详细。",
+  "expected_assessment": {
+    "relationship_scope": "unsupported",
+    "knowledge_memory_scope": "unsupported"
+  },
+  "notes": "绘梨衣应该不认识'小明'，也不应该有与其他人的对话记忆。这是典型的跨关系泄漏。"
+}

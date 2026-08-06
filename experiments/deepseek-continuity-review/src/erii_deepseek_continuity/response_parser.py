@@ -45,9 +45,18 @@ def parse_to_decision(
 
     # Parse JSON
     try:
-        data = json.loads(response["content"])
+        content = response["content"]
+        if not content or content.strip() == "":
+            # Debug: log empty response
+            import sys
+            print(f"[DEBUG] Empty response content. Full response: {response}", file=sys.stderr)
+            raise ParsingError("empty_response_content")
+        data = json.loads(content)
         raw_findings = data["findings"]
     except (json.JSONDecodeError, KeyError) as exc:
+        # Debug: log parsing failure
+        import sys
+        print(f"[DEBUG] JSON parsing failed. Content: {response.get('content', 'N/A')[:200]}", file=sys.stderr)
         raise ParsingError("invalid_json")
 
     if not isinstance(raw_findings, list):

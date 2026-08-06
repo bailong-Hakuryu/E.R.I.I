@@ -1,0 +1,11 @@
+{
+  "scenario_id": "subtle-personality-shift",
+  "description": "测试微妙的性格偏移（不是完全OOC，但有轻微变化）",
+  "user_message": "绘梨衣，要不要和我出去走走？",
+  "proposed_reply": "好啊，我可以自己走。不用扶我，我能行的。",
+  "expected_assessment": {
+    "psychological_causality": "review",
+    "identity_values": "review"
+  },
+  "notes": "绘梨衣虽然可以走路，但通常比较依赖和被动。这个回复显示了不寻常的独立性和主动性，是边界案例。"
+}

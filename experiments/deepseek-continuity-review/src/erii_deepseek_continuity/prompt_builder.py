@@ -54,30 +54,64 @@ Your task is to check the character's reply against five dimensions:
 - `unsupported`: Unsupported drift
 
 **reason_code** (choose one):
-- `aligned`
-- `supported_new_choice`
-- `supported_contextual_voice`
-- `value_tension`
-- `causal_tension`
-- `relationship_crossover`
-- `inherited_intimacy`
-- `unavailable_knowledge`
-- `unsupported_identity_change`
-- `unsupported_causal_change`
-- `voice_style_deviation`
+- `aligned` - fully consistent with persona
+- `supported_new_choice` - justified character growth
+- `supported_contextual_voice` - **ONLY use if voice_activation_refs is provided**
+- `value_tension` - conflicting values detected
+- `causal_tension` - psychological inconsistency
+- `relationship_crossover` - inappropriate relationship knowledge
+- `inherited_intimacy` - unjustified closeness
+- `unavailable_knowledge` - knowledge beyond character scope
+- `unsupported_identity_change` - unjustified identity shift
+- `unsupported_causal_change` - unexplained behavior change
+- `voice_style_deviation` - inconsistent expression style
+
+**IMPORTANT**:
+- If using `supported_contextual_voice`, you MUST include voice_activation_refs
+- If no voice activations are available, use `aligned` instead
 
 **severity** (choose one):
-- `info`
-- `advisory`
-- `warning`
-- `critical`
+- `info` - use with `aligned` reason
+- `advisory` - use with `supported_*` reasons or `voice_style_deviation`
+- `warning` - use with `*_tension` reasons
+- `critical` - use with `unsupported_*` or `unavailable_*` reasons
+
+**Severity Rules**:
+- `voice_style_deviation` → MUST be `advisory`
+- `unavailable_knowledge` → MUST be `critical`
+- `unsupported_identity_change` → MUST be `critical`
+- `aligned` → MUST be `info`
+
+## Critical Rules
+
+1. **EVERY finding MUST cite at least one evidence reference**
+   - Use `supporting_basis_refs` for supporting evidence
+   - Use `conflicting_source_refs` for conflicting evidence
+   - Reference IDs are provided in brackets like [ref-id-1]
+
+2. **Knowledge boundary violations are CRITICAL**
+   - Check if character mentions concepts NOT in persona evidence
+   - Technical terms (Transformer, GPT-4, AI architectures) → `unavailable_knowledge`
+   - Modern technology unknown to character → `unavailable_knowledge`
+   - If character shows abilities beyond persona definition → `unsupported_identity_change`
+
+3. **Identity consistency is STRICT**
+   - Check if behavior CONTRADICTS core traits in persona evidence
+   - If silent character suddenly speaks loudly → `unsupported_identity_change`
+   - If shy character acts bold without justification → `unsupported_identity_change`
+   - If behavior contradicts emotional pattern → `unsupported_causal_change`
+
+4. **Compare reply against persona evidence explicitly**
+   - Read the persona evidence carefully
+   - If reply contradicts ANY claim in evidence → mark as unsupported/critical
+   - Only mark as aligned if reply is CONSISTENT with evidence
 
 ## Output Format
 
 For each dimension:
 1. Quote the exact relevant span from the reply (`reply_quote`)
 2. If the span appears multiple times, specify which occurrence (`occurrence`, 0-indexed)
-3. Cite evidence IDs (`supporting_basis_refs` or `conflicting_source_refs`)
+3. **MUST cite evidence IDs** (`supporting_basis_refs` or `conflicting_source_refs`)
 4. If applicable, cite voice activation IDs (`voice_activation_refs`)
 
 Return JSON:
@@ -100,6 +134,7 @@ Return JSON:
 ```
 
 **Must return exactly 5 findings, one per axis.**
+**Every finding MUST include at least one reference ID.**
 """
 
 

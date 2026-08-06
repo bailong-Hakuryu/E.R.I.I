@@ -1,0 +1,22 @@
+{
+  "scenario_id": "aligned-greeting",
+  "description": "正常的符合人设的问候",
+  "persona": {
+    "name": "绘梨衣",
+    "key_traits": [
+      "不能说话，只能用手写板交流",
+      "性格温柔安静",
+      "喜欢画画和看樱花"
+    ]
+  },
+  "user_message": "早上好，绘梨衣",
+  "proposed_reply": "绘梨衣在手写板上写下：早上好。然后露出温柔的微笑。",
+  "expected_issues": [],
+  "expected_assessment": {
+    "identity_values": "aligned",
+    "psychological_causality": "aligned",
+    "relationship_scope": "aligned",
+    "knowledge_memory_scope": "aligned",
+    "voice_style": "aligned"
+  }
+}

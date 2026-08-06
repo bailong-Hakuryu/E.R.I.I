@@ -23,6 +23,7 @@ class DeepSeekClient:
         thinking_enabled: bool = True,
         reasoning_effort: str = "high",
         timeout_seconds: float = 45.0,
+        max_tokens: int = 4096,
         transport: Callable[[dict], dict] | None = None,
     ):
         """
@@ -34,6 +35,7 @@ class DeepSeekClient:
             thinking_enabled: Whether to enable thinking mode
             reasoning_effort: Effort level (high/max) for thinking mode
             timeout_seconds: Request timeout
+            max_tokens: Maximum tokens for completion
             transport: Optional fake transport for testing
         """
         self._api_key = api_key
@@ -41,6 +43,7 @@ class DeepSeekClient:
         self._thinking_enabled = thinking_enabled
         self._reasoning_effort = reasoning_effort
         self._timeout_seconds = timeout_seconds
+        self._max_tokens = max_tokens
         self._transport = transport
 
     def complete(
@@ -70,7 +73,7 @@ class DeepSeekClient:
                 "type": "enabled" if self._thinking_enabled else "disabled"
             },
             "response_format": {"type": "json_object"},
-            "max_tokens": 4096,
+            "max_tokens": self._max_tokens,
         }
 
         # Add reasoning_effort as top-level parameter (only when enabled)
@@ -112,13 +115,18 @@ class DeepSeekClient:
         except (KeyError, IndexError):
             raise DeepSeekAPIError("deepseek_invalid_response_structure")
 
-        return {
+        result = {
             "content": message.get("content", ""),
             "reasoning_present": "reasoning_content" in message,
             "finish_reason": choice.get("finish_reason"),
             "usage": response_data.get("usage", {}),
             "latency_ms": latency_ms,
         }
+
+        # Save last usage for testing/debugging
+        self._last_usage = result["usage"]
+
+        return result
 
     def _call_real_api(self, payload: dict) -> dict:
         """Real HTTP call (does not preserve original request/response)."""
