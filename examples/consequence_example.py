@@ -39,25 +39,16 @@ def main():
             )
             print(f"Relationship initialized: {profile.relationship_id}\n")
 
-            # Step 2: Record a completed turn with continuity support
+            # Step 2: Record a completed turn
             print("=== Step 2: Record a Source Turn ===")
-            turn = engine.begin_turn(
+            turn = engine.record_turn(
                 agent_id="agent-kai",
                 user_id="user-mira",
                 user_message="Did you tell anyone about my secret?",
+                agent_message="I... I had to tell someone. I'm sorry.",
                 turn_id="turn-boundary-test",
             )
-
-            agent_reply = "I... I had to tell someone. I'm sorry."
-
-            # Complete the turn (in real usage, you'd evaluate continuity first)
-            engine.complete_turn(
-                agent_id="agent-kai",
-                user_id="user-mira",
-                turn_id=turn.turn_id,
-                agent_message=agent_reply,
-            )
-            print(f"Turn completed: {turn.turn_id}\n")
+            print(f"Turn recorded: {turn.turn_id}\n")
 
             # Step 3: Adjudicate a relationship event from the turn
             print("=== Step 3: Adjudicate Relationship Event ===")
@@ -124,24 +115,16 @@ def main():
             for c in all_consequences:
                 print(f"  - {c.consequence_id}: {c.summary}\n")
 
-            # Step 6: Record a later turn where the issue is addressed
+            # Step 6: Record a follow-up turn where the issue is addressed
             print("=== Step 6: Record Follow-up Turn ===")
-            turn2 = engine.begin_turn(
+            turn2 = engine.record_turn(
                 agent_id="agent-kai",
                 user_id="user-mira",
                 user_message="I'm really hurt. Why did you do that?",
+                agent_message="I know I messed up. I'm truly sorry. Can we talk about it?",
                 turn_id="turn-addressing",
             )
-
-            agent_reply2 = "I know I messed up. I'm truly sorry. Can we talk about it?"
-
-            engine.complete_turn(
-                agent_id="agent-kai",
-                user_id="user-mira",
-                turn_id=turn2.turn_id,
-                agent_message=agent_reply2,
-            )
-            print(f"Follow-up turn completed: {turn2.turn_id}\n")
+            print(f"Follow-up turn recorded: {turn2.turn_id}\n")
 
             # Step 7: Adjudicate a follow-up event
             print("=== Step 7: Adjudicate Follow-up Event ===")
