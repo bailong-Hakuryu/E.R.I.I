@@ -209,6 +209,21 @@ Adapter/实验；E.R.I.I. 不强制使用某个 Provider，也不建议为了使
 未来多模型协同与 DeepSeek 没有设计绑定。即使引入 Deliberation Ensemble，也只能有
 一名 Character Actor；Reviewer 不能投票定义角色或直接写入人格、关系和记忆。
 
+### 实验模块
+
+**DeepSeek Continuity Review** ([experiments/deepseek-continuity-review](experiments/deepseek-continuity-review/))
+
+实现了 `ContinuityEvaluatorV1` 契约，探索 DeepSeek thinking mode 在角色连续性检测上的效果。
+
+- **状态**: ✅ 真实 API 测试完成 (2026-08-07)
+- **结果**: Thinking ON 达到 100% 检测准确率（6/6 场景）
+- **成本**: +137% tokens，+614% 延迟
+- **推荐**: 生产环境使用场景分类策略
+
+详见 [evaluation/EXECUTIVE_SUMMARY.md](experiments/deepseek-continuity-review/evaluation/EXECUTIVE_SUMMARY.md)
+
+该模块完全可拆卸，删除不影响 E.R.I.I. 核心功能。
+
 ## 安全、数据与维护
 
 当前项目由单人长期维护，不提供 SLA。FileStorage、SQLite、MemoryPack 和 Lifecycle

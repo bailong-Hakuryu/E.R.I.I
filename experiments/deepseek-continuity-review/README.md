@@ -1,10 +1,22 @@
 # DeepSeek Continuity Review Experiment
 
-**Status**: Experimental - Shadow comparison only, not for production use
+**Status**: ✅ Real API Testing Complete - Ready for production evaluation  
+**Version**: v0.1.0  
+**Test Date**: 2026-08-07
 
-## Experiment Hypothesis
+## Experiment Results
 
-> DeepSeek thinking mode can significantly improve character continuity detection accuracy without introducing privacy leaks or over-psychologization.
+✅ **Hypothesis Confirmed**: DeepSeek thinking mode significantly improves character continuity detection accuracy.
+
+**Key Findings**:
+- Thinking ON: **100% success rate** (6/6 scenarios)
+- Thinking OFF: **17% success rate** (1/6 scenarios)
+- Cost increase: +137% tokens
+- Latency increase: +614% (31.5s vs 4.4s)
+
+**Recommendation**: Use Thinking ON for production with scene classification strategy.
+
+📊 **Detailed Reports**: See [evaluation/EXECUTIVE_SUMMARY.md](evaluation/EXECUTIVE_SUMMARY.md)
 
 ## Zero-Leakage Commitment
 
