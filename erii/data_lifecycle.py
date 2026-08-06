@@ -1947,7 +1947,7 @@ def _upgrade_snapshot(
 ) -> _PayloadSnapshot:
     source = _materialize_snapshot(source)
     assert source.files is not None
-    if strategy_id == _SQLITE_SCHEMA_6_TO_9_STRATEGY_ID:
+    if strategy_id == _SQLITE_SCHEMA_6_TO_10_STRATEGY_ID:
         return _upgrade_sqlite_snapshot(source)
     if strategy_id.startswith(_MEMORY_PACK_STRATEGY_PREFIX):
         return _upgrade_memory_pack_snapshot(strategy_id, source)
