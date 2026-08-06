@@ -4,8 +4,60 @@
 
 ## [Unreleased]
 
-后续缺陷、安全与兼容修复将在这里记录。`0.4.x` 不会静默改变人格、关系或来源权威
-语义。
+后续缺陷、安全与兼容修复将在这里记录。
+
+## [0.5.0a1] - 2026-08-06
+
+`0.5.0a1` 引入 Relationship Consequence 和 Narrative Tension 系统，实现关系决策的
+长期影响追踪和叙事张力状态管理。
+
+### Added
+
+- **Relationship Consequence 系统**：记录关系事件产生的持久后果，包括伤害、信任变化、
+  边界违反等效应。后果绑定到已完成且连续性受支持的 Source Turn、Decision Receipt 和
+  Relationship Event，确保来源权威可追溯。
+- **Narrative Tension 投影**：从 Consequence 和后续 Link 投影出叙事张力的当前状态
+  （未处理、已处理未解决、已解决、关系终止）。投影器保证幂等性和确定性。
+- **来源协调器**（`erii.core.consequence`）：统一的来源校验，确保引擎写入、MemoryPack
+  预检和重建都复用同一套判定逻辑，避免各路径判定漂移。只有已展示且连续性受支持的
+  最终 Agent 回复才能产生后果。
+- **Recall 私有边界**：Narrative Tension 投影仅对 `RecallAudience.AGENT_PRIVATE` 可见，
+  公共召回（`PUBLIC`）不包含后果数据。关系作用域严格隔离，只返回当前关系的后果。
+- **预算优先级**：开放的张力（`UNADDRESSED`、`ADDRESSED_UNRESOLVED`）在受限预算下
+  优先召回，已关闭的张力次之。
+- **生命周期删除证明**：删除 Relationship Event、Source Turn 或整个 Relationship 时，
+  级联删除相关的 Consequence 和 Tension Link。重建证明包含 `consequence_count`、
+  `tension_link_count`、`tension_count` 和 `tension_digest`，确保删除操作的完整性。
+- **双存储支持**：FileStorage 和 SQLiteStorage 均支持 consequence 和 tension link 的
+  append/list 操作。SQLite schema 升级至 v10，新增 `relationship_consequences` 和
+  `narrative_tension_links` 表。
+- **REST API 端点**：
+  - `POST /api/v1/relationship/consequences` - 记录关系后果
+  - `GET /api/v1/relationship/consequences` - 查询关系后果列表
+  - `POST /api/v1/relationship/narrative-tension-links` - 记录叙事张力链接
+  - `GET /api/v1/relationship/narrative-tension-links` - 查询张力链接列表
+- **MemoryPack 导出/导入**：MemoryPack 格式包含 `relationship_consequences` 和
+  `narrative_tension_links` 字段，支持完整的后果历史携带和跨存储迁移。
+- **Markdown 渲染**：Recall 结果的 Markdown 渲染包含 "Relationship Consequences and
+  Narrative Tensions" 章节，展示张力状态、效应、来源追踪和当前结果来源。
+
+### Changed
+
+- Python 源码版本从 `0.4.0` 升级为 `0.5.0a1`。
+- MemoryPack 格式保持 `0.4.0a8` 兼容，新增可选字段向后兼容旧导入器。
+
+### Compatibility
+
+- `0.5.0a1` 引入新的持久领域语义（Consequence 和 Narrative Tension），但通过可选字段
+  保持 MemoryPack 向后兼容。
+- SQLite schema 从 v9 升级至 v10，需要显式迁移。FileStorage 格式保持 v1 不变。
+- 旧版本的 MemoryPack（不含 consequence 字段）仍可被 `0.5.0a1` 正常导入。
+
+## [0.4.0] - 2026-08-04
+
+`0.4.0` 是已完成 rc1 收口后的 v0.4 稳定源码里程碑。它不是 GitHub Release、PyPI
+发布或已上传的正式分发包；`0.x` 继续按经过验证的 full commit SHA 复现，正式包发布
+流程留到 `1.0`。
 
 ## [0.4.0] - 2026-08-04
 

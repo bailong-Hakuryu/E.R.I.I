@@ -18,6 +18,7 @@ from erii.models.consolidation import (
     PersonaReflectionDecisionRecord,
     RelationshipProcessingRun,
 )
+from erii.models.consequence import NarrativeTensionLink, RelationshipConsequence
 from erii.models.node import MemoryNode
 from erii.models.persona import PersonaCompilationProposal, PersonaManifest
 from erii.models.relationship import RelationshipEvent, RelationshipProfile
@@ -44,6 +45,8 @@ class MemoryPack:
         relationship_events: Optional[List[RelationshipEvent]] = None,
         relationship_direct_event_ids: Optional[List[str]] = None,
         relationship_adjudications: Optional[List[AdjudicationRecord]] = None,
+        relationship_consequences: Optional[List[RelationshipConsequence]] = None,
+        narrative_tension_links: Optional[List[NarrativeTensionLink]] = None,
         persona_growth_proposals: Optional[List[PersonaGrowthProposal]] = None,
         persona_compilation_proposals: Optional[List[PersonaCompilationProposal]] = None,
         persona_manifests: Optional[List[PersonaManifest]] = None,
@@ -71,6 +74,8 @@ class MemoryPack:
             relationship_events: Append-only relationship history.
             relationship_direct_event_ids: Direct-event journal order for replay.
             relationship_adjudications: Candidate receipts and verified evidence.
+            relationship_consequences: Source-bound append-only consequences.
+            narrative_tension_links: Append-only sourced tension transitions.
             persona_growth_proposals: Pending and decided relationship-persona growth.
             persona_compilation_proposals: Reviewable Persona Compiler revisions.
             persona_manifests: Approved, immutable Persona Interpretation manifests.
@@ -89,6 +94,8 @@ class MemoryPack:
         self.relationship_events = relationship_events or []
         self.relationship_direct_event_ids = relationship_direct_event_ids or []
         self.relationship_adjudications = relationship_adjudications or []
+        self.relationship_consequences = relationship_consequences or []
+        self.narrative_tension_links = narrative_tension_links or []
         self.persona_growth_proposals = persona_growth_proposals or []
         self.persona_compilation_proposals = persona_compilation_proposals or []
         self.persona_manifests = persona_manifests or []
@@ -125,6 +132,12 @@ class MemoryPack:
             ),
             "relationship_adjudications": [
                 record.to_dict() for record in self.relationship_adjudications
+            ],
+            "relationship_consequences": [
+                record.to_dict() for record in self.relationship_consequences
+            ],
+            "narrative_tension_links": [
+                record.to_dict() for record in self.narrative_tension_links
             ],
             "persona_growth_proposals": [
                 proposal.to_dict() for proposal in self.persona_growth_proposals
@@ -164,6 +177,8 @@ class MemoryPack:
             [],
         )
         raw_adjudications = data.get("relationship_adjudications", [])
+        raw_consequences = data.get("relationship_consequences", [])
+        raw_tension_links = data.get("narrative_tension_links", [])
         raw_growth_proposals = data.get("persona_growth_proposals", [])
         raw_compilation_proposals = data.get("persona_compilation_proposals", [])
         raw_persona_manifests = data.get("persona_manifests", [])
@@ -199,6 +214,12 @@ class MemoryPack:
             ],
             relationship_adjudications=[
                 AdjudicationRecord.from_dict(item) for item in raw_adjudications
+            ],
+            relationship_consequences=[
+                RelationshipConsequence.from_dict(item) for item in raw_consequences
+            ],
+            narrative_tension_links=[
+                NarrativeTensionLink.from_dict(item) for item in raw_tension_links
             ],
             persona_growth_proposals=[
                 PersonaGrowthProposal.from_dict(item) for item in raw_growth_proposals

@@ -7,6 +7,7 @@ import json
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from erii.core.adjudication import list_complete_relationship_events
+from erii.core.consequence import NarrativeTensionProjector
 from erii.core.persona_context import (
     PersonaContextPlanner,
     active_persona_manifest,
@@ -28,12 +29,18 @@ from erii.models.archival import (
     archival_artifact_fingerprint,
 )
 from erii.models.node import MemoryNode, MemoryType, MemoryVisibility
+from erii.models.consequence import (
+    NarrativeTensionLink,
+    NarrativeTensionOutcome,
+    RelationshipConsequence,
+)
 from erii.models.provenance import ArtifactProvenanceState
 from erii.models.recall import (
     BudgetOmission,
     BudgetReport,
     EventRecallProjection,
     MemoryRecallProjection,
+    NarrativeTensionRecallProjection,
     PersonaDelivery,
     PersonaRecallContext,
     RecallAudience,
@@ -129,6 +136,7 @@ class RecallAssembler:
         relationship_context: Optional[RelationshipRecallContext] = None
         relationship_events: Sequence[RelationshipEvent] = ()
         event_projections: List[EventRecallProjection] = []
+        narrative_tension_projections: List[NarrativeTensionRecallProjection] = []
         if profile is None:
             relationship_status = RelationshipRecallStatus.UNINITIALIZED
             notices.append(
@@ -147,6 +155,10 @@ class RecallAssembler:
                 self.storage,
                 profile.relationship_id,
             )
+            if request.audience == RecallAudience.AGENT_PRIVATE:
+                narrative_tension_projections = self._project_narrative_tensions(
+                    profile.relationship_id
+                )
             snapshot = RelationshipProjector.project(
                 profile,
                 relationship_events,
@@ -500,6 +512,7 @@ class RecallAssembler:
             selected_memories,
             selected_events,
             selected_signals,
+            selected_narrative_tensions,
             budget_report,
         ) = self._apply_budget(
             persona_context,
@@ -508,6 +521,7 @@ class RecallAssembler:
             authority_selection.legacy_fallbacks,
             event_projections,
             signal_projections,
+            narrative_tension_projections,
             request.options.budget.max_cost,
         )
 
@@ -537,6 +551,7 @@ class RecallAssembler:
             memories=tuple(selected_memories),
             events=tuple(selected_events),
             signals=tuple(selected_signals),
+            narrative_tensions=tuple(selected_narrative_tensions),
             temporal_context=request.temporal_context,
             notices=tuple(notices),
             budget_report=budget_report,
@@ -587,6 +602,155 @@ class RecallAssembler:
             )
             for event in ranked
         ]
+
+    def _project_narrative_tensions(
+        self,
+        relationship_id: str,
+    ) -> List[NarrativeTensionRecallProjection]:
+        """Projects only the current relationship's append-only consequence journal."""
+        try:
+            consequences = self.storage.list_relationship_consequences(
+                relationship_id
+            )
+        except (AttributeError, NotImplementedError):
+            return []
+        try:
+            links = self.storage.list_narrative_tension_links(relationship_id)
+        except (AttributeError, NotImplementedError):
+            links = []
+
+        scoped_consequences = tuple(
+            item
+            for item in consequences
+            if item.relationship_id == relationship_id
+        )
+        scoped_links = tuple(
+            item for item in links if item.relationship_id == relationship_id
+        )
+        projected = NarrativeTensionProjector.project(
+            scoped_consequences,
+            scoped_links,
+        )
+        consequences_by_id: Dict[str, RelationshipConsequence] = {
+            item.consequence_id: item for item in scoped_consequences
+        }
+        links_by_id: Dict[str, NarrativeTensionLink] = {
+            item.link_id: item for item in scoped_links
+        }
+
+        results: List[NarrativeTensionRecallProjection] = []
+        open_outcomes = {
+            NarrativeTensionOutcome.UNADDRESSED,
+            NarrativeTensionOutcome.ADDRESSED_UNRESOLVED,
+        }
+        for tension in projected:
+            consequence = consequences_by_id[tension.consequence_id]
+            references = [
+                RecallSourceReference(
+                    source_id=tension.consequence_id,
+                    source_kind="relationship_consequence",
+                ),
+                RecallSourceReference(
+                    source_id=tension.tension_id,
+                    source_kind="narrative_tension",
+                ),
+                RecallSourceReference(
+                    source_id=tension.source_turn_id,
+                    source_kind="source_turn",
+                    source_revision=tension.source_revision,
+                ),
+                RecallSourceReference(
+                    source_id=tension.source_decision_id,
+                    source_kind="relationship_decision_receipt",
+                ),
+                RecallSourceReference(
+                    source_id=tension.source_event_id,
+                    source_kind="relationship_event",
+                ),
+                RecallSourceReference(
+                    source_id=tension.source_message_id,
+                    source_kind="turn_message",
+                ),
+            ]
+            for link_id in tension.link_ids:
+                link = links_by_id[link_id]
+                references.extend(
+                    (
+                        RecallSourceReference(
+                            source_id=link.link_id,
+                            source_kind="narrative_tension_link",
+                        ),
+                        RecallSourceReference(
+                            source_id=link.source_turn_id,
+                            source_kind="source_turn",
+                            source_revision=link.source_revision,
+                        ),
+                        RecallSourceReference(
+                            source_id=link.source_decision_id,
+                            source_kind="relationship_decision_receipt",
+                        ),
+                        RecallSourceReference(
+                            source_id=link.source_event_id,
+                            source_kind="relationship_event",
+                        ),
+                    )
+                )
+
+            latest_link = (
+                links_by_id[tension.latest_link_id]
+                if tension.latest_link_id is not None
+                else None
+            )
+            results.append(
+                NarrativeTensionRecallProjection(
+                    projection_id=f"narrative-tension:{tension.tension_id}",
+                    source_id=tension.consequence_id,
+                    source_kind="relationship_consequence",
+                    visibility=RecallAudience.AGENT_PRIVATE,
+                    selection_reason=(
+                        "open_relationship_consequence"
+                        if tension.outcome in open_outcomes
+                        else "current_relationship_consequence_outcome"
+                    ),
+                    source_references=tuple(references),
+                    relationship_id=tension.relationship_id,
+                    tension_id=tension.tension_id,
+                    consequence_id=tension.consequence_id,
+                    source_turn_id=tension.source_turn_id,
+                    source_revision=tension.source_revision,
+                    source_decision_id=tension.source_decision_id,
+                    source_event_id=tension.source_event_id,
+                    source_message_id=tension.source_message_id,
+                    effects=tuple(tension.effects),
+                    outcome=tension.outcome,
+                    summary=tension.summary,
+                    link_ids=tuple(tension.link_ids),
+                    outcome_source_link_id=(
+                        latest_link.link_id if latest_link is not None else None
+                    ),
+                    outcome_source_turn_id=(
+                        latest_link.source_turn_id
+                        if latest_link is not None
+                        else consequence.source_turn_id
+                    ),
+                    outcome_source_revision=(
+                        latest_link.source_revision
+                        if latest_link is not None
+                        else consequence.source_revision
+                    ),
+                    outcome_source_decision_id=(
+                        latest_link.source_decision_id
+                        if latest_link is not None
+                        else consequence.source_decision_id
+                    ),
+                    outcome_source_event_id=(
+                        latest_link.source_event_id
+                        if latest_link is not None
+                        else consequence.source_event_id
+                    ),
+                )
+            )
+        return results
 
     def _project_relationship_narratives(
         self,
@@ -743,6 +907,7 @@ class RecallAssembler:
         memory_fallbacks: Mapping[str, MemoryRecallProjection],
         events: Sequence[EventRecallProjection],
         signals: Sequence[RecallSignalProjection],
+        narrative_tensions: Sequence[NarrativeTensionRecallProjection],
         max_cost: int,
     ) -> Tuple[
         Optional[PersonaRecallContext],
@@ -750,6 +915,7 @@ class RecallAssembler:
         List[MemoryRecallProjection],
         List[EventRecallProjection],
         List[RecallSignalProjection],
+        List[NarrativeTensionRecallProjection],
         BudgetReport,
     ]:
         candidates: List[_Candidate] = []
@@ -793,6 +959,25 @@ class RecallAssembler:
                 priority = 4
             candidates.append(
                 _Candidate("signal", item, False, self._cost(item), priority)
+            )
+        for item in narrative_tensions:
+            priority = (
+                0
+                if item.outcome
+                in {
+                    NarrativeTensionOutcome.UNADDRESSED,
+                    NarrativeTensionOutcome.ADDRESSED_UNRESOLVED,
+                }
+                else 3
+            )
+            candidates.append(
+                _Candidate(
+                    "narrative_tension",
+                    item,
+                    False,
+                    self._cost(item),
+                    priority,
+                )
             )
 
         required_cost = sum(item.cost for item in candidates if item.required)
@@ -890,12 +1075,18 @@ class RecallAssembler:
         selected_signals = [
             item for item in signals if item.projection_id in selected_ids
         ]
+        selected_narrative_tensions = [
+            item
+            for item in narrative_tensions
+            if item.projection_id in selected_ids
+        ]
         return (
             persona,
             relationship,
             selected_memories,
             selected_events,
             selected_signals,
+            selected_narrative_tensions,
             BudgetReport(
                 estimator_id=getattr(
                     self.cost_estimator,

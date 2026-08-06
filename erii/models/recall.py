@@ -14,6 +14,11 @@ from typing import Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from erii.models.consequence import (
+    NarrativeTensionOutcome,
+    RelationshipConsequenceKind,
+)
+
 
 class RecallModel(BaseModel):
     """Strict, immutable base model with canonical JSON serialization."""
@@ -243,6 +248,78 @@ class EventRecallProjection(RecallProjection):
     occurred_at: Optional[str] = Field(default=None, min_length=1, max_length=256)
 
 
+class NarrativeTensionRecallProjection(RecallProjection):
+    """One source-complete current projection of a relationship consequence."""
+
+    relationship_id: str = Field(min_length=1, max_length=256)
+    tension_id: str = Field(min_length=1, max_length=256)
+    consequence_id: str = Field(min_length=1, max_length=256)
+    source_turn_id: str = Field(min_length=1, max_length=256)
+    source_revision: str = Field(min_length=1, max_length=128)
+    source_decision_id: str = Field(min_length=1, max_length=256)
+    source_event_id: str = Field(min_length=1, max_length=256)
+    source_message_id: str = Field(min_length=1, max_length=256)
+    effects: Tuple[RelationshipConsequenceKind, ...] = Field(min_length=1)
+    outcome: NarrativeTensionOutcome
+    summary: str = Field(min_length=1, max_length=200_000)
+    link_ids: Tuple[str, ...] = Field(default_factory=tuple)
+    outcome_source_link_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+    )
+    outcome_source_turn_id: str = Field(min_length=1, max_length=256)
+    outcome_source_revision: str = Field(min_length=1, max_length=128)
+    outcome_source_decision_id: str = Field(min_length=1, max_length=256)
+    outcome_source_event_id: str = Field(min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def identity_and_outcome_sources_are_consistent(
+        self,
+    ) -> "NarrativeTensionRecallProjection":
+        if self.visibility != RecallAudience.AGENT_PRIVATE:
+            raise ValueError("Narrative Tension recall is agent-private")
+        if self.source_id != self.consequence_id:
+            raise ValueError("tension source_id must identify its consequence")
+        if self.source_kind != "relationship_consequence":
+            raise ValueError(
+                "Narrative Tension recall source_kind must be relationship_consequence"
+            )
+        if len(self.effects) != len(set(self.effects)):
+            raise ValueError("tension effects must not contain duplicates")
+        if len(self.link_ids) != len(set(self.link_ids)):
+            raise ValueError("tension link_ids must not contain duplicates")
+
+        if self.outcome == NarrativeTensionOutcome.UNADDRESSED:
+            if self.link_ids or self.outcome_source_link_id is not None:
+                raise ValueError("an unaddressed tension cannot have outcome links")
+            initiating_source = (
+                self.source_turn_id,
+                self.source_revision,
+                self.source_decision_id,
+                self.source_event_id,
+            )
+            outcome_source = (
+                self.outcome_source_turn_id,
+                self.outcome_source_revision,
+                self.outcome_source_decision_id,
+                self.outcome_source_event_id,
+            )
+            if outcome_source != initiating_source:
+                raise ValueError(
+                    "an unaddressed tension outcome must retain its initiating source"
+                )
+        elif (
+            not self.link_ids
+            or self.outcome_source_link_id is None
+            or self.outcome_source_link_id != self.link_ids[-1]
+        ):
+            raise ValueError(
+                "an addressed tension outcome must identify its latest source link"
+            )
+        return self
+
+
 class RelationshipNarrativeProjection(RecallProjection):
     """Narrative relationship meaning safe for the selected audience."""
 
@@ -433,6 +510,9 @@ class RecallResult(RecallModel):
     memories: Tuple[MemoryRecallProjection, ...] = Field(default_factory=tuple)
     events: Tuple[EventRecallProjection, ...] = Field(default_factory=tuple)
     signals: Tuple[RecallSignalProjection, ...] = Field(default_factory=tuple)
+    narrative_tensions: Tuple[NarrativeTensionRecallProjection, ...] = Field(
+        default_factory=tuple
+    )
     temporal_context: RecallTemporalContext = Field(default_factory=RecallTemporalContext)
     notices: Tuple[RecallNotice, ...] = Field(default_factory=tuple)
     budget_report: BudgetReport
@@ -452,6 +532,7 @@ class RecallResult(RecallModel):
         projections.extend(self.memories)
         projections.extend(self.events)
         projections.extend(self.signals)
+        projections.extend(self.narrative_tensions)
 
         if self.audience == RecallAudience.PUBLIC:
             private_ids = [
@@ -470,10 +551,36 @@ class RecallResult(RecallModel):
                 raise ValueError("public recall cannot contain internal relationship state")
 
         if self.relationship_status == RelationshipRecallStatus.UNINITIALIZED:
-            if self.persona_context is not None or self.relationship_context is not None:
+            if (
+                self.persona_context is not None
+                or self.relationship_context is not None
+                or self.narrative_tensions
+            ):
                 raise ValueError(
                     "uninitialized recall cannot contain persona or relationship context"
                 )
         elif self.relationship_context is None:
             raise ValueError("initialized recall requires relationship_context")
+
+        if self.narrative_tensions:
+            if self.relationship_context is None:
+                raise ValueError(
+                    "Narrative Tension recall requires initialized relationship context"
+                )
+            expected_relationship_id = self.relationship_context.relationship_id
+            wrong_relationship_ids = sorted(
+                {
+                    item.relationship_id
+                    for item in self.narrative_tensions
+                    if item.relationship_id != expected_relationship_id
+                }
+            )
+            if wrong_relationship_ids:
+                raise ValueError(
+                    "Narrative Tension recall crossed relationship scope: "
+                    + ", ".join(wrong_relationship_ids)
+                )
+            tension_ids = [item.tension_id for item in self.narrative_tensions]
+            if len(tension_ids) != len(set(tension_ids)):
+                raise ValueError("Narrative Tension recall contains duplicate tensions")
         return self

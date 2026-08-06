@@ -44,6 +44,12 @@ from erii.models.consolidation import (
     RelationshipProcessingConflictError,
     RelationshipProcessingRun,
 )
+from erii.models.consequence import (
+    ConsequenceConflictError,
+    NarrativeTensionConflictError,
+    NarrativeTensionLink,
+    RelationshipConsequence,
+)
 from erii.models.provenance import ArtifactProvenanceState
 from erii.models.node import MemoryNode
 from erii.models.persona import (
@@ -166,6 +172,18 @@ class FileStorage(BaseStorage):
     def _get_relationship_adjudications_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
         directory = os.path.join(self._io_root_dir, "_relationship_adjudications")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.json")
+
+    def _get_relationship_consequences_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self._io_root_dir, "_relationship_consequences")
+        os.makedirs(directory, exist_ok=True)
+        return os.path.join(directory, f"{digest}.json")
+
+    def _get_narrative_tension_links_path(self, relationship_id: str) -> str:
+        digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
+        directory = os.path.join(self._io_root_dir, "_narrative_tension_links")
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.json")
 
@@ -1679,6 +1697,123 @@ class FileStorage(BaseStorage):
                 return []
             with open(file_path, "r", encoding="utf-8") as file_obj:
                 return [AdjudicationRecord.from_dict(item) for item in json.load(file_obj)]
+
+    @_turn_context_snapshot_writer
+    def append_relationship_consequence(
+        self,
+        consequence: RelationshipConsequence,
+    ) -> RelationshipConsequence:
+        """Appends an immutable consequence in relationship history order."""
+        with self._relationship_history_guard(consequence.relationship_id):
+            registry = self._load_identity_registry()
+            if consequence.relationship_id not in registry["relationships"]:
+                raise ValueError("consequence references an unknown relationship")
+
+            file_path = self._get_relationship_consequences_path(
+                consequence.relationship_id
+            )
+            raw_consequences: List[Dict[str, Any]] = []
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as file_obj:
+                    raw_consequences = json.load(file_obj)
+
+            for raw_consequence in raw_consequences:
+                if raw_consequence.get("consequence_id") != consequence.consequence_id:
+                    continue
+                existing = RelationshipConsequence.from_dict(raw_consequence)
+                if existing.same_payload_as(consequence):
+                    return existing
+                raise ConsequenceConflictError(
+                    f"consequence_id {consequence.consequence_id!r} "
+                    "already has different content"
+                )
+
+            raw_consequences.append(consequence.to_dict())
+            self._write_json_atomic(file_path, raw_consequences)
+            return consequence
+
+    def list_relationship_consequences(
+        self,
+        relationship_id: str,
+    ) -> List[RelationshipConsequence]:
+        """Loads relationship consequences in durable append order."""
+        with self._relationship_history_guard(relationship_id):
+            file_path = self._get_relationship_consequences_path(relationship_id)
+            if not os.path.exists(file_path):
+                return []
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                return [
+                    RelationshipConsequence.from_dict(item)
+                    for item in json.load(file_obj)
+                ]
+
+    @_turn_context_snapshot_writer
+    def append_narrative_tension_link(
+        self,
+        link: NarrativeTensionLink,
+    ) -> NarrativeTensionLink:
+        """Appends one source-bound link to an existing relationship tension."""
+        with self._relationship_history_guard(link.relationship_id):
+            registry = self._load_identity_registry()
+            if link.relationship_id not in registry["relationships"]:
+                raise ValueError("Narrative Tension link references an unknown relationship")
+
+            link_path = self._get_narrative_tension_links_path(link.relationship_id)
+            raw_links: List[Dict[str, Any]] = []
+            if os.path.exists(link_path):
+                with open(link_path, "r", encoding="utf-8") as file_obj:
+                    raw_links = json.load(file_obj)
+
+            for raw_link in raw_links:
+                existing = NarrativeTensionLink.from_dict(raw_link)
+                same_source = (
+                    existing.tension_id == link.tension_id
+                    and existing.source_event_id == link.source_event_id
+                )
+                if existing.link_id != link.link_id and not same_source:
+                    continue
+                if existing.same_payload_as(link):
+                    return existing
+                raise NarrativeTensionConflictError(
+                    "Narrative Tension link identity already has different content"
+                )
+
+            consequence_path = self._get_relationship_consequences_path(
+                link.relationship_id
+            )
+            raw_consequences: List[Dict[str, Any]] = []
+            if os.path.exists(consequence_path):
+                with open(consequence_path, "r", encoding="utf-8") as file_obj:
+                    raw_consequences = json.load(file_obj)
+            consequence_exists = any(
+                consequence.relationship_id == link.relationship_id
+                and consequence.consequence_id == link.consequence_id
+                and consequence.tension_id == link.tension_id
+                for consequence in (
+                    RelationshipConsequence.from_dict(item)
+                    for item in raw_consequences
+                )
+            )
+            if not consequence_exists:
+                raise NarrativeTensionConflictError(
+                    "Narrative Tension link references an unknown consequence or tension"
+                )
+
+            raw_links.append(link.to_dict())
+            self._write_json_atomic(link_path, raw_links)
+            return link
+
+    def list_narrative_tension_links(
+        self,
+        relationship_id: str,
+    ) -> List[NarrativeTensionLink]:
+        """Loads Narrative Tension links in durable append order."""
+        with self._relationship_history_guard(relationship_id):
+            file_path = self._get_narrative_tension_links_path(relationship_id)
+            if not os.path.exists(file_path):
+                return []
+            with open(file_path, "r", encoding="utf-8") as file_obj:
+                return [NarrativeTensionLink.from_dict(item) for item in json.load(file_obj)]
 
     def _load_relationship_processing_state(
         self,

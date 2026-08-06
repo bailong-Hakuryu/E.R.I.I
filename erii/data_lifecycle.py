@@ -88,6 +88,8 @@ _LEGACY_TOP_LEVEL_DIRECTORIES = frozenset(
     {
         "_relationship_events",
         "_relationship_adjudications",
+        "_relationship_consequences",
+        "_narrative_tension_links",
         "_persona_growth",
         "_turn_records",
         "_reply_attempts",

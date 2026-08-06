@@ -172,6 +172,10 @@ class RelationshipRebuildProof:
     consolidation_digest: str
     episode_count: int
     chapter_count: int
+    consequence_count: int
+    tension_link_count: int
+    tension_count: int
+    tension_digest: str
 
     def __post_init__(self) -> None:
         _required_text(self.relationship_id, "relationship_id")
@@ -179,6 +183,9 @@ class RelationshipRebuildProof:
             ("event_count", self.event_count),
             ("episode_count", self.episode_count),
             ("chapter_count", self.chapter_count),
+            ("consequence_count", self.consequence_count),
+            ("tension_link_count", self.tension_link_count),
+            ("tension_count", self.tension_count),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{label} must be a non-negative integer")
@@ -186,6 +193,7 @@ class RelationshipRebuildProof:
             ("state_digest", self.state_digest),
             ("belief_digest", self.belief_digest),
             ("consolidation_digest", self.consolidation_digest),
+            ("tension_digest", self.tension_digest),
         ):
             if (
                 not isinstance(value, str)
@@ -203,6 +211,10 @@ class RelationshipRebuildProof:
             "consolidation_digest": self.consolidation_digest,
             "episode_count": self.episode_count,
             "chapter_count": self.chapter_count,
+            "consequence_count": self.consequence_count,
+            "tension_link_count": self.tension_link_count,
+            "tension_count": self.tension_count,
+            "tension_digest": self.tension_digest,
         }
 
 

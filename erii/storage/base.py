@@ -34,6 +34,10 @@ from erii.models.consolidation import (
     PersonaReflectionRecord,
     RelationshipProcessingRun,
 )
+from erii.models.consequence import (
+    NarrativeTensionLink,
+    RelationshipConsequence,
+)
 from erii.storage.archival import AtomicArchivalStoreV1
 from erii.storage.turn_context import TurnContextSourceSnapshot
 
@@ -304,6 +308,42 @@ class BaseStorage(ABC):
     ) -> List[AdjudicationRecord]:
         """Returns candidate decision records in commit order."""
         raise NotImplementedError("storage adapter does not support relationship adjudication")
+
+    def append_relationship_consequence(
+        self,
+        consequence: RelationshipConsequence,
+    ) -> RelationshipConsequence:
+        """Appends one source-bound relationship consequence idempotently."""
+        raise NotImplementedError(
+            "storage adapter does not support relationship consequences"
+        )
+
+    def list_relationship_consequences(
+        self,
+        relationship_id: str,
+    ) -> List[RelationshipConsequence]:
+        """Returns append-only consequences for exactly one relationship."""
+        raise NotImplementedError(
+            "storage adapter does not support relationship consequences"
+        )
+
+    def append_narrative_tension_link(
+        self,
+        link: NarrativeTensionLink,
+    ) -> NarrativeTensionLink:
+        """Appends one sourced Narrative Tension outcome link idempotently."""
+        raise NotImplementedError(
+            "storage adapter does not support Narrative Tension links"
+        )
+
+    def list_narrative_tension_links(
+        self,
+        relationship_id: str,
+    ) -> List[NarrativeTensionLink]:
+        """Returns append-only Narrative Tension links for one relationship."""
+        raise NotImplementedError(
+            "storage adapter does not support Narrative Tension links"
+        )
 
     def save_persona_growth_proposal(
         self,

@@ -7,6 +7,7 @@ from typing import Callable, List, Optional
 from erii.models.recall import (
     EventRecallProjection,
     MemoryRecallProjection,
+    NarrativeTensionRecallProjection,
     PersonaRecallProjection,
     RecallAudience,
     RecallArtifactProvenance,
@@ -90,6 +91,33 @@ class MarkdownRecallRenderer:
             f"{item.summary}{timing}"
         )
 
+    @staticmethod
+    def _narrative_tension_line(
+        item: NarrativeTensionRecallProjection,
+        index: int,
+    ) -> str:
+        effects = ", ".join(effect.value for effect in item.effects)
+        initiating_source = (
+            f"consequence={item.consequence_id}; "
+            f"tension={item.tension_id}; "
+            f"turn={item.source_turn_id}@{item.source_revision}; "
+            f"decision={item.source_decision_id}; event={item.source_event_id}; "
+            f"message={item.source_message_id}"
+        )
+        if item.outcome_source_link_id is None:
+            outcome_source = "initiating consequence"
+        else:
+            outcome_source = (
+                f"link={item.outcome_source_link_id}; "
+                f"turn={item.outcome_source_turn_id}@{item.outcome_source_revision}; "
+                f"decision={item.outcome_source_decision_id}; "
+                f"event={item.outcome_source_event_id}"
+            )
+        return (
+            f"{index}. [{item.outcome.value}; effects: {effects}] {item.summary} "
+            f"(source: {initiating_source}; current outcome source: {outcome_source})"
+        )
+
     def render(self, result: RecallResult) -> str:
         """Renders a complete result, refusing mismatch or output truncation."""
 
@@ -127,6 +155,16 @@ class MarkdownRecallRenderer:
                     for index, item in enumerate(relationship_items, 1)
                 ]
                 sections.append("# Relationship Context\n" + "\n".join(lines))
+
+        if result.narrative_tensions:
+            lines = [
+                self._narrative_tension_line(item, index)
+                for index, item in enumerate(result.narrative_tensions, 1)
+            ]
+            sections.append(
+                "# Relationship Consequences and Narrative Tensions\n"
+                + "\n".join(lines)
+            )
 
         verified_memories = tuple(
             item

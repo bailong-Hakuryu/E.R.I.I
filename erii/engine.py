@@ -32,6 +32,10 @@ from erii.core.adjudication import (
     relationship_occurrence_fingerprint,
 )
 from erii.core.consolidation import RelationshipConsolidator
+from erii.core.consequence import (
+    NarrativeTensionProjector,
+    RelationshipConsequenceCoordinator,
+)
 from erii.core.continuity import (
     ContinuityEvaluationCapabilityError,
     ContinuityEvaluationCoordinator,
@@ -102,6 +106,13 @@ from erii.models.consolidation import (
     RelationshipProcessingOutcome,
     RelationshipProcessingRun,
     RelationshipProcessingStatus,
+)
+from erii.models.consequence import (
+    NarrativeTensionLink,
+    NarrativeTensionOutcome,
+    NarrativeTensionProjection,
+    RelationshipConsequence,
+    RelationshipConsequenceKind,
 )
 from erii.models.continuity import (
     ContinuityEvaluationRequest,
@@ -267,6 +278,9 @@ class ERIIEngine:
             dynamic_budget=self.config.dynamic_budget,
         )
         self.relationship_adjudicator = RelationshipAdjudicator(self.storage)
+        self.relationship_consequence_coordinator = (
+            RelationshipConsequenceCoordinator(self.storage)
+        )
         self.continuity_evidence_resolver = ContinuityEvidenceResolver(self.storage)
         self.turn_ledger = TurnLedger(
             self.storage,
@@ -2105,6 +2119,165 @@ class ERIIEngine:
             )
         return self.storage.list_relationship_adjudications(profile.relationship_id)
 
+    def record_relationship_consequence(
+        self,
+        agent_id: str,
+        user_id: str,
+        source_turn_id: str,
+        source_decision_id: str,
+        source_event_id: str,
+        effects: Sequence[Union[RelationshipConsequenceKind, str]],
+        summary: str,
+        *,
+        consequence_id: Optional[str] = None,
+        tension_id: Optional[str] = None,
+        recorded_at: Optional[str] = None,
+    ) -> RelationshipConsequence:
+        """Records one consequence of an exact supported, shown Agent choice."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "recording a relationship consequence",
+        )
+        return self.relationship_consequence_coordinator.record_consequence(
+            profile.relationship_id,
+            source_turn_id=source_turn_id,
+            source_decision_id=source_decision_id,
+            source_event_id=source_event_id,
+            effects=effects,
+            summary=summary,
+            consequence_id=consequence_id,
+            tension_id=tension_id,
+            recorded_at=recorded_at,
+        )
+
+    def append_relationship_consequence(
+        self,
+        agent_id: str,
+        user_id: str,
+        consequence: Union[RelationshipConsequence, Mapping[str, Any]],
+    ) -> RelationshipConsequence:
+        """Validates and appends a pre-built immutable consequence record."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "appending a relationship consequence",
+        )
+        validated = (
+            consequence
+            if isinstance(consequence, RelationshipConsequence)
+            else RelationshipConsequence.from_dict(consequence)
+        )
+        return self.relationship_consequence_coordinator.append_consequence(
+            profile.relationship_id,
+            validated,
+        )
+
+    def list_relationship_consequences(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> List[RelationshipConsequence]:
+        """Returns source-bound consequences for one isolated relationship."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "reading relationship consequences",
+        )
+        return list(
+            self.relationship_consequence_coordinator.list_consequences(
+                profile.relationship_id
+            )
+        )
+
+    def record_narrative_tension_link(
+        self,
+        agent_id: str,
+        user_id: str,
+        consequence_id: str,
+        source_turn_id: str,
+        source_decision_id: str,
+        source_event_id: str,
+        outcome: Union[NarrativeTensionOutcome, str],
+        summary: str,
+        *,
+        link_id: Optional[str] = None,
+        recorded_at: Optional[str] = None,
+    ) -> NarrativeTensionLink:
+        """Links one later accepted event to a consequence's tension."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "recording a Narrative Tension link",
+        )
+        return self.relationship_consequence_coordinator.record_tension_link(
+            profile.relationship_id,
+            consequence_id=consequence_id,
+            source_turn_id=source_turn_id,
+            source_decision_id=source_decision_id,
+            source_event_id=source_event_id,
+            outcome=outcome,
+            summary=summary,
+            link_id=link_id,
+            recorded_at=recorded_at,
+        )
+
+    def append_narrative_tension_link(
+        self,
+        agent_id: str,
+        user_id: str,
+        link: Union[NarrativeTensionLink, Mapping[str, Any]],
+    ) -> NarrativeTensionLink:
+        """Validates and appends a pre-built immutable tension link."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "appending a Narrative Tension link",
+        )
+        validated = (
+            link
+            if isinstance(link, NarrativeTensionLink)
+            else NarrativeTensionLink.from_dict(link)
+        )
+        return self.relationship_consequence_coordinator.append_tension_link(
+            profile.relationship_id,
+            validated,
+        )
+
+    def list_narrative_tension_links(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> List[NarrativeTensionLink]:
+        """Returns append-only tension links for one isolated relationship."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "reading Narrative Tension links",
+        )
+        return list(
+            self.relationship_consequence_coordinator.list_links(
+                profile.relationship_id
+            )
+        )
+
+    def list_narrative_tensions(
+        self,
+        agent_id: str,
+        user_id: str,
+    ) -> List[NarrativeTensionProjection]:
+        """Deterministically projects current tension state from both journals."""
+        profile = self._require_relationship(
+            agent_id,
+            user_id,
+            "projecting Narrative Tensions",
+        )
+        return list(
+            self.relationship_consequence_coordinator.project(
+                profile.relationship_id
+            )
+        )
+
     def propose_persona_growth(
         self,
         agent_id: str,
@@ -2382,6 +2555,8 @@ class ERIIEngine:
         relationship_events = []
         relationship_direct_event_ids = []
         relationship_adjudications = []
+        relationship_consequences = []
+        narrative_tension_links = []
         persona_growth_proposals = []
         persona_compilation_proposals = []
         persona_manifests = []
@@ -2413,6 +2588,19 @@ class ERIIEngine:
                 try:
                     relationship_adjudications = (
                         self.storage.list_relationship_adjudications(
+                            relationship.relationship_id
+                        )
+                    )
+                except NotImplementedError:
+                    pass
+                try:
+                    relationship_consequences = (
+                        self.storage.list_relationship_consequences(
+                            relationship.relationship_id
+                        )
+                    )
+                    narrative_tension_links = (
+                        self.storage.list_narrative_tension_links(
                             relationship.relationship_id
                         )
                     )
@@ -2488,6 +2676,8 @@ class ERIIEngine:
             relationship_events=relationship_events,
             relationship_direct_event_ids=relationship_direct_event_ids,
             relationship_adjudications=relationship_adjudications,
+            relationship_consequences=relationship_consequences,
+            narrative_tension_links=narrative_tension_links,
             persona_growth_proposals=persona_growth_proposals,
             persona_compilation_proposals=persona_compilation_proposals,
             persona_manifests=persona_manifests,
@@ -2503,6 +2693,7 @@ class ERIIEngine:
             clean_user,
             relationship,
         )
+        self._validate_relationship_consequence_pack(pack)
 
         if export_path:
             with open(export_path, "w", encoding="utf-8") as f:
@@ -2625,6 +2816,8 @@ class ERIIEngine:
             or pack.turn_records
             or pack.relationship_processing_runs
             or pack.persona_reflection_decisions
+            or pack.relationship_consequences
+            or pack.narrative_tension_links
             or any(
                 node.source_turn_id is not None
                 or node.source_archival_id is not None
@@ -2643,6 +2836,7 @@ class ERIIEngine:
             )
         self._validate_turn_pack(pack, clean_agent, clean_user)
         validate_memory_pack_archival_evidence(pack)
+        self._validate_relationship_consequence_pack(pack)
         existing_target_profile = self.storage.get_relationship(
             clean_agent,
             clean_user,
@@ -2670,6 +2864,10 @@ class ERIIEngine:
             existing_target_profile,
         )
         self._validate_relationship_adjudication_import_conflicts(
+            pack,
+            existing_target_profile,
+        )
+        self._validate_relationship_consequence_import_conflicts(
             pack,
             existing_target_profile,
         )
@@ -3075,6 +3273,31 @@ class ERIIEngine:
                 imported_records,
             )
 
+            if (
+                pack.relationship_consequences
+                or pack.narrative_tension_links
+            ) and source_relationship_id != target_relationship_id:
+                raise ValueError(
+                    "MemoryPack relationship consequences require exact "
+                    "relationship restore"
+                )
+            for consequence in pack.relationship_consequences:
+                stored_consequence = (
+                    self.storage.append_relationship_consequence(consequence)
+                )
+                if not stored_consequence.same_payload_as(consequence):
+                    raise ValueError(
+                        "persisted relationship consequence differs from "
+                        "the imported journal entry"
+                    )
+            for link in pack.narrative_tension_links:
+                stored_link = self.storage.append_narrative_tension_link(link)
+                if not stored_link.same_payload_as(link):
+                    raise ValueError(
+                        "persisted Narrative Tension link differs from "
+                        "the imported journal entry"
+                    )
+
             for source_proposal in pack.persona_growth_proposals:
                 imported_proposal = (
                     self._remap_persona_growth_proposal_for_import(
@@ -3372,6 +3595,150 @@ class ERIIEngine:
             raise TurnConflictError(
                 f"turn_id {incoming.turn_id!r} already has different content"
             )
+
+    @staticmethod
+    def _validate_relationship_consequence_pack(pack: MemoryPack) -> None:
+        """Preflights the complete consequence causal graph without writes."""
+        if not (
+            pack.relationship_consequences
+            or pack.narrative_tension_links
+        ):
+            return
+        if pack.relationship is None:
+            raise ValueError(
+                "MemoryPack relationship consequences require a relationship profile"
+            )
+        relationship_id = pack.relationship.relationship_id
+        RelationshipConsequenceCoordinator.validate_journal(
+            relationship_id,
+            pack.relationship_consequences,
+            pack.narrative_tension_links,
+            pack.turn_records,
+            pack.relationship_adjudications,
+        )
+
+        accepted_events: Dict[str, RelationshipEvent] = {}
+        for record in pack.relationship_adjudications:
+            for event in record.events:
+                existing = accepted_events.get(event.event_id)
+                if existing is not None and not existing.same_payload_as(event):
+                    raise ValueError(
+                        "MemoryPack consequence sources contain conflicting "
+                        "accepted event identities"
+                    )
+                accepted_events[event.event_id] = event
+        complete_events: Dict[str, RelationshipEvent] = {}
+        for event in pack.relationship_events:
+            existing = complete_events.get(event.event_id)
+            if existing is not None and not existing.same_payload_as(event):
+                raise ValueError(
+                    "MemoryPack relationship history contains conflicting "
+                    "event identities"
+                )
+            complete_events[event.event_id] = event
+        source_event_ids = {
+            item.source_event_id for item in pack.relationship_consequences
+        } | {
+            item.source_event_id for item in pack.narrative_tension_links
+        }
+        for event_id in source_event_ids:
+            accepted = accepted_events.get(event_id)
+            complete = complete_events.get(event_id)
+            if accepted is None or complete is None:
+                raise ValueError(
+                    "MemoryPack relationship consequence source event is missing "
+                    "from accepted complete history"
+                )
+            if not accepted.same_payload_as(complete):
+                raise ValueError(
+                    "MemoryPack relationship consequence source event conflicts "
+                    "with complete history"
+                )
+
+    def _validate_relationship_consequence_import_conflicts(
+        self,
+        pack: MemoryPack,
+        existing_profile: Optional[RelationshipProfile],
+    ) -> None:
+        """Preflights target consequence identities before any import writes."""
+        if not (
+            pack.relationship_consequences
+            or pack.narrative_tension_links
+        ) or existing_profile is None:
+            return
+        if (
+            pack.relationship is None
+            or pack.relationship.relationship_id
+            != existing_profile.relationship_id
+        ):
+            raise ValueError(
+                "MemoryPack relationship consequences require exact "
+                "relationship restore"
+            )
+        relationship_id = existing_profile.relationship_id
+        try:
+            existing_consequences = (
+                self.storage.list_relationship_consequences(relationship_id)
+            )
+            existing_links = self.storage.list_narrative_tension_links(
+                relationship_id
+            )
+        except NotImplementedError as exc:
+            raise ValueError(
+                "target storage cannot preflight relationship consequences"
+            ) from exc
+
+        consequence_by_id: Dict[str, RelationshipConsequence] = {}
+        consequence_by_source: Dict[
+            Tuple[str, str], RelationshipConsequence
+        ] = {}
+        consequence_by_tension: Dict[str, RelationshipConsequence] = {}
+        for consequence in [
+            *existing_consequences,
+            *pack.relationship_consequences,
+        ]:
+            identities = (
+                (consequence_by_id, consequence.consequence_id),
+                (
+                    consequence_by_source,
+                    (
+                        consequence.source_decision_id,
+                        consequence.source_event_id,
+                    ),
+                ),
+                (consequence_by_tension, consequence.tension_id),
+            )
+            for registry, identity in identities:
+                existing = registry.get(identity)
+                if existing is not None and not existing.same_payload_as(
+                    consequence
+                ):
+                    raise ValueError(
+                        "MemoryPack relationship consequence conflicts with "
+                        "the target journal"
+                    )
+                registry[identity] = consequence
+
+        link_by_id: Dict[str, NarrativeTensionLink] = {}
+        link_by_source: Dict[Tuple[str, str], NarrativeTensionLink] = {}
+        for link in [*existing_links, *pack.narrative_tension_links]:
+            identities = (
+                (link_by_id, link.link_id),
+                (link_by_source, (link.tension_id, link.source_event_id)),
+            )
+            for registry, identity in identities:
+                existing = registry.get(identity)
+                if existing is not None and not existing.same_payload_as(link):
+                    raise ValueError(
+                        "MemoryPack Narrative Tension link conflicts with "
+                        "the target journal"
+                    )
+                registry[identity] = link
+
+        NarrativeTensionProjector.project(
+            (*existing_consequences, *pack.relationship_consequences),
+            (*existing_links, *pack.narrative_tension_links),
+        )
 
     def _validate_timeline_import_conflicts(
         self,

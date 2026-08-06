@@ -26,16 +26,18 @@ from erii.errors import (
     LifecyclePlanError,
     StorageIntegrityError,
 )
+from erii.storage.sqlite_storage import SQLiteStorage
 from erii.storage.timeline_order import timeline_timestamp_sort_key
 
 
 _SQLITE_HEADER = b"SQLite format 3\x00"
-_SOURCE_SCHEMA_VERSION = 6
+_SOURCE_SCHEMA_VERSIONS = frozenset({6, 9})
 _TARGET_SCHEMA_VERSION = int(SQLITE_FORMAT.current_version)
 _MIGRATION_NAMES = {
     7: "bounded-recent-timeline-alpha7",
     8: "semantic-timeline-order-alpha7",
     9: "utc-stable-timeline-order-alpha7",
+    10: "relationship-consequence-journal-alpha1",
 }
 
 
@@ -343,6 +345,160 @@ def _migrate_stable_timeline_order_v9(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_relationship_consequence_v10(
+    connection: sqlite3.Connection,
+) -> None:
+    """Reuses the runtime schema migration for the staging copy."""
+    cursor = connection.cursor()
+    try:
+        SQLiteStorage._migrate_relationship_consequence_v10(cursor)
+    finally:
+        cursor.close()
+
+
+def _index_columns(
+    connection: sqlite3.Connection,
+    index_name: str,
+) -> tuple[str, ...]:
+    quoted_name = _quoted_identifier(index_name)
+    return tuple(
+        str(row[2])
+        for row in connection.execute(f"PRAGMA index_info({quoted_name})")
+    )
+
+
+def _validate_relationship_consequence_schema(
+    connection: sqlite3.Connection,
+) -> None:
+    """Validates the complete v10 journal schema, not only its version row."""
+    expected_columns = {
+        "relationship_consequences": (
+            "sequence",
+            "consequence_id",
+            "relationship_id",
+            "tension_id",
+            "source_decision_id",
+            "source_event_id",
+            "data",
+            "recorded_at",
+        ),
+        "narrative_tension_links": (
+            "sequence",
+            "link_id",
+            "relationship_id",
+            "tension_id",
+            "consequence_id",
+            "source_decision_id",
+            "source_event_id",
+            "data",
+            "recorded_at",
+        ),
+    }
+    for table_name, columns in expected_columns.items():
+        quoted_name = _quoted_identifier(table_name)
+        actual = tuple(
+            str(row[1])
+            for row in connection.execute(f"PRAGMA table_info({quoted_name})")
+        )
+        if actual != columns:
+            raise StorageIntegrityError(
+                f"SQLite migration did not install the {table_name} table"
+            )
+
+    expected_indexes = {
+        "idx_relationship_consequences_order": (
+            "relationship_id",
+            "sequence",
+        ),
+        "idx_relationship_consequences_tension": (
+            "relationship_id",
+            "tension_id",
+            "sequence",
+        ),
+        "idx_narrative_tension_links_order": (
+            "relationship_id",
+            "sequence",
+        ),
+        "idx_narrative_tension_links_tension": (
+            "relationship_id",
+            "tension_id",
+            "sequence",
+        ),
+        "idx_narrative_tension_links_consequence": (
+            "consequence_id",
+            "sequence",
+        ),
+    }
+    for index_name, columns in expected_indexes.items():
+        if _index_columns(connection, index_name) != columns:
+            raise StorageIntegrityError(
+                f"SQLite migration did not install the {index_name} index"
+            )
+
+    expected_unique_indexes = {
+        "relationship_consequences": {
+            ("consequence_id",),
+            (
+                "relationship_id",
+                "source_decision_id",
+                "source_event_id",
+            ),
+        },
+        "narrative_tension_links": {
+            ("link_id",),
+            ("tension_id", "source_decision_id", "source_event_id"),
+        },
+    }
+    for table_name, expected in expected_unique_indexes.items():
+        quoted_name = _quoted_identifier(table_name)
+        actual = {
+            _index_columns(connection, str(row[1]))
+            for row in connection.execute(f"PRAGMA index_list({quoted_name})")
+            if int(row[2]) == 1
+        }
+        if not expected.issubset(actual):
+            raise StorageIntegrityError(
+                f"SQLite migration did not install {table_name} identity constraints"
+            )
+
+    expected_foreign_keys = {
+        "relationship_consequences": {
+            (
+                "relationships",
+                "relationship_id",
+                "relationship_id",
+                "CASCADE",
+            ),
+        },
+        "narrative_tension_links": {
+            (
+                "relationships",
+                "relationship_id",
+                "relationship_id",
+                "CASCADE",
+            ),
+            (
+                "relationship_consequences",
+                "consequence_id",
+                "consequence_id",
+                "CASCADE",
+            ),
+        },
+    }
+    for table_name, expected in expected_foreign_keys.items():
+        quoted_name = _quoted_identifier(table_name)
+        actual = {
+            (str(row[2]), str(row[3]), str(row[4]), str(row[6]))
+            for row in connection.execute(
+                f"PRAGMA foreign_key_list({quoted_name})"
+            )
+        }
+        if actual != expected:
+            raise StorageIntegrityError(
+                f"SQLite migration did not install {table_name} foreign keys"
+            )
+
+
 def _validate_upgraded_connection(connection: sqlite3.Connection) -> None:
     if _schema_version(connection) != _TARGET_SCHEMA_VERSION:
         raise StorageIntegrityError("SQLite migration did not reach the current schema")
@@ -358,6 +514,14 @@ def _validate_upgraded_connection(connection: sqlite3.Connection) -> None:
     ).fetchone()
     if index_sql is None or "sort_key" not in str(index_sql[0]):
         raise StorageIntegrityError("SQLite migration did not install the current index")
+    migration_name = connection.execute(
+        "SELECT name FROM schema_migrations WHERE version = 10"
+    ).fetchone()
+    if migration_name is None or str(migration_name[0]) != _MIGRATION_NAMES[10]:
+        raise StorageIntegrityError(
+            "SQLite migration did not record the v10 schema identity"
+        )
+    _validate_relationship_consequence_schema(connection)
     _semantic_digest_from_connection(connection)
 
 
@@ -366,9 +530,11 @@ def _migrate_loaded_connection(
 ) -> tuple[bytes, _SQLiteUpgradeResult]:
     connection.row_factory = sqlite3.Row
     try:
-        if _schema_version(connection) != _SOURCE_SCHEMA_VERSION:
+        source_version = _schema_version(connection)
+        if source_version not in _SOURCE_SCHEMA_VERSIONS:
             raise LifecyclePlanError(
-                "SQLite staging migration supports only schema 6 to schema 9"
+                "SQLite staging migration supports only schema 6 or 9 "
+                "sources to schema 10"
             )
         if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
             raise StorageIntegrityError("SQLite upgrade source failed integrity check")
@@ -382,7 +548,10 @@ def _migrate_loaded_connection(
             (7, _migrate_recent_timeline_index_v7),
             (8, _migrate_semantic_timeline_order_v8),
             (9, _migrate_stable_timeline_order_v9),
+            (10, _migrate_relationship_consequence_v10),
         ):
+            if version <= source_version:
+                continue
             migrate(connection)
             connection.execute(
                 "INSERT INTO schema_migrations (version, name, applied_at) "
@@ -403,7 +572,7 @@ def _migrate_loaded_connection(
             connection.rollback()
         raise
     return migrated, _SQLiteUpgradeResult(
-        source_version=_SOURCE_SCHEMA_VERSION,
+        source_version=source_version,
         target_version=_TARGET_SCHEMA_VERSION,
         semantic_digest=semantic_digest,
         byte_size=len(migrated),
@@ -411,7 +580,7 @@ def _migrate_loaded_connection(
 
 
 def _migrate_sqlite_bytes(source_bytes: bytes) -> tuple[bytes, _SQLiteUpgradeResult]:
-    """Migrates one rollback-journal schema-6 image entirely in memory."""
+    """Migrates one supported rollback-journal image entirely in memory."""
     if not isinstance(source_bytes, bytes) or not source_bytes.startswith(_SQLITE_HEADER):
         raise StorageIntegrityError("SQLite upgrade source has an invalid header")
     with closing(sqlite3.connect(":memory:")) as connection:
@@ -462,7 +631,7 @@ def _read_stable_source(path: Path) -> bytes:
 
 
 def _preview_sqlite_staging_upgrade(source_path: str | os.PathLike[str]) -> _SQLiteUpgradeResult:
-    """Returns the v9 semantic identity without writing any filesystem path."""
+    """Returns the current semantic identity without writing any path."""
     source = Path(source_path)
     source_bytes = _read_stable_source(source)
     _migrated, result = _migrate_source_path(source)
@@ -508,7 +677,7 @@ def _migrate_sqlite_staging_copy(
     *,
     _write_hook: Callable[[Path], None] | None = None,
 ) -> _SQLiteUpgradeResult:
-    """Creates or verifies a schema-9 staging copy while preserving its source."""
+    """Creates or verifies a current staging copy while preserving its source."""
     source = Path(source_path)
     staging = Path(staging_path)
     if source.resolve(strict=False) == staging.resolve(strict=False):

@@ -19,6 +19,7 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from erii.core.adjudication import list_complete_relationship_events
 from erii.core.consolidation import RelationshipConsolidator
+from erii.core.consequence import NarrativeTensionProjector
 from erii.core.relationship import RelationshipProjector
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.lifecycle_erasure_contracts import (
@@ -32,6 +33,11 @@ from erii.lifecycle_erasure_contracts import (
     RelationshipRebuildProof,
     _INVENTORY_DISPOSITIONS,
     _required_text,
+)
+from erii.models.consequence import (
+    NarrativeTensionLink,
+    NarrativeTensionProjection,
+    RelationshipConsequence,
 )
 from erii.models.relationship import RelationshipEvent
 from erii.models.turn import TurnRecord
@@ -144,6 +150,160 @@ def _unlink_counted(path: Path, deleted: Counter[str], kind: str) -> None:
         deleted[kind] += 1
 
 
+def _file_consequence_journal_paths(
+    root: Path,
+    relationship_id: str,
+) -> Tuple[Path, Path]:
+    return (
+        _digest_path(str(root / "_relationship_consequences"), relationship_id),
+        _digest_path(str(root / "_narrative_tension_links"), relationship_id),
+    )
+
+
+def _load_file_consequence_journals(
+    root: Path,
+    relationship_id: str,
+) -> Tuple[
+    Path,
+    Path,
+    list[RelationshipConsequence],
+    list[NarrativeTensionLink],
+]:
+    consequence_path, link_path = _file_consequence_journal_paths(
+        root,
+        relationship_id,
+    )
+    raw_consequences = _read_json(consequence_path) if consequence_path.exists() else []
+    raw_links = _read_json(link_path) if link_path.exists() else []
+    if not isinstance(raw_consequences, list):
+        raise ErasureSelectionError("relationship consequence journal is malformed")
+    if not isinstance(raw_links, list):
+        raise ErasureSelectionError("Narrative Tension link journal is malformed")
+    try:
+        consequences = [
+            RelationshipConsequence.from_dict(item) for item in raw_consequences
+        ]
+        links = [NarrativeTensionLink.from_dict(item) for item in raw_links]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ErasureSelectionError(
+            "relationship consequence history is malformed"
+        ) from exc
+    if any(item.relationship_id != relationship_id for item in consequences):
+        raise ErasureSelectionError(
+            "relationship consequence journal crosses relationship scope"
+        )
+    if any(item.relationship_id != relationship_id for item in links):
+        raise ErasureSelectionError(
+            "Narrative Tension link journal crosses relationship scope"
+        )
+    return consequence_path, link_path, consequences, links
+
+
+def _consequence_dependency_ids(
+    consequences: Sequence[RelationshipConsequence],
+    links: Sequence[NarrativeTensionLink],
+    *,
+    event_ids: set[str],
+    decision_ids: set[str],
+    source_turn_ids: set[str],
+    delete_all: bool = False,
+) -> Tuple[set[str], set[str]]:
+    removed_consequences = {
+        item.consequence_id
+        for item in consequences
+        if delete_all
+        or item.source_event_id in event_ids
+        or item.source_decision_id in decision_ids
+        or item.source_turn_id in source_turn_ids
+    }
+    removed_links = {
+        item.link_id
+        for item in links
+        if delete_all
+        or item.consequence_id in removed_consequences
+        or item.source_event_id in event_ids
+        or item.source_decision_id in decision_ids
+        or item.source_turn_id in source_turn_ids
+    }
+    return removed_consequences, removed_links
+
+
+def _add_consequence_deletion_estimate(
+    deleted: Counter[str],
+    consequences: Sequence[RelationshipConsequence],
+    links: Sequence[NarrativeTensionLink],
+    *,
+    event_ids: set[str],
+    decision_ids: set[str],
+    source_turn_ids: set[str],
+    delete_all: bool = False,
+) -> None:
+    removed_consequences, removed_links = _consequence_dependency_ids(
+        consequences,
+        links,
+        event_ids=event_ids,
+        decision_ids=decision_ids,
+        source_turn_ids=source_turn_ids,
+        delete_all=delete_all,
+    )
+    deleted["relationship_consequence"] += len(removed_consequences)
+    deleted["narrative_tension_link"] += len(removed_links)
+
+
+def _filter_file_consequence_dependencies(
+    root: Path,
+    relationship_id: str,
+    *,
+    event_ids: set[str],
+    decision_ids: set[str],
+    source_turn_ids: set[str],
+    deleted: Counter[str],
+) -> None:
+    consequence_path, link_path, consequences, links = (
+        _load_file_consequence_journals(root, relationship_id)
+    )
+    removed_consequences, removed_links = _consequence_dependency_ids(
+        consequences,
+        links,
+        event_ids=event_ids,
+        decision_ids=decision_ids,
+        source_turn_ids=source_turn_ids,
+    )
+    if removed_links:
+        _write_json(
+            link_path,
+            [item.to_dict() for item in links if item.link_id not in removed_links],
+        )
+        deleted["narrative_tension_link"] += len(removed_links)
+    if removed_consequences:
+        _write_json(
+            consequence_path,
+            [
+                item.to_dict()
+                for item in consequences
+                if item.consequence_id not in removed_consequences
+            ],
+        )
+        deleted["relationship_consequence"] += len(removed_consequences)
+
+
+def _delete_file_consequence_journals(
+    root: Path,
+    relationship_id: str,
+    deleted: Counter[str],
+) -> None:
+    consequence_path, link_path, consequences, links = (
+        _load_file_consequence_journals(root, relationship_id)
+    )
+    # Links derive from consequences, so erase them before their roots.
+    if link_path.exists():
+        link_path.unlink()
+        deleted["narrative_tension_link"] += len(links)
+    if consequence_path.exists():
+        consequence_path.unlink()
+        deleted["relationship_consequence"] += len(consequences)
+
+
 def _erase_file_relationship(
     root: Path,
     selector: ErasureSelector,
@@ -159,6 +319,8 @@ def _erase_file_relationship(
     blueprint_id = blueprint.get("blueprint_id") if isinstance(blueprint, Mapping) else None
     persona_id = profile.get("persona_id")
     deleted: Counter[str] = Counter()
+
+    _delete_file_consequence_journals(root, relationship_id, deleted)
 
     pair_dir = profile_path.parent
     vector_node_ids: set[str] = set()
@@ -333,6 +495,86 @@ def _sqlite_profile(connection: sqlite3.Connection, relationship_id: str):
     ).fetchone()
 
 
+def _load_sqlite_consequence_journals(
+    connection: sqlite3.Connection,
+    relationship_id: str,
+) -> Tuple[list[RelationshipConsequence], list[NarrativeTensionLink]]:
+    consequence_rows = _sqlite_json_rows(
+        connection,
+        "relationship_consequences",
+        "consequence_id",
+        relationship_id,
+        order_by_sequence=True,
+    )
+    link_rows = _sqlite_json_rows(
+        connection,
+        "narrative_tension_links",
+        "link_id",
+        relationship_id,
+        order_by_sequence=True,
+    )
+    try:
+        consequences = [
+            RelationshipConsequence.from_dict(raw) for _, raw in consequence_rows
+        ]
+        links = [NarrativeTensionLink.from_dict(raw) for _, raw in link_rows]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ErasureSelectionError(
+            "relationship consequence history is malformed"
+        ) from exc
+    if any(
+        row_id != item.consequence_id or item.relationship_id != relationship_id
+        for (row_id, _), item in zip(consequence_rows, consequences)
+    ):
+        raise ErasureSelectionError(
+            "relationship consequence row identity is inconsistent"
+        )
+    if any(
+        row_id != item.link_id or item.relationship_id != relationship_id
+        for (row_id, _), item in zip(link_rows, links)
+    ):
+        raise ErasureSelectionError(
+            "Narrative Tension link row identity is inconsistent"
+        )
+    return consequences, links
+
+
+def _delete_sqlite_consequence_dependencies(
+    connection: sqlite3.Connection,
+    relationship_id: str,
+    *,
+    event_ids: set[str],
+    decision_ids: set[str],
+    source_turn_ids: set[str],
+    deleted: Counter[str],
+    delete_all: bool = False,
+) -> None:
+    consequences, links = _load_sqlite_consequence_journals(
+        connection,
+        relationship_id,
+    )
+    removed_consequences, removed_links = _consequence_dependency_ids(
+        consequences,
+        links,
+        event_ids=event_ids,
+        decision_ids=decision_ids,
+        source_turn_ids=source_turn_ids,
+        delete_all=delete_all,
+    )
+    # Preserve the explicit dependency order even when SQLite foreign keys are
+    # disabled by an offline staging connection.
+    for link_id in sorted(removed_links):
+        deleted["narrative_tension_link"] += connection.execute(
+            "DELETE FROM narrative_tension_links WHERE link_id = ?",
+            (link_id,),
+        ).rowcount
+    for consequence_id in sorted(removed_consequences):
+        deleted["relationship_consequence"] += connection.execute(
+            "DELETE FROM relationship_consequences WHERE consequence_id = ?",
+            (consequence_id,),
+        ).rowcount
+
+
 def _erase_sqlite_relationship(
     path: Path,
     selector: ErasureSelector,
@@ -358,6 +600,15 @@ def _erase_sqlite_relationship(
                 "decision_id",
                 relationship_id,
             )
+        )
+        _delete_sqlite_consequence_dependencies(
+            connection,
+            relationship_id,
+            event_ids=set(),
+            decision_ids=set(),
+            source_turn_ids=set(),
+            deleted=deleted,
+            delete_all=True,
         )
         tables = (
             ("persona_reflection_records", "relationship_id", "persona_reflection"),
@@ -1043,6 +1294,14 @@ def _erase_file_turn(
         initial_source_turn_ids={turn_id},
     )
     affected_source_turn_ids = set(derived_source_turn_ids)
+    _filter_file_consequence_dependencies(
+        root,
+        relationship_id,
+        event_ids=event_ids,
+        decision_ids=decision_ids,
+        source_turn_ids=affected_source_turn_ids,
+        deleted=deleted,
+    )
     remaining_turns = _revoke_invalidated_turn_authority(
         remaining_turns,
         direct_events,
@@ -1163,6 +1422,14 @@ def _erase_file_event(
         adjudications,
         processing_runs,
         {target_event_id},
+    )
+    _filter_file_consequence_dependencies(
+        root,
+        relationship_id,
+        event_ids=event_ids,
+        decision_ids=decision_ids,
+        source_turn_ids=source_turn_ids,
+        deleted=deleted,
     )
     rebuilt: Counter[str] = Counter()
     turn_path = _digest_path(str(root / "_turn_records"), relationship_id)
@@ -1386,6 +1653,14 @@ def _erase_sqlite_turn(
             initial_event_ids,
             initial_decision_ids=initial_decision_ids,
             initial_source_turn_ids={turn_id},
+        )
+        _delete_sqlite_consequence_dependencies(
+            connection,
+            relationship_id,
+            event_ids=event_ids,
+            decision_ids=removed_decisions,
+            source_turn_ids=affected_source_turn_ids,
+            deleted=deleted,
         )
         rebuilt: Counter[str] = Counter()
         turn_rows = _sqlite_json_rows(
@@ -1660,6 +1935,14 @@ def _erase_sqlite_event(
             [raw for _, raw in processing_rows],
             {target_event_id},
         )
+        _delete_sqlite_consequence_dependencies(
+            connection,
+            relationship_id,
+            event_ids=event_ids,
+            decision_ids=decision_ids,
+            source_turn_ids=source_turn_ids,
+            deleted=deleted,
+        )
         rebuilt: Counter[str] = Counter()
         turn_rows = _sqlite_json_rows(
             connection,
@@ -1916,6 +2199,73 @@ def _erase_sqlite_complete_user(
     return tuple(sorted(affected)), _merge_inventories(inventories)
 
 
+def _verified_tension_projection(
+    storage: FileStorage | SQLiteStorage,
+    relationship_id: str,
+) -> Tuple[
+    list[RelationshipConsequence],
+    list[NarrativeTensionLink],
+    Tuple[NarrativeTensionProjection, ...],
+]:
+    try:
+        consequences = storage.list_relationship_consequences(relationship_id)
+        links = storage.list_narrative_tension_links(relationship_id)
+        adjudications = storage.list_relationship_adjudications(relationship_id)
+        turns = storage.list_turn_records(relationship_id)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ErasureSelectionError(
+            "relationship consequence history is malformed"
+        ) from exc
+
+    decisions = {item.receipt.decision_id: item for item in adjudications}
+    if len(decisions) != len(adjudications):
+        raise ErasureSelectionError(
+            "relationship consequence source decisions are ambiguous"
+        )
+    turns_by_id = {item.turn_id: item for item in turns}
+    if len(turns_by_id) != len(turns):
+        raise ErasureSelectionError(
+            "relationship consequence source turns are ambiguous"
+        )
+
+    for item in (*consequences, *links):
+        if item.relationship_id != relationship_id:
+            raise ErasureSelectionError(
+                "relationship consequence history crosses relationship scope"
+            )
+        record = decisions.get(item.source_decision_id)
+        if record is None:
+            raise ErasureSelectionError(
+                "relationship consequence history has a missing source decision"
+            )
+        receipt = record.receipt
+        if (
+            receipt.relationship_id != relationship_id
+            or receipt.source_turn_id != item.source_turn_id
+            or receipt.source_revision != item.source_revision
+            or item.source_event_id not in receipt.event_ids
+            or not any(
+                event.event_id == item.source_event_id for event in record.events
+            )
+        ):
+            raise ErasureSelectionError(
+                "relationship consequence history has inconsistent source authority"
+            )
+        turn = turns_by_id.get(item.source_turn_id)
+        if turn is None or turn.source_revision != item.source_revision:
+            raise ErasureSelectionError(
+                "relationship consequence history has a missing source turn"
+            )
+
+    try:
+        projections = NarrativeTensionProjector.project(consequences, links)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ErasureSelectionError(
+            "Narrative Tension projection cannot be rebuilt"
+        ) from exc
+    return consequences, links, projections
+
+
 def _rebuild_relationship(
     staging_path: str,
     storage_kind: ErasureStorageKind,
@@ -1936,6 +2286,10 @@ def _rebuild_relationship(
     TemporalHistoryValidator.validate_complete_history(events)
     snapshot = RelationshipProjector.project(profile, events)
     consolidation = RelationshipConsolidator.project(profile.relationship_id, events)
+    consequences, tension_links, tensions = _verified_tension_projection(
+        storage,
+        profile.relationship_id,
+    )
     proof = RelationshipRebuildProof(
         relationship_id=profile.relationship_id,
         event_count=len(events),
@@ -1946,6 +2300,10 @@ def _rebuild_relationship(
         consolidation_digest=_json_digest(consolidation.to_dict()),
         episode_count=len(consolidation.episodes),
         chapter_count=len(consolidation.chapters),
+        consequence_count=len(consequences),
+        tension_link_count=len(tension_links),
+        tension_count=len(tensions),
+        tension_digest=_json_digest([item.to_dict() for item in tensions]),
     )
     return proof, Counter(
         {
@@ -1953,6 +2311,7 @@ def _rebuild_relationship(
             "current_belief": len(snapshot.beliefs),
             "episode": len(consolidation.episodes),
             "relationship_chapter": len(consolidation.chapters),
+            "narrative_tension": len(tensions),
         }
     )
 
@@ -2058,6 +2417,10 @@ def _estimate_file_scope(
         return affected, _empty_inventory(deleted)
 
     _, _, relationship_id = _file_relation(root, selector)
+    _, _, consequences, tension_links = _load_file_consequence_journals(
+        root,
+        relationship_id,
+    )
     if selector.scope is ErasureScope.RELATIONSHIP:
         deleted["relationship"] = 1
         event_path = _digest_path(str(root / "_relationship_events"), relationship_id)
@@ -2072,6 +2435,15 @@ def _estimate_file_scope(
             len(_raw_record_events(item)) for item in adjudications
         )
         deleted["relationship_adjudication"] = len(adjudications)
+        _add_consequence_deletion_estimate(
+            deleted,
+            consequences,
+            tension_links,
+            event_ids=set(),
+            decision_ids=set(),
+            source_turn_ids=set(),
+            delete_all=True,
+        )
     elif selector.scope is ErasureScope.SOURCE_TURN:
         turn_id = _required_text(selector.source_turn_id, "source_turn_id")
         turn_path = _digest_path(str(root / "_turn_records"), relationship_id)
@@ -2094,6 +2466,22 @@ def _estimate_file_scope(
         deleted["relationship_event"] = sum(
             len(_raw_record_events(item)) for item in removed
         )
+        _add_consequence_deletion_estimate(
+            deleted,
+            consequences,
+            tension_links,
+            event_ids={
+                event_id for item in removed for event_id in _raw_record_events(item)
+            },
+            decision_ids={
+                _required_text(
+                    item.get("receipt", {}).get("decision_id"),
+                    "decision_id",
+                )
+                for item in removed
+            },
+            source_turn_ids={turn_id},
+        )
     else:
         target = _required_text(
             selector.relationship_event_id,
@@ -2107,13 +2495,21 @@ def _estimate_file_scope(
         adjudications = (
             list(_read_json(adjudication_path)) if adjudication_path.exists() else []
         )
-        event_ids, decision_ids, _ = _cascade_event_deletions(
+        event_ids, decision_ids, source_turn_ids = _cascade_event_deletions(
             direct,
             adjudications,
             {target},
         )
         deleted["relationship_event"] = len(event_ids)
         deleted["relationship_adjudication"] = len(decision_ids)
+        _add_consequence_deletion_estimate(
+            deleted,
+            consequences,
+            tension_links,
+            event_ids=event_ids,
+            decision_ids=decision_ids,
+            source_turn_ids=source_turn_ids,
+        )
     return (relationship_id,), _empty_inventory(deleted)
 
 
@@ -2168,6 +2564,10 @@ def _estimate_sqlite_scope(
             raise ErasureSelectionError("relationship was not found in staging")
         _require_relation_match(selector, profile)
         relationship_id = str(profile["relationship_id"])
+        consequences, tension_links = _load_sqlite_consequence_journals(
+            connection,
+            relationship_id,
+        )
         if selector.scope is ErasureScope.RELATIONSHIP:
             deleted["relationship"] = 1
             deleted["relationship_event"] = connection.execute(
@@ -2183,6 +2583,15 @@ def _estimate_sqlite_scope(
             deleted["relationship_adjudication"] = len(adjudications)
             deleted["relationship_event"] += sum(
                 len(_raw_record_events(raw)) for _, raw in adjudications
+            )
+            _add_consequence_deletion_estimate(
+                deleted,
+                consequences,
+                tension_links,
+                event_ids=set(),
+                decision_ids=set(),
+                source_turn_ids=set(),
+                delete_all=True,
             )
         elif selector.scope is ErasureScope.SOURCE_TURN:
             turn_id = _required_text(selector.source_turn_id, "source_turn_id")
@@ -2213,6 +2622,24 @@ def _estimate_sqlite_scope(
             deleted["relationship_event"] = sum(
                 len(_raw_record_events(item)) for item in removed
             )
+            _add_consequence_deletion_estimate(
+                deleted,
+                consequences,
+                tension_links,
+                event_ids={
+                    event_id
+                    for item in removed
+                    for event_id in _raw_record_events(item)
+                },
+                decision_ids={
+                    _required_text(
+                        item.get("receipt", {}).get("decision_id"),
+                        "decision_id",
+                    )
+                    for item in removed
+                },
+                source_turn_ids={turn_id},
+            )
         else:
             target = _required_text(
                 selector.relationship_event_id,
@@ -2236,13 +2663,21 @@ def _estimate_sqlite_scope(
                     relationship_id,
                 )
             ]
-            event_ids, decision_ids, _ = _cascade_event_deletions(
+            event_ids, decision_ids, source_turn_ids = _cascade_event_deletions(
                 direct,
                 adjudications,
                 {target},
             )
             deleted["relationship_event"] = len(event_ids)
             deleted["relationship_adjudication"] = len(decision_ids)
+            _add_consequence_deletion_estimate(
+                deleted,
+                consequences,
+                tension_links,
+                event_ids=event_ids,
+                decision_ids=decision_ids,
+                source_turn_ids=source_turn_ids,
+            )
     return (relationship_id,), _empty_inventory(deleted)
 
 

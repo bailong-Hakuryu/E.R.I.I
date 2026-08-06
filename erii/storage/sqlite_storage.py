@@ -41,6 +41,12 @@ from erii.models.consolidation import (
     RelationshipProcessingConflictError,
     RelationshipProcessingRun,
 )
+from erii.models.consequence import (
+    ConsequenceConflictError,
+    NarrativeTensionConflictError,
+    NarrativeTensionLink,
+    RelationshipConsequence,
+)
 from erii.models.provenance import ArtifactProvenanceState
 from erii.models.node import MemoryNode
 from erii.models.persona import (
@@ -487,6 +493,13 @@ class SQLiteStorage(BaseStorage):
                 cursor.execute(
                     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                     (9, "utc-stable-timeline-order-alpha7", utc_now()),
+                )
+                current_version = 9
+            if current_version < 10:
+                self._migrate_relationship_consequence_v10(cursor)
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                    (10, "relationship-consequence-journal-alpha1", utc_now()),
                 )
             conn.commit()
 
@@ -946,6 +959,80 @@ class SQLiteStorage(BaseStorage):
                 sort_key DESC,
                 timeline_entry_id DESC
             )
+            """
+        )
+
+    @staticmethod
+    def _migrate_relationship_consequence_v10(cursor: sqlite3.Cursor) -> None:
+        """Adds append-only consequence and Narrative Tension journals."""
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS relationship_consequences (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                consequence_id TEXT NOT NULL UNIQUE,
+                relationship_id TEXT NOT NULL,
+                tension_id TEXT NOT NULL,
+                source_decision_id TEXT NOT NULL,
+                source_event_id TEXT NOT NULL,
+                data JSON NOT NULL,
+                recorded_at TEXT NOT NULL,
+                UNIQUE (
+                    relationship_id, source_decision_id, source_event_id
+                ),
+                FOREIGN KEY (relationship_id)
+                    REFERENCES relationships(relationship_id) ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_relationship_consequences_order
+            ON relationship_consequences(relationship_id, sequence)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_relationship_consequences_tension
+            ON relationship_consequences(relationship_id, tension_id, sequence)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS narrative_tension_links (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                link_id TEXT NOT NULL UNIQUE,
+                relationship_id TEXT NOT NULL,
+                tension_id TEXT NOT NULL,
+                consequence_id TEXT NOT NULL,
+                source_decision_id TEXT NOT NULL,
+                source_event_id TEXT NOT NULL,
+                data JSON NOT NULL,
+                recorded_at TEXT NOT NULL,
+                UNIQUE (tension_id, source_decision_id, source_event_id),
+                FOREIGN KEY (relationship_id)
+                    REFERENCES relationships(relationship_id) ON DELETE CASCADE,
+                FOREIGN KEY (consequence_id)
+                    REFERENCES relationship_consequences(consequence_id)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_narrative_tension_links_order
+            ON narrative_tension_links(relationship_id, sequence)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_narrative_tension_links_tension
+            ON narrative_tension_links(relationship_id, tension_id, sequence)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_narrative_tension_links_consequence
+            ON narrative_tension_links(consequence_id, sequence)
             """
         )
 
@@ -2762,6 +2849,253 @@ class SQLiteStorage(BaseStorage):
                     (relationship_id,),
                 ).fetchall()
                 return [AdjudicationRecord.from_dict(json.loads(row["data"])) for row in rows]
+
+    def append_relationship_consequence(
+        self,
+        consequence: RelationshipConsequence,
+    ) -> RelationshipConsequence:
+        """Appends one immutable, source-bound relationship consequence."""
+        relationship_id = consequence.relationship_id
+        with self.lock_manager.lock("__relationship_history__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    relationship = conn.execute(
+                        "SELECT 1 FROM relationships WHERE relationship_id = ?",
+                        (relationship_id,),
+                    ).fetchone()
+                    if relationship is None:
+                        raise ValueError(
+                            "consequence references an unknown relationship"
+                        )
+
+                    rows = conn.execute(
+                        """
+                        SELECT data FROM relationship_consequences
+                        WHERE consequence_id = ? OR (
+                            relationship_id = ? AND source_decision_id = ?
+                            AND source_event_id = ?
+                        )
+                        """,
+                        (
+                            consequence.consequence_id,
+                            relationship_id,
+                            consequence.source_decision_id,
+                            consequence.source_event_id,
+                        ),
+                    ).fetchall()
+                    for row in rows:
+                        existing = RelationshipConsequence.from_dict(
+                            _decode_json_object(
+                                row["data"],
+                                "Relationship Consequence data",
+                            )
+                        )
+                        if existing.same_payload_as(consequence):
+                            conn.commit()
+                            return existing
+                    if rows:
+                        raise ConsequenceConflictError(
+                            "relationship consequence identity already has "
+                            "different content"
+                        )
+
+                    conn.execute(
+                        """
+                        INSERT INTO relationship_consequences (
+                            consequence_id, relationship_id, tension_id,
+                            source_decision_id, source_event_id, data, recorded_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            consequence.consequence_id,
+                            relationship_id,
+                            consequence.tension_id,
+                            consequence.source_decision_id,
+                            consequence.source_event_id,
+                            json.dumps(consequence.to_dict(), ensure_ascii=False),
+                            consequence.recorded_at,
+                        ),
+                    )
+                    conn.commit()
+                    return consequence
+                except sqlite3.IntegrityError as exc:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    if "FOREIGN KEY" in str(exc).upper():
+                        raise ValueError(
+                            "consequence references an unknown relationship"
+                        ) from exc
+                    raise ConsequenceConflictError(
+                        "relationship consequence identity already has "
+                        "different content"
+                    ) from exc
+                except Exception:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    raise
+
+    def list_relationship_consequences(
+        self,
+        relationship_id: str,
+    ) -> List[RelationshipConsequence]:
+        """Loads relationship consequences in durable append order."""
+        with self.lock_manager.lock("__relationship_history__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT data FROM relationship_consequences
+                    WHERE relationship_id = ? ORDER BY sequence ASC
+                    """,
+                    (relationship_id,),
+                ).fetchall()
+                return [
+                    RelationshipConsequence.from_dict(
+                        _decode_json_object(
+                            row["data"],
+                            "Relationship Consequence data",
+                        )
+                    )
+                    for row in rows
+                ]
+
+    def append_narrative_tension_link(
+        self,
+        link: NarrativeTensionLink,
+    ) -> NarrativeTensionLink:
+        """Appends one source-bound link to an existing Narrative Tension."""
+        relationship_id = link.relationship_id
+        with self.lock_manager.lock("__relationship_history__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    relationship = conn.execute(
+                        "SELECT 1 FROM relationships WHERE relationship_id = ?",
+                        (relationship_id,),
+                    ).fetchone()
+                    if relationship is None:
+                        raise ValueError(
+                            "Narrative Tension link references an unknown "
+                            "relationship"
+                        )
+
+                    rows = conn.execute(
+                        """
+                        SELECT data FROM narrative_tension_links
+                        WHERE link_id = ? OR (
+                            tension_id = ? AND source_decision_id = ?
+                            AND source_event_id = ?
+                        )
+                        """,
+                        (
+                            link.link_id,
+                            link.tension_id,
+                            link.source_decision_id,
+                            link.source_event_id,
+                        ),
+                    ).fetchall()
+                    for row in rows:
+                        existing = NarrativeTensionLink.from_dict(
+                            _decode_json_object(
+                                row["data"],
+                                "Narrative Tension link data",
+                            )
+                        )
+                        if existing.same_payload_as(link):
+                            conn.commit()
+                            return existing
+                    if rows:
+                        raise NarrativeTensionConflictError(
+                            "Narrative Tension link identity already has "
+                            "different content"
+                        )
+
+                    consequence_row = conn.execute(
+                        """
+                        SELECT relationship_id, tension_id, data
+                        FROM relationship_consequences
+                        WHERE consequence_id = ?
+                        """,
+                        (link.consequence_id,),
+                    ).fetchone()
+                    if consequence_row is None:
+                        raise NarrativeTensionConflictError(
+                            "Narrative Tension link references an unknown "
+                            "consequence or tension"
+                        )
+                    consequence = RelationshipConsequence.from_dict(
+                        _decode_json_object(
+                            consequence_row["data"],
+                            "Relationship Consequence data",
+                        )
+                    )
+                    if (
+                        consequence_row["relationship_id"] != relationship_id
+                        or consequence_row["tension_id"] != link.tension_id
+                        or consequence.relationship_id != relationship_id
+                        or consequence.tension_id != link.tension_id
+                        or consequence.consequence_id != link.consequence_id
+                    ):
+                        raise NarrativeTensionConflictError(
+                            "Narrative Tension link references an unknown "
+                            "consequence or tension"
+                        )
+
+                    conn.execute(
+                        """
+                        INSERT INTO narrative_tension_links (
+                            link_id, relationship_id, tension_id, consequence_id,
+                            source_decision_id, source_event_id, data, recorded_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            link.link_id,
+                            relationship_id,
+                            link.tension_id,
+                            link.consequence_id,
+                            link.source_decision_id,
+                            link.source_event_id,
+                            json.dumps(link.to_dict(), ensure_ascii=False),
+                            link.recorded_at,
+                        ),
+                    )
+                    conn.commit()
+                    return link
+                except sqlite3.IntegrityError as exc:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    raise NarrativeTensionConflictError(
+                        "Narrative Tension link identity or consequence "
+                        "constraint failed"
+                    ) from exc
+                except Exception:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    raise
+
+    def list_narrative_tension_links(
+        self,
+        relationship_id: str,
+    ) -> List[NarrativeTensionLink]:
+        """Loads Narrative Tension links in durable append order."""
+        with self.lock_manager.lock("__relationship_history__", relationship_id):
+            with closing(self._get_connection()) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT data FROM narrative_tension_links
+                    WHERE relationship_id = ? ORDER BY sequence ASC
+                    """,
+                    (relationship_id,),
+                ).fetchall()
+                return [
+                    NarrativeTensionLink.from_dict(
+                        _decode_json_object(
+                            row["data"],
+                            "Narrative Tension link data",
+                        )
+                    )
+                    for row in rows
+                ]
 
     @staticmethod
     def _require_completed_processing_turn(

@@ -65,6 +65,8 @@ _MEMORY_PACK_COLLECTION_FIELDS = (
     "turn_records",
     "relationship_processing_runs",
     "persona_reflection_decisions",
+    "relationship_consequences",
+    "narrative_tension_links",
 )
 
 
@@ -397,6 +399,35 @@ try:
             if total_items > MAX_REST_IMPORT_TOTAL_ITEMS:
                 raise ValueError("MemoryPack exceeds the total REST import item limit")
             return self
+
+    class RelationshipConsequenceBody(BaseModel):
+        """Records a relationship consequence from an adjudicated event."""
+
+        model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+        agent_id: str = "default_agent"
+        user_id: str
+        source_turn_id: str = Field(min_length=1, max_length=256)
+        source_decision_id: str = Field(min_length=1, max_length=256)
+        source_event_id: str = Field(min_length=1, max_length=256)
+        effects: list[str] = Field(min_length=1, max_length=16)
+        summary: str = Field(min_length=1, max_length=2048)
+        recorded_at: Optional[str] = None
+
+    class NarrativeTensionLinkBody(BaseModel):
+        """Records a narrative tension link from a later adjudicated event."""
+
+        model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+        agent_id: str = "default_agent"
+        user_id: str
+        consequence_id: str = Field(min_length=1, max_length=256)
+        source_turn_id: str = Field(min_length=1, max_length=256)
+        source_decision_id: str = Field(min_length=1, max_length=256)
+        source_event_id: str = Field(min_length=1, max_length=256)
+        outcome: str = Field(min_length=1, max_length=64)
+        summary: str = Field(min_length=1, max_length=2048)
+        recorded_at: Optional[str] = None
 
     class TurnOpeningBody(BaseModel):
         """Opens a durable turn before reply generation."""
@@ -887,6 +918,105 @@ try:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
             raise _internal_server_error("relationship_adjudication", e) from e
+
+    @app.post("/api/v1/relationship/consequences")
+    def api_record_relationship_consequence(req: RelationshipConsequenceBody):
+        """Records a relationship consequence from an adjudicated event."""
+        try:
+            consequence = get_engine().record_relationship_consequence(
+                req.agent_id,
+                req.user_id,
+                req.source_turn_id,
+                req.source_decision_id,
+                req.source_event_id,
+                tuple(req.effects),
+                req.summary,
+                recorded_at=req.recorded_at,
+            )
+            return {
+                "status": "success",
+                "consequence": consequence.to_dict(),
+            }
+        except (RelationshipNotFoundError, TurnNotFoundError) as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise _internal_server_error("record_relationship_consequence", e) from e
+
+    @app.get("/api/v1/relationship/consequences")
+    def api_list_relationship_consequences(
+        agent_id: str = "default_agent",
+        user_id: str = Query(...),
+    ):
+        """Lists all relationship consequences for the given relationship."""
+        try:
+            relationship = get_engine().storage.get_relationship(agent_id, user_id)
+            if relationship is None:
+                raise RelationshipNotFoundError(
+                    f"Relationship not found: {agent_id}, {user_id}"
+                )
+            consequences = get_engine().storage.list_relationship_consequences(
+                relationship.relationship_id
+            )
+            return {
+                "status": "success",
+                "consequences": [item.to_dict() for item in consequences],
+            }
+        except RelationshipNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise _internal_server_error("list_relationship_consequences", e) from e
+
+    @app.post("/api/v1/relationship/narrative-tension-links")
+    def api_record_narrative_tension_link(req: NarrativeTensionLinkBody):
+        """Records a narrative tension link from a later adjudicated event."""
+        try:
+            link = get_engine().record_narrative_tension_link(
+                req.agent_id,
+                req.user_id,
+                req.consequence_id,
+                req.source_turn_id,
+                req.source_decision_id,
+                req.source_event_id,
+                req.outcome,
+                req.summary,
+                recorded_at=req.recorded_at,
+            )
+            return {
+                "status": "success",
+                "link": link.to_dict(),
+            }
+        except (RelationshipNotFoundError, TurnNotFoundError) as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise _internal_server_error("record_narrative_tension_link", e) from e
+
+    @app.get("/api/v1/relationship/narrative-tension-links")
+    def api_list_narrative_tension_links(
+        agent_id: str = "default_agent",
+        user_id: str = Query(...),
+    ):
+        """Lists all narrative tension links for the given relationship."""
+        try:
+            relationship = get_engine().storage.get_relationship(agent_id, user_id)
+            if relationship is None:
+                raise RelationshipNotFoundError(
+                    f"Relationship not found: {agent_id}, {user_id}"
+                )
+            links = get_engine().storage.list_narrative_tension_links(
+                relationship.relationship_id
+            )
+            return {
+                "status": "success",
+                "links": [item.to_dict() for item in links],
+            }
+        except RelationshipNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            raise _internal_server_error("list_narrative_tension_links", e) from e
 
     @app.post("/api/v1/core_memory")
     def api_set_core_memory(req: CoreMemoryRequest):

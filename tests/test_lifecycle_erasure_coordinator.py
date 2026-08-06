@@ -169,10 +169,10 @@ class LifecycleErasureCoordinatorTests(unittest.TestCase):
     @staticmethod
     def _mark_current_file_storage(storage_factory, path: Path) -> None:
         if storage_factory is FileStorage:
-            # FileStorage v1 is explicitly marked; an unmarked tree is a
+            # FileStorage v2 is explicitly marked; an unmarked tree is a
             # readable legacy source and must be upgraded before mutation.
             Path(path, ".erii-store.json").write_bytes(
-                b'{"format":"erii.file-storage","version":1}'
+                b'{"format":"erii.file-storage","version":2}'
             )
 
     @classmethod

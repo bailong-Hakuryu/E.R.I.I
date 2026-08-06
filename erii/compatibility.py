@@ -37,17 +37,17 @@ class CompatibilityCatalog:
 
 SQLITE_FORMAT = FormatCompatibility(
     format_id="erii.sqlite",
-    current_version="9",
-    readable_versions=tuple(str(version) for version in range(10)),
+    current_version="10",
+    readable_versions=tuple(str(version) for version in range(11)),
 )
 FILE_STORAGE_FORMAT = FormatCompatibility(
     format_id="erii.file-storage",
-    current_version="1",
-    readable_versions=("legacy", "1"),
+    current_version="2",
+    readable_versions=("legacy", "1", "2"),
 )
 MEMORY_PACK_FORMAT = FormatCompatibility(
     format_id="erii.memory-pack",
-    current_version="0.4.0a8",
+    current_version="0.5.0a1",
     readable_versions=(
         "0.1.0",
         "0.2.0",
@@ -59,6 +59,7 @@ MEMORY_PACK_FORMAT = FormatCompatibility(
         "0.4.0a6",
         "0.4.0a7",
         "0.4.0a8",
+        "0.5.0a1",
     ),
 )
 LIFECYCLE_BACKUP_FORMAT = FormatCompatibility(
@@ -96,6 +97,8 @@ MEMORY_PACK_ROOT_FIELDS = frozenset(
         "relationship_events",
         "relationship_direct_event_ids",
         "relationship_adjudications",
+        "relationship_consequences",
+        "narrative_tension_links",
         "persona_growth_proposals",
         "persona_compilation_proposals",
         "persona_manifests",
@@ -111,6 +114,8 @@ _MEMORY_PACK_OBJECT_COLLECTIONS = (
     "archival_ledger",
     "relationship_events",
     "relationship_adjudications",
+    "relationship_consequences",
+    "narrative_tension_links",
     "persona_growth_proposals",
     "persona_compilation_proposals",
     "persona_manifests",
