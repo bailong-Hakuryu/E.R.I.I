@@ -25,6 +25,9 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# Dependency lock files (library project)
+uv.lock
+
 # PyTest & Coverage
 .pytest_cache/
 .coverage
