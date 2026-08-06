@@ -1392,7 +1392,7 @@ class FileStorageEvalAdapter(_ERIIEvalAdapter):
 
     @property
     def adapter_id(self) -> str:
-        return "file-storage/v1"
+        return "file-storage/v2"
 
     def _open_engine(self) -> ERIIEngine:
         return ERIIEngine(storage_driver=FileStorage(self.root_dir))
@@ -1426,7 +1426,7 @@ class SQLiteEvalAdapter(_ERIIEvalAdapter):
 
     @property
     def adapter_id(self) -> str:
-        return "sqlite/v9"
+        return "sqlite/v10"
 
     def _open_engine(self) -> ERIIEngine:
         return ERIIEngine(storage_driver=SQLiteStorage(self.db_path))
