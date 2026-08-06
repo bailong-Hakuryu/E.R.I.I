@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Historical release](https://img.shields.io/badge/historical-v0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
-[![Source](https://img.shields.io/badge/source-v0.4.0-blue.svg)](CHANGELOG.md)
+[![Source](https://img.shields.io/badge/source-v0.5.0a1-blue.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11--3.14-green.svg)](pyproject.toml)
 
 [English README](README_EN.md)
@@ -38,7 +38,7 @@ E.R.I.I. 是可嵌入 Python 宿主的内核，不是聊天模型、万能 Agent
 
 ## 从源码安装
 
-当前稳定源码里程碑身份是 `0.4.0`，要求 Python 3.11–3.14：
+当前稳定源码里程碑身份是 `0.5.0a1`，要求 Python 3.11–3.14：
 
 ```bash
 git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
@@ -126,6 +126,18 @@ E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，�
 详见 [Host Integration](docs/host-integration.md) 和
 [API Stability](docs/api-stability.md)。
 
+## v0.5.0 新特性：Relationship Consequence
+
+`0.5.0` 引入 **Relationship Consequence** 和 **Narrative Tension** 系统，用于追踪关系决策的长期影响和叙事张力状态：
+
+- **后果记录**：从已完成且连续性受支持的关系事件记录持久后果（伤害、信任变化、边界违反等）
+- **叙事张力追踪**：投影后果的当前状态（未处理、已处理未解决、已解决、关系终止）
+- **来源权威**：统一的来源校验确保只有可证明的最终回复才能产生后果
+- **私有边界**：后果投影仅对 `RecallAudience.AGENT_PRIVATE` 可见
+- **生命周期集成**：删除关系事件时自动级联删除相关后果
+
+详见 [Migration Guide](docs/migration-0.5.0.md) 和 [CHANGELOG](CHANGELOG.md)。
+
 ## Reference
 
 - [Getting Started：一键关系隔离与重启证明](docs/getting-started.md)
@@ -150,23 +162,24 @@ E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，�
 `0.4.0b1` 已在 commit
 `f6dca322379c4ea88320c69d752cab471d035e95` 接受为不可移动的源码基线。
 `0.4.0rc1` 的源码收口证据固定于 commit
-`58ea8e69df28bec8e755e0a0d2a175679c18a694`。当前 `0.4.0` 将这些能力接受为 v0.4
-稳定源码里程碑；它不是已上传的 GitHub/PyPI 分发包。
+`58ea8e69df28bec8e755e0a0d2a175679c18a694`。当前 `0.5.0a1` 在 `0.4.0` 基础上引入
+Relationship Consequence 和 Narrative Tension 系统；它不是已上传的 GitHub/PyPI 分发包。
 
 版本轴彼此独立：
 
 | 轴 | 当前值 |
 | --- | --- |
-| Python 源码身份 | `0.4.0` |
+| Python 源码身份 | `0.5.0a1` |
 | Python | `3.11`–`3.14` |
-| SQLite | schema `9` |
-| FileStorage | format `1` |
+| SQLite | schema `10` |
+| FileStorage | format `2` |
 | MemoryPack | `0.4.0a8` |
 | Lifecycle Backup | `1` |
 | Lifecycle Plan | writer `3`，readers `1`–`3` |
 
-`v0.4.0` 不新增关系维度、记忆类型或人格变化渠道，也没有实现 v0.5 的 Relationship
-Consequence、Narrative Tension、伤害后修复或 Character Deliberation 持久语义。
+`v0.5.0a1` 引入 Relationship Consequence 和 Narrative Tension 作为新的持久语义，
+SQLite schema 升级至 v10，FileStorage 升级至 format 2。MemoryPack 保持 `0.4.0a8`
+以维持向后兼容。Character Deliberation 和伤害后修复决策仍未实现。
 
 ## 已有内核能力
 
@@ -177,6 +190,8 @@ Consequence、Narrative Tension、伤害后修复或 Character Deliberation 持�
 - 完整可见 Source Transcript、两阶段 Turn 生命周期和追加式来源账本；
 - 消息级证据归档，以及 Ordinary / Legacy / Quarantined 召回权威；
 - 追加式 Relationship Event、五维状态投影、Promise 与 Open Loop；
+- **Relationship Consequence 与 Narrative Tension**：记录关系决策的持久后果，
+  追踪叙事张力的当前状态（未处理、已处理未解决、已解决、关系终止）；
 - Persona Reflection、需审批的 Persona Growth Proposal、Episode 与 Chapter 投影；
 - 五轴 Continuity Review、Delivery Exception、Context Baseline 与 Voice Trace；
 - FileStorage、SQLiteStorage、结构化 Recall 和 MemoryPack；
