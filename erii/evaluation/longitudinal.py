@@ -1251,7 +1251,7 @@ class _ERIIEvalAdapter:
         target = LifecycleTarget(kind=self._lifecycle_target_kind, path=str(path))
         if target.kind is LifecycleTargetKind.FILE_STORAGE:
             (path / FILE_STORAGE_MANIFEST).write_bytes(
-                b'{"format":"erii.file-storage","version":1}'
+                b'{"format":"erii.file-storage","version":2}'
             )
         return target
 
