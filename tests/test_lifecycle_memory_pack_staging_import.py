@@ -74,7 +74,7 @@ class MemoryPackStagingImportTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     first.semantic_sha256,
-                    "5312b728cb4be6beb03a1ff5a94bf7e0d522b2a356125c6dcb5b0ec8881e8650",
+                    "34ffa4a970cf481cfb7ca59bb7574de667b03e045e94cd1b6f9053d746adef90",
                 )
                 self.assertEqual(first.counts["turn_records"], 1)
                 self.assertEqual(first.counts["relationship_events"], 1)

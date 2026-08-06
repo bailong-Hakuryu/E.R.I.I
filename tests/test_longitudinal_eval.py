@@ -103,7 +103,7 @@ class LongitudinalScenarioContractTest(unittest.TestCase):
         for reports in by_scenario.values():
             self.assertEqual(
                 {report["adapter_id"] for report in reports},
-                {"file-storage/v1", "sqlite/v9"},
+                {"file-storage/v2", "sqlite/v10"},
             )
             self.assertEqual(
                 len({report["final_observation_digest"] for report in reports}),
@@ -145,7 +145,7 @@ class LongitudinalProductionSmokeTest(unittest.TestCase):
         )
         self.assertEqual([report.observed_growth_count for report in reports], [1, 1])
         self.assertEqual(reports[0].final_observation_digest, reports[1].final_observation_digest)
-        expected_portability_targets = ("sqlite/v9", "file-storage/v1")
+        expected_portability_targets = ("sqlite/v10", "file-storage/v2")
         for report, expected_target in zip(reports, expected_portability_targets):
             with self.subTest(adapter=report.adapter_id):
                 self.assertEqual(report.restart_count, 2)

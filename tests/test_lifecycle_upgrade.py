@@ -38,6 +38,7 @@ FIXTURE_SOURCE = FIXTURE_ROOT / "source"
 PRODUCER_COMMIT = "b2cae61663c8612cb804ce16a358a192d3dd6d53"
 UPGRADE_STRATEGY = "file-storage-legacy-to-v1"
 FILE_STORAGE_V1_MANIFEST = b'{"format":"erii.file-storage","version":1}'
+FILE_STORAGE_V2_MANIFEST = b'{"format":"erii.file-storage","version":2}'
 
 
 def file_bytes(root: Path) -> dict[str, bytes]:
@@ -177,8 +178,8 @@ class LifecycleUpgradeTests(unittest.TestCase):
             self.assertEqual(first.content.kind, LifecycleTargetKind.FILE_STORAGE)
             self.assertEqual(first.content.status, LifecycleStatus.CURRENT)
             self.assertEqual(first.content.format_id, "erii.file-storage")
-            self.assertEqual(first.content.detected_version, "1")
-            self.assertEqual(first.content.current_version, "1")
+            self.assertEqual(first.content.detected_version, "2")
+            self.assertEqual(first.content.current_version, "2")
             self.assertEqual(first.content.file_count, first.source.file_count + 1)
             self.assertNotEqual(first.content.fingerprint, first.source.fingerprint)
             self.assertIn("UpgradeRequest", erii.__all__)
@@ -205,10 +206,10 @@ class LifecycleUpgradeTests(unittest.TestCase):
 
             backup = lifecycle.inspect(backup_destination)
             self.assertEqual(backup.status, LifecycleStatus.CURRENT)
-            self.assertEqual(backup.detected_version, "1")
+            self.assertEqual(backup.detected_version, "2")
             upgraded = lifecycle.inspect(destination)
             self.assertEqual(upgraded.status, LifecycleStatus.CURRENT)
-            self.assertEqual(upgraded.detected_version, "1")
+            self.assertEqual(upgraded.detected_version, "2")
             self.assertEqual(upgraded.fingerprint, plan.content.fingerprint)
             self.assertEqual(upgraded.file_count, request.source.file_count + 1)
 
@@ -216,7 +217,7 @@ class LifecycleUpgradeTests(unittest.TestCase):
             upgraded_files = file_bytes(Path(destination.path))
             self.assertEqual(
                 upgraded_files.pop(".erii-store.json"),
-                FILE_STORAGE_V1_MANIFEST,
+                FILE_STORAGE_V2_MANIFEST,
             )
             self.assertEqual(upgraded_files, original_files)
 

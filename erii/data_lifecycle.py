@@ -65,7 +65,7 @@ _READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS = frozenset(
 _BACKUP_STRATEGY_ID = "backup-byte-preserving-v1"
 _RESTORE_STRATEGY_ID = "restore-byte-preserving-v1"
 _FILE_STORAGE_LEGACY_TO_V1_STRATEGY_ID = "file-storage-legacy-to-v1"
-_SQLITE_SCHEMA_6_TO_9_STRATEGY_ID = "sqlite-schema-6-to-9"
+_SQLITE_SCHEMA_6_TO_10_STRATEGY_ID = "sqlite-schema-6-to-10"
 _MEMORY_PACK_STRATEGY_PREFIX = "memory-pack-"
 _ERASE_STRATEGY_PREFIX = "erase-staged-"
 _REBUILD_STRATEGY_PREFIX = "rebuild-staged-"
@@ -877,7 +877,7 @@ def _upgrade_strategy_id(source: LifecycleAssessment) -> str:
         and source.detected_version == "6"
         and source.current_version == SQLITE_FORMAT.current_version
     ):
-        return _SQLITE_SCHEMA_6_TO_9_STRATEGY_ID
+        return _SQLITE_SCHEMA_6_TO_10_STRATEGY_ID
     if (
         source.target.kind is LifecycleTargetKind.MEMORY_PACK
         and source.status is LifecycleStatus.MIGRATION_REQUIRED

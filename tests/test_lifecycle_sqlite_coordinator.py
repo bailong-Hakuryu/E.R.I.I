@@ -107,7 +107,7 @@ class LifecycleSQLiteCoordinatorTests(unittest.TestCase):
                 plan.content.fingerprint,
             )
             current = SQLiteStorage(destination.path)
-            self.assertEqual(current.schema_version, 9)
+            self.assertEqual(current.schema_version, 10)
             with closing(sqlite3.connect(destination.path)) as connection:
                 self.assertEqual(
                     connection.execute("SELECT COUNT(*) FROM relationships").fetchone()[0],
@@ -174,7 +174,7 @@ class LifecycleSQLiteCoordinatorTests(unittest.TestCase):
                 },
                 backup_before_retry,
             )
-            self.assertEqual(SQLiteStorage(destination.path).schema_version, 9)
+            self.assertEqual(SQLiteStorage(destination.path).schema_version, 10)
 
 
 if __name__ == "__main__":
