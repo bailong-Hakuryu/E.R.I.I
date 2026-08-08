@@ -5,6 +5,8 @@ Validates that the credential manager properly:
 - Rejects literal keys in code
 - Redacts keys in logs and output
 - Detects potential key leakage
+
+Updated: 2026-08-08 for v0.5.0a2
 """
 
 import logging
