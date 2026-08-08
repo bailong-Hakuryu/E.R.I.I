@@ -118,6 +118,7 @@ class TestCredentialManager:
 
     def test_detect_key_leakage_various_formats(self):
         """Test detection of keys in various formats."""
+        # Test cases aligned with KEY_PATTERN: requires prefix (sk-, token-, key-, api-) or 32+ chars
         test_cases = [
             ('api_key="sk-1234567890abcdef"', True),  # Has sk- prefix
             ('token: token-abc1234567890def', True),  # Has token- prefix
