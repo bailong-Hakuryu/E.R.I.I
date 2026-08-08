@@ -52,7 +52,7 @@ from erii.server.app import app as reference_app  # noqa: E402
 from erii.storage.sqlite_storage import SQLiteStorage  # noqa: E402
 
 
-SNAPSHOT_RELEASE = "0.5.0a1"
+SNAPSHOT_RELEASE = "0.5.0a2"
 SNAPSHOT_FILENAMES = (
     f"v{SNAPSHOT_RELEASE}-python-api.json",
     f"v{SNAPSHOT_RELEASE}-openapi.json",
