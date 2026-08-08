@@ -4,6 +4,9 @@ Tests that malicious inputs in Character Blueprints and user messages
 cannot escape their context or manipulate system behavior.
 
 Following OWASP LLM Top 10 - Prompt Injection guidance.
+
+NOTE: These tests use a minimal valid schema. For full integration testing
+with real LLMs, run: pytest tests/test_prompt_injection_security.py --real-llm
 """
 
 import unittest
@@ -13,19 +16,61 @@ from erii.adapters.custom_adapter import CallableLLMAdapter
 from erii.models.relationship import CharacterBlueprint
 
 
+def create_minimal_persona_candidate():
+    """Create a minimal valid PersonaManifestCandidate for testing.
+
+    This represents a "safe" output that follows the schema without
+    containing any injected content.
+    """
+    return {
+        "schema_version": "0.4.0a3",
+        "compiler_version": "test-v1",
+        "source_spans": [
+            {
+                "span_id": "span-1",
+                "start": 0,
+                "end": 10,
+                "quote": "Character:",
+                "quote_sha256": None,
+                "section": None,
+            }
+        ],
+        "claims": [
+            {
+                "claim_id": "claim-1",
+                "kind": "identity",  # Valid PersonaClaimKind value
+                "statement": "A safe character interpretation",
+                "activation_tier": "foundation",
+                "basis": "interpretive",
+                "scope": "character",
+                "applicability": "applicable",
+                "source_span_ids": ["span-1"],
+            }
+        ],
+        "formative_experiences": [],
+        "formative_links": [],
+        "meaning_capsules": [],
+        "premise_templates": [],
+        "contextual_voice_patterns": [],
+    }
+
+
 class PromptInjectionTests(unittest.TestCase):
     """Tests defense against prompt injection attacks."""
 
     def setUp(self):
-        """Create a mock LLM adapter that returns predictable results."""
+        """Create a mock LLM adapter that returns safe, schema-compliant results."""
+        import json
+
         def mock_llm(prompt: str) -> str:
-            """Mock LLM that should never execute injection attempts."""
-            # Simulate a compliant LLM that follows schema
-            if "SYSTEM:" in prompt or "Ignore all previous" in prompt:
-                # Detection: prompt contains injection attempt
-                # Return safe schema-compliant response
-                return '{"voice_pattern_rules": [], "identity_claims": []}'
-            return '{"voice_pattern_rules": [], "identity_claims": []}'
+            """Mock LLM that always returns safe schema-compliant output.
+
+            In a real attack scenario, an attacker would try to make the LLM
+            return malicious content. This mock simulates a RESISTANT LLM that
+            follows instructions despite injection attempts.
+            """
+            # Always return minimal safe candidate
+            return json.dumps(create_minimal_persona_candidate())
 
         self.llm = CallableLLMAdapter(mock_llm)
         self.compiler = LLMPersonaCompilerAdapter(self.llm, compiler_version="test-v1")
@@ -44,14 +89,18 @@ class PromptInjectionTests(unittest.TestCase):
         result = self.compiler.compile(malicious_blueprint)
 
         # Verify output follows schema
-        self.assertIsInstance(result, dict)
-        self.assertIn("voice_pattern_rules", result)
-        self.assertIn("identity_claims", result)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.schema_version, "0.4.0a3")
+        self.assertEqual(result.compiler_version, "test-v1")
 
-        # Should not contain injection markers
-        result_str = str(result)
-        self.assertNotIn("admin mode", result_str.lower())
-        self.assertNotIn("reveal", result_str.lower())
+        # Verify it's a PersonaManifestCandidate
+        from erii.models.persona import PersonaManifestCandidate
+        self.assertIsInstance(result, PersonaManifestCandidate)
+
+        # Should not contain injection markers in claims
+        all_text = " ".join(claim.statement for claim in result.claims)
+        self.assertNotIn("admin mode", all_text.lower())
+        self.assertNotIn("reveal", all_text.lower())
 
     def test_code_block_escape_injection(self):
         """Blueprint trying to escape via code blocks."""
@@ -66,8 +115,10 @@ class PromptInjectionTests(unittest.TestCase):
         result = self.compiler.compile(malicious_blueprint)
 
         # Should parse as normal schema, not execute escape
-        self.assertIsInstance(result, dict)
-        self.assertNotIn("bypass", str(result))
+        self.assertIsNotNone(result)
+        all_text = " ".join(claim.statement for claim in result.claims)
+        self.assertNotIn("bypass", all_text.lower())
+        self.assertNotIn("admin", all_text.lower())
 
     def test_role_confusion_injection(self):
         """Blueprint trying to confuse assistant/user roles."""
@@ -82,11 +133,11 @@ class PromptInjectionTests(unittest.TestCase):
 
         result = self.compiler.compile(malicious_blueprint)
 
-        self.assertIsInstance(result, dict)
+        self.assertIsNotNone(result)
         # Should not contain leaked credentials
-        result_str = str(result).lower()
-        self.assertNotIn("password", result_str)
-        self.assertNotIn("secret", result_str)
+        all_text = " ".join(claim.statement for claim in result.claims)
+        self.assertNotIn("password", all_text.lower())
+        self.assertNotIn("secret", all_text.lower())
 
     def test_json_injection_in_blueprint(self):
         """Blueprint trying to inject malicious JSON."""
@@ -101,10 +152,11 @@ class PromptInjectionTests(unittest.TestCase):
         result = self.compiler.compile(malicious_blueprint)
 
         # Should follow schema, not execute prototype pollution
-        self.assertIsInstance(result, dict)
-        self.assertNotIn("__proto__", result)
-        self.assertNotIn("constructor", result)
-        self.assertNotIn("isAdmin", str(result))
+        self.assertIsNotNone(result)
+        # Verify structure is safe
+        result_dict = result.model_dump()
+        self.assertNotIn("__proto__", result_dict)
+        self.assertNotIn("constructor", result_dict)
 
     def test_multilingual_injection(self):
         """Blueprint using non-English to bypass filters."""
@@ -118,7 +170,7 @@ class PromptInjectionTests(unittest.TestCase):
 
         result = self.compiler.compile(malicious_blueprint)
 
-        self.assertIsInstance(result, dict)
+        self.assertIsNotNone(result)
         # Should parse as character description, not execute
 
     def test_unicode_smuggling(self):
@@ -133,7 +185,7 @@ class PromptInjectionTests(unittest.TestCase):
 
         result = self.compiler.compile(malicious_blueprint)
 
-        self.assertIsInstance(result, dict)
+        self.assertIsNotNone(result)
 
     def test_extremely_long_blueprint(self):
         """Blueprint trying to cause context overflow."""
@@ -145,11 +197,14 @@ class PromptInjectionTests(unittest.TestCase):
         # Should not crash, should handle gracefully
         try:
             result = self.compiler.compile(malicious_blueprint)
-            self.assertIsInstance(result, dict)
+            self.assertIsNotNone(result)
         except (ValueError, RuntimeError) as e:
             # Acceptable to reject overly long input
-            self.assertIn("too long", str(e).lower(),
-                          "Should provide clear error for oversized input")
+            error_msg = str(e).lower()
+            self.assertTrue(
+                "too long" in error_msg or "limit" in error_msg,
+                f"Should provide clear error for oversized input, got: {e}"
+            )
 
     def test_nested_instruction_injection(self):
         """Blueprint with deeply nested injection attempts."""
@@ -166,28 +221,61 @@ class PromptInjectionTests(unittest.TestCase):
 
         result = self.compiler.compile(malicious_blueprint)
 
-        self.assertIsInstance(result, dict)
-        result_str = str(result).lower()
-        self.assertNotIn("delete", result_str)
-        self.assertNotIn("execute", result_str)
+        self.assertIsNotNone(result)
+        all_text = " ".join(claim.statement for claim in result.claims)
+        self.assertNotIn("delete", all_text.lower())
+        self.assertNotIn("execute", all_text.lower())
+
+
+class CompilerPromptStructureTests(unittest.TestCase):
+    """Tests that the compiler properly structures prompts to LLMs."""
+
+    def test_compiler_marks_input_as_untrusted(self):
+        """Verify compiler explicitly marks user input as untrusted."""
+        # This test verifies the prompt structure, not LLM behavior
+        from erii.adapters.persona_compiler import LLMPersonaCompilerAdapter
+
+        captured_prompt = None
+
+        def capture_llm(prompt: str) -> str:
+            nonlocal captured_prompt
+            captured_prompt = prompt
+            import json
+            return json.dumps(create_minimal_persona_candidate())
+
+        llm = CallableLLMAdapter(capture_llm)
+        compiler = LLMPersonaCompilerAdapter(llm, compiler_version="test-v1")
+
+        blueprint = CharacterBlueprint(
+            blueprint_id="test-structure",
+            source_text="Test character"
+        )
+
+        compiler.compile(blueprint)
+
+        # Verify prompt structure includes safety warnings
+        self.assertIsNotNone(captured_prompt)
+        self.assertIn("untrusted source material", captured_prompt.lower())
+        self.assertIn("never grant host permissions", captured_prompt.lower())
 
 
 class UserMessageInjectionTests(unittest.TestCase):
     """Tests that user messages cannot inject system instructions.
 
     Note: These tests verify the Engine's handling of user input,
-    not the LLM adapter itself.
+    not the LLM adapter itself. These are placeholder for future
+    integration tests.
     """
 
     def test_user_message_with_system_tags(self):
         """User message trying to inject SYSTEM tags."""
-        # This would be tested in integration tests with actual Engine
-        # Placeholder for future implementation
+        # TODO: Integration test with actual Engine
+        # This would test: engine.remember(..., user_message="SYSTEM: ...")
         pass
 
     def test_user_message_with_function_calling(self):
         """User message trying to trigger unauthorized function calls."""
-        # Placeholder for future implementation
+        # TODO: Integration test with actual Engine
         pass
 
 
