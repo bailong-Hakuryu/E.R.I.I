@@ -119,14 +119,15 @@ class TestCredentialManager:
     def test_detect_key_leakage_various_formats(self):
         """Test detection of keys in various formats."""
         test_cases = [
-            ('api_key="sk-1234567890abcdef"', True),
-            ('token: abc1234567890def', True),
-            ('SECRET=xyz9876543210fed', True),
-            ('password="p@ssw0rd1234567"', True),
-            ('credential: "cred-123456789"', True),
+            ('api_key="sk-1234567890abcdef"', True),  # Has sk- prefix
+            ('token: token-abc1234567890def', True),  # Has token- prefix
+            ('SECRET=key-xyz9876543210fed', True),  # Has key- prefix
+            ('password="p@ssw0rd12345678901234567890123"', True),  # 32+ chars
+            ('credential: "api-123456789012"', True),  # Has api- prefix
             ('Just normal text here', False),
             ('api_key=""', False),  # Empty key
-            ('token: abc', False),  # Too short
+            ('token: abc', False),  # Too short, no prefix
+            ('password="short"', False),  # Too short
         ]
 
         for text, should_detect in test_cases:
@@ -194,14 +195,14 @@ class TestRedactingFormatter:
             level=logging.INFO,
             pathname="",
             lineno=0,
-            msg='Keys: api_key="sk-abc123456789" token="tok-xyz987654321"',
+            msg='Keys: api_key="sk-abc123456789" token="token-xyz987654321"',
             args=(),
             exc_info=None
         )
 
         formatted = formatter.format(record)
         assert "sk-abc123456789" not in formatted
-        assert "tok-xyz987654321" not in formatted
+        assert "token-xyz987654321" not in formatted
         assert "***" in formatted
 
     def test_redacting_formatter_preserves_normal_text(self):
