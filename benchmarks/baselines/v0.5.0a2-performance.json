@@ -1,0 +1,27 @@
+{
+  "version": "v0.5.0a2",
+  "timestamp": "2026-08-08 18:53:47",
+  "benchmarks": {
+    "credential_management": {
+      "key_loading_ms": 0.00033600000006117625,
+      "key_redaction_ms": 9.430000000065775e-05,
+      "key_fingerprint_ms": 0.0004957999999533058,
+      "leakage_detection_ms": 0.0005059999998593412
+    },
+    "logging": {
+      "text_logging_ms": 0.0039291000002776855,
+      "json_logging_ms": 0.00447840000015276,
+      "audit_logging_ms": 0.0051951000000372005
+    },
+    "error_handling": {
+      "error_creation_ms": 0.0007125000001906301,
+      "error_with_hint_ms": 0.0009470999998484331,
+      "error_formatting_ms": 0.0009957000002032146,
+      "error_serialization_ms": 0.00022050000006856862
+    },
+    "storage": {
+      "file_storage_cycle_ms": 1.2999998943996616e-05,
+      "sqlite_storage_cycle_ms": 2.4000000848900527e-05
+    }
+  }
+}
