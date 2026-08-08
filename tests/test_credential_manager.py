@@ -118,17 +118,21 @@ class TestCredentialManager:
         """Test fingerprint of empty key."""
         assert CredentialManager.get_key_fingerprint("") == "<no-key>"
 
-    def test_detect_key_leakage_various_formats(self):
-        """Test detection of keys in various formats."""
-        # Test cases aligned with KEY_PATTERN: requires prefix (sk-, token-, key-, api-) or 32+ chars
-        # Positive cases - should detect
+    def test_key_leakage_detection_with_valid_patterns(self):
+        """Test detection of keys matching KEY_PATTERN requirements.
+
+        KEY_PATTERN requires either:
+        - A recognized prefix (sk-, token-, key-, api-) followed by alphanumeric
+        - Or a string of 32+ characters
+        """
+        # Should detect - recognized prefixes
         assert len(CredentialManager.detect_key_leakage('api_key="sk-1234567890abcdef"')) > 0
         assert len(CredentialManager.detect_key_leakage('token: token-abc1234567890def')) > 0
         assert len(CredentialManager.detect_key_leakage('SECRET=key-xyz9876543210fed')) > 0
         assert len(CredentialManager.detect_key_leakage('password="p@ssw0rd12345678901234567890123"')) > 0
         assert len(CredentialManager.detect_key_leakage('credential: "api-123456789012"')) > 0
 
-        # Negative cases - should not detect
+        # Should not detect - too short or no prefix
         assert len(CredentialManager.detect_key_leakage('Just normal text here')) == 0
         assert len(CredentialManager.detect_key_leakage('api_key=""')) == 0
         assert len(CredentialManager.detect_key_leakage('token: abc')) == 0
