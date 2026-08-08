@@ -93,11 +93,11 @@ class LifecycleMemoryPackUpgradeTests(unittest.TestCase):
             self.assertEqual(source_path.read_bytes(), source_bytes)
             upgraded = lifecycle.inspect(destination)
             self.assertEqual(upgraded.status, LifecycleStatus.CURRENT)
-            self.assertEqual(upgraded.detected_version, "0.5.0a1")
+            self.assertEqual(upgraded.detected_version, "0.5.0a2")
             upgraded_document = json.loads(Path(destination.path).read_text("utf-8"))
             self.assertEqual(
                 upgraded_document["metadata"]["version"],
-                "0.5.0a1",
+                "0.5.0a2",
             )
             self.assertEqual(
                 upgraded_document["core_memory"],

@@ -10,7 +10,7 @@ import erii.models as model_api
 
 class A7PublicApiTests(unittest.TestCase):
     def test_package_uses_v050a1_source_identity(self) -> None:
-        self.assertEqual(erii.__version__, "0.5.0a1")
+        self.assertEqual(erii.__version__, "0.5.0a2")
 
     def test_consolidation_and_continuity_models_are_public(self) -> None:
         for module_name in (

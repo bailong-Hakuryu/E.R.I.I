@@ -276,7 +276,7 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
                 "0.4.0a7",
                 "0.4.0a8",
                 "migration_required",
-                "0.5.0a1",
+                "0.5.0a2",
                 LifecycleStatus.MIGRATION_REQUIRED,
             ),
             (
@@ -285,7 +285,7 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
                 "0.4.0a8",
                 "0.4.0a8",
                 "current",
-                "0.5.0a1",
+                "0.5.0a2",
                 LifecycleStatus.MIGRATION_REQUIRED,
             ),
         )
@@ -418,7 +418,7 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
                 "memory-pack-a7",
                 "0.4.0a8",
                 "migration_required",
-                "0.5.0a1",
+                "0.5.0a2",
                 True,
             ),
         )
