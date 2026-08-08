@@ -8,7 +8,7 @@
 
 - 新的领域模型和 API
 - SQLite schema 升级（v9 → v10）
-- MemoryPack 格式扩展（向后兼容）
+- MemoryPack wire 格式升级（`0.4.0a8` → `0.5.0a1`）
 - 新的 REST API 端点
 
 ## 数据库迁移
@@ -47,46 +47,61 @@ CREATE TABLE narrative_tension_links (
 );
 ```
 
-**迁移步骤**：
-
-1. 使用 Lifecycle Coordinator 备份现有数据库：
+**迁移步骤**：Lifecycle API 使用 `inspect → plan → execute`，升级写入新文件，
+并在发布新文件前生成经过验证的备份；不会原地覆盖 v9 数据库。
 
 ```python
-from erii.data_lifecycle import DataLifecycleCoordinator
-
-coordinator = DataLifecycleCoordinator()
-backup_result = coordinator.backup(
-    source_path="path/to/memory.sqlite3",
-    source_kind="sqlite",
-    backup_parent_dir="path/to/backups",
+from erii import (
+    DataLifecycleCoordinator,
+    ERIIEngine,
+    LifecycleStatus,
+    LifecycleTarget,
+    LifecycleTargetKind,
+    SQLiteStorage,
+    UpgradeRequest,
 )
-```
 
-2. 运行 SQLite schema 升级：
-
-```python
-from erii.lifecycle_sqlite_upgrade import upgrade_sqlite_schema
-
-upgrade_sqlite_schema(
-    "path/to/memory.sqlite3",
-    target_version=10,
-    backup_parent_dir="path/to/backups",
+lifecycle = DataLifecycleCoordinator()
+source_target = LifecycleTarget(
+    LifecycleTargetKind.SQLITE,
+    "path/to/memory-v9.sqlite3",
 )
-```
+destination_target = LifecycleTarget(
+    LifecycleTargetKind.SQLITE,
+    "path/to/memory-v10.sqlite3",
+)
+backup_target = LifecycleTarget(
+    LifecycleTargetKind.BACKUP,
+    "path/to/backups/memory-v9.eriibak",
+)
 
-3. 验证升级结果：
+source = lifecycle.inspect(source_target)
+plan = lifecycle.plan(
+    UpgradeRequest(
+        source=source,
+        destination=destination_target,
+        backup_destination=backup_target,
+    )
+)
+# plan.to_json() 可先保存供人工审阅；plan() 本身零写入。
+report = lifecycle.execute(plan)
+upgraded = lifecycle.inspect(destination_target)
+assert upgraded.status is LifecycleStatus.CURRENT
+assert upgraded.detected_version == "10"
 
-```python
-from erii.engine import ERIIEngine
-
-engine = ERIIEngine(storage_dir="path/to/memory.sqlite3")
-# 确认可以正常访问
-profile = engine.storage.get_relationship("agent", "user")
+# 使用显式 SQLiteStorage 打开升级副本并验证业务读取。
+engine = ERIIEngine(storage_driver=SQLiteStorage(destination_target.path))
+try:
+    profile = engine.storage.get_relationship("agent", "user")
+finally:
+    engine.close()
 ```
 
 ### FileStorage
 
-FileStorage 格式保持 v1 不变，无需迁移。新的 consequence 数据将写入新的 journal 文件：
+FileStorage 当前格式为 v2。v2 增加 consequence 与 tension journal；v1 数据应使用
+同一套 `LifecycleTargetKind.FILE_STORAGE + UpgradeRequest` 流程迁移到新的目录，
+并保留自动生成的已验证备份。新的数据写入：
 
 - `_relationship_consequences/` - 关系后果 journal
 - `_narrative_tension_links/` - 叙事张力链接 journal
@@ -225,9 +240,10 @@ assert public_result.narrative_tensions == ()
 
 ## MemoryPack 格式
 
-### 新增字段
+### wire 版本与新增字段
 
-MemoryPack 新增两个可选字段：
+`0.5.0a1` writer 会把 MemoryPack `metadata.version` 写为 `0.5.0a1`，并在
+根对象中写入两个字段（没有记录时写为空数组）：
 
 ```python
 pack = MemoryPack(
@@ -239,10 +255,15 @@ pack = MemoryPack(
 )
 ```
 
-### 向后兼容性
+### 单向兼容边界
 
-- 旧版本的 MemoryPack（不含 consequence 字段）仍可被 `0.5.0` 正常导入
-- 新版本的 MemoryPack 可以被旧版本导入，consequence 字段会被忽略
+- `0.5.0a1` reader 可以读取既有 `0.4.0a8` MemoryPack；缺失的
+  `relationship_consequences` 与 `narrative_tension_links` 会解释为空列表。
+- `0.4.0a8` reader 不能读取 `0.5.0a1` MemoryPack。旧 reader 对根字段采用严格校验，
+  因此会把上述两个新字段识别为未知字段，而不是静默忽略。
+- 不提供把包含 consequence 数据的 `0.5.0a1` pack 降级为 `0.4.0a8` 的有损写出。
+  若要把旧 pack 固化为新格式，请通过 Data Lifecycle upgrade 生成并校验
+  `0.5.0a1` 副本；原文件与备份保持不变。
 
 **导出示例**：
 
@@ -307,42 +328,61 @@ print(f"Tension digest: {proof.tension_digest}")
 Consequence 只能从满足以下条件的 Turn 记录：
 
 1. **Turn 已完成**：`turn.status == TurnStatus.COMPLETED`
-2. **回复已展示**：`turn.delivery_disposition in (SHOWN, SHOWN_UNREVIEWED)`
-3. **连续性受支持**：Turn 包含有效的 `continuity_result`
-4. **Message 来源明确**：`agent_message.message_id` 存在且非空
+2. **最终回复已精确展示**：`turn.delivery_disposition == SHOWN`；
+   `SHOWN_UNREVIEWED` 不具备 consequence authority
+3. **连续性受支持**：review 为 `REVIEWED`，且 verdict 是 `ALIGNED` 或
+   `SUPPORTED_NEW_CHOICE`
+4. **Review 与最终消息绑定**：relationship、turn、reply 长度与 SHA-256 均一致
+5. **Event 已接受**：decision outcome 是 `ACCEPTED`，event 属于该 decision，
+   且其证据精确引用最终 Agent message
 
-**验证示例**：
+**写入即校验**：公开 API 会在持久化前原子校验完整来源链；不要调用内部
+Coordinator 做预检查。
 
 ```python
-from erii.core.consequence import RelationshipConsequenceSourceCoordinator
-
-coordinator = RelationshipConsequenceSourceCoordinator(storage)
-
-# 检查 turn 是否满足来源条件
 try:
-    coordinator.require_turn_consequence_authority(
-        "turn-123",
-        relationship_id="rel-456",
+    consequence = engine.record_relationship_consequence(
+        agent_id="agent",
+        user_id="user",
+        source_turn_id="turn-123",
+        source_decision_id="decision-456",
+        source_event_id="event-789",
+        effects=("harm", "trust_decrease"),
+        summary="The shown choice damaged trust.",
     )
-    print("✓ Turn 满足来源条件")
-except ValueError as e:
-    print(f"✗ Turn 不满足条件: {e}")
+except ValueError as exc:
+    print(f"来源链未通过校验: {exc}")
 ```
 
 ## 故障排除
 
 ### SQLite 迁移失败
 
-如果 SQLite 迁移失败，可以从备份恢复：
+如果 SQLite 迁移失败，恢复操作同样使用 `inspect → plan → execute`，且只发布到
+一个尚不存在的新目标路径：
 
 ```python
-from erii.data_lifecycle import DataLifecycleCoordinator
-
-coordinator = DataLifecycleCoordinator()
-coordinator.restore(
-    backup_path="path/to/backups/backup-xxx.zip",
-    target_parent_dir="path/to/restore",
+from erii import (
+    DataLifecycleCoordinator,
+    LifecycleTarget,
+    LifecycleTargetKind,
+    RestoreRequest,
 )
+
+lifecycle = DataLifecycleCoordinator()
+backup_target = LifecycleTarget(
+    LifecycleTargetKind.BACKUP,
+    "path/to/backups/memory-v9.eriibak",
+)
+restore_target = LifecycleTarget(
+    LifecycleTargetKind.SQLITE,
+    "path/to/restore/memory-v9-restored.sqlite3",
+)
+backup = lifecycle.inspect(backup_target)
+restore_plan = lifecycle.plan(
+    RestoreRequest(backup=backup, destination=restore_target)
+)
+restore_report = lifecycle.execute(restore_plan)
 ```
 
 ### Consequence 写入失败
@@ -384,18 +424,19 @@ coordinator.restore(
 
 使用清晰、一致的效应标签：
 
-- `harm` - 造成伤害
-- `trust_increase` / `trust_decrease` - 信任变化
-- `boundary_violation` / `boundary_respected` - 边界相关
-- `commitment_made` / `commitment_broken` - 承诺相关
-- `vulnerability_shared` - 脆弱性分享
-- `support_offered` / `support_refused` - 支持相关
+- `harm` / `comfort` - 伤害或安慰
+- `refusal` / `anger` / `conflict` - 拒绝、愤怒或冲突
+- `boundary_expression` - 明确表达边界
+- `trust_decrease` - 信任下降
+- `temporary_distance` / `relationship_end` - 暂时疏远或关系终止
+- `repair_attempt` / `repair_refused` - 修复尝试或修复被拒绝
 
 ## 兼容性承诺
 
 - `0.5.x` 系列不会破坏 `0.5.0a1` 的 consequence 数据格式
 - SQLite schema v10 在 `0.5.x` 期间保持稳定
-- MemoryPack 的 consequence 字段在 `0.5.x` 期间保持向后兼容
+- MemoryPack wire `0.5.0a1` 在 `0.5.x` 期间保持稳定；兼容承诺是新 reader
+  读取 `0.4.0a8`，不是旧 reader 读取新 pack
 
 ## 相关文档
 

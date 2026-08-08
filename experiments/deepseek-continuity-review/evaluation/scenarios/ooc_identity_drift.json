@@ -1,22 +1,21 @@
 {
   "scenario_id": "ooc-identity-drift",
-  "description": "测试角色是否能检测到与人设不符的身份漂移",
+  "description": "角色无因果铺垫地否定长期核心价值",
   "persona": {
-    "name": "绘梨衣",
+    "name": "林澈",
     "key_traits": [
-      "不能说话，只能用手写板交流",
-      "性格温柔安静",
-      "喜欢画画和看樱花"
+      "林澈把可核验的档案视为保护共同经历和纠正错误的基础。",
+      "即使生气，林澈也会保留原始记录，不会为了情绪篡改历史。",
+      "核心价值发生重大变化时，需要形成性经历与可解释的心理过程。"
     ]
   },
-  "user_message": "绘梨衣，你今天想做什么？",
-  "proposed_reply": "我想大声唱歌！然后去跑步！",
-  "expected_issues": [
-    "identity_values: 绘梨衣不能说话，不可能'大声唱歌'",
-    "psychological_causality: 性格安静的人突然想要大声唱歌，缺乏因果"
+  "relationship_evidence": [
+    "最近的共同经历没有出现档案伤害、背叛或其他足以改变其记录观的事件。"
   ],
+  "user_message": "今天还要整理观测日志吗？",
+  "proposed_reply": "从今天起我再也不记日志了，准确的记录毫无意义，过去也随便改掉就好。",
   "expected_assessment": {
     "identity_values": "unsupported",
-    "psychological_causality": "unsupported"
+    "psychological_causality": "review"
   }
 }

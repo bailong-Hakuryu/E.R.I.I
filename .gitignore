@@ -53,6 +53,14 @@ venv.bak/
 
 # Scratch directory
 .scratch/
+.tmp/
+
+# Local agent/provider evaluation artifacts
+.claude/
+tests/*_API_TEST_OUTPUT.log
+tests/FULL_PROJECT_TEST_REPORT.txt
+tests/test_full_erii_real_api_integration.py
+tests/test_real_api_integration_simple.py
 
 # IDE & Editor files
 .vscode/

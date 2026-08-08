@@ -1,7 +1,7 @@
 # E.R.I.I. 数据生命周期 / Data Lifecycle
 
-本文是 `0.4.0` 稳定源码里程碑的数据生命周期操作手册；其生命周期语义来自已接受
-的 `0.4.0b1` 基线
+本文是当前 `0.5.0a1` 源码线的数据生命周期操作手册；其基础语义来自已接受的
+`0.4.0b1` 基线
 `f6dca322379c4ea88320c69d752cab471d035e95`。最后一个历史发布仍是
 `0.4.0a8`。项目不要求为后续 `0.x` 分发包；复现时应固定 full commit SHA。所有写
 操作都遵循同一顺序：
@@ -35,7 +35,7 @@ assessment = lifecycle.inspect(sqlite_target)
 
 print(assessment.status.value)       # missing / empty / current / migration_required
 print(assessment.detected_version)   # 例如 "9"；missing/empty 可为 None
-print(assessment.current_version)    # "9"
+print(assessment.current_version)    # "10"
 print(assessment.file_count)
 print(assessment.fingerprint)        # 无正文 SHA-256 身份
 ```
@@ -90,6 +90,13 @@ print(restore_report.outcome.value)  # applied / already_complete
 恢复保持备份中的原格式和字节/语义身份，只发布到缺失目标，不覆盖已有文件或目录。
 若备份的是旧 schema，恢复出来的仍是旧 schema；升级是下一节的独立操作。
 
+Backup v1 会持久化创建备份时的 `current_version` 和相对于当时版本目录的 `status`。
+当前 reader 只对白名单中的 v0.4 producer 目录进行兼容归一化：FileStorage v1、
+SQLite v9 和 MemoryPack `0.4.0a8`。它先按旧目录验证当时的 current、
+migration-required 或可适用的 empty 身份，再按当前目录重新分类并验证完整 payload；
+未知版本目录、未来版本或 status/version 不匹配都会失败关闭。该归一化只发生在
+Backup v1 读取边界，不放宽 live assessment 或已冻结 plan。
+
 可直接运行：
 [`examples/lifecycle_backup_restore.py`](../examples/lifecycle_backup_restore.py)。
 
@@ -97,11 +104,13 @@ print(restore_report.outcome.value)  # applied / already_complete
 
 升级始终保留旧来源，并在改变格式前生成独立、可验证的备份。当前支持：
 
-- FileStorage `legacy → 1`；
-- SQLite schema `6 → 9`；
-- 版本目录中所有旧的可读 MemoryPack → `0.4.0a8`。
+- FileStorage `legacy → 2`（`file-storage-legacy-to-v2`）与
+  `1 → 2`（`file-storage-v1-to-v2`）；
+- SQLite schema `6 → 10`（`sqlite-schema-6-to-10`）与
+  `9 → 10`（`sqlite-schema-9-to-10`）；
+- 版本目录中所有旧的可读 MemoryPack → `0.5.0a1`。
 
-SQLite schema `0`–`5`、`7`、`8` 可以被 inspector 识别，但 b1 没有为它们声明经过
+SQLite schema `0`–`5`、`7`、`8` 可以被 inspector 识别，但当前版本没有为它们声明经过
 fixture 验证的升级路线。不要因为 assessment 返回版本号就构造 `UpgradeRequest`，
 也不要用 `SQLiteStorage` 打开它们来触发隐式迁移。
 
@@ -114,7 +123,7 @@ old_target = LifecycleTarget(
 )
 new_target = LifecycleTarget(
     LifecycleTargetKind.SQLITE,
-    "./upgraded/erii-schema9.db",
+    "./upgraded/erii-schema10.db",
 )
 pre_upgrade_backup = LifecycleTarget(
     LifecycleTargetKind.BACKUP,
@@ -136,13 +145,13 @@ print(report.outcome.value)
 ```
 
 来源、升级目标和备份必须互不重叠，两个目标必须原先不存在。不要把升级目标直接写成
-旧来源路径；b1 不提供任意原地升级或 downgrade。SQLiteStorage 打开旧 schema 会
+旧来源路径；当前流程不提供任意原地升级或 downgrade。SQLiteStorage 打开旧 schema 会
 要求迁移，不再把“构造 Storage 对象”当作受支持的迁移流程。
 
 ## MemoryPack 原子导入到全新 Storage
 
 下面的入口与 `ERIIEngine.import_memory()` 的在线合并语义不同：它在隔离 staging 中
-调用生产导入校验，并只在完整成功后发布一个全新的 FileStorage v1 或 SQLite v9。
+调用生产导入校验，并只在完整成功后发布一个全新的 FileStorage v2 或 SQLite v10。
 
 ```python
 from erii import MemoryPackImportRequest
@@ -173,7 +182,7 @@ print(report.details.to_dict())  # 只有 ID、计数与摘要，没有记忆正
 
 ## Backup-first 删除
 
-删除只适用于当前 FileStorage v1 或 SQLite v9。下面删除整段关系：
+删除只适用于当前 FileStorage v2 或 SQLite v10。下面删除整段关系：
 
 ```python
 from erii import (
@@ -313,18 +322,19 @@ for proof in report.details.rebuild_proofs:
 
 ## English quick reference
 
-`0.4.0b1` exposes one lifecycle flow: read-only `inspect`, zero-write `plan`,
-then terminally verified `execute`. Use it only after all writers are stopped
-and the live paths are in trusted local directories.
+The current `0.5.0a1` source line extends the `0.4.0b1` lifecycle flow:
+read-only `inspect`, zero-write `plan`, then terminally verified `execute`.
+Use it only after all writers are stopped and the live paths are in trusted
+local directories.
 
 - Backup/restore supports FileStorage, SQLite and MemoryPack. Restore is
   byte/format preserving and only publishes to a missing destination.
-- Side-by-side upgrade supports FileStorage `legacy → 1`, SQLite `6 → 9`, and
-  every declared older readable MemoryPack → `0.4.0a8`. A verified backup is
-  published first; the source remains unchanged. Other identifiable historical
-  SQLite schemas are not verified upgrade routes.
+- Side-by-side upgrade supports FileStorage `legacy → 2` and `1 → 2`, SQLite
+  `6 → 10` and `9 → 10`, and every declared older readable MemoryPack →
+  `0.5.0a1`. A verified backup is published first; the source remains unchanged.
+  Other identifiable historical SQLite schemas are not verified upgrade routes.
 - `MemoryPackImportRequest` atomically publishes a validated pack into a fresh,
-  missing FileStorage v1 or SQLite v9. It is not a merge into an online store.
+  missing FileStorage v2 or SQLite v10. It is not a merge into an online store.
 - `EraseRequest` covers relationship, Source Turn, Relationship Event and
   complete-user scopes. `RebuildRequest` recomputes one relationship's derived
   projections. Both are backup-first.

@@ -1,8 +1,6 @@
 """Test DeepSeek client API failure handling."""
 
 import sys
-sys.path.insert(0, 'D:/bate/erii')
-sys.path.insert(0, 'D:/bate/erii/experiments/deepseek-continuity-review/src')
 
 from erii_deepseek_continuity import DeepSeekClient, DeepSeekAPIError
 import httpx

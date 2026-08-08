@@ -9,7 +9,9 @@ import json
 from typing import Any, Dict, List, Optional
 from erii.compatibility import (
     MEMORY_PACK_FORMAT,
+    _memory_pack_supports_v050a1_fields,
     decode_memory_pack_json,
+    require_supported_version,
     validate_memory_pack_envelope,
 )
 from erii.models.adjudication import AdjudicationRecord, PersonaGrowthProposal
@@ -104,10 +106,25 @@ class MemoryPack:
         self.persona_reflection_decisions = persona_reflection_decisions or []
         self.version = version
         self.exported_at = exported_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._validate_versioned_fields()
+
+    def _validate_versioned_fields(self) -> bool:
+        """Prevents current-only fields from being mislabeled as an older wire format."""
+        version = require_supported_version(MEMORY_PACK_FORMAT, self.version)
+        supports_v050a1_fields = _memory_pack_supports_v050a1_fields(version)
+        if not supports_v050a1_fields and (
+            self.relationship_consequences or self.narrative_tension_links
+        ):
+            raise ValueError(
+                "MemoryPack relationship_consequences and narrative_tension_links "
+                "require format version '0.5.0a1' or later"
+            )
+        return supports_v050a1_fields
 
     def to_dict(self) -> Dict[str, Any]:
         """Serializes MemoryPack to dictionary."""
-        return {
+        supports_v050a1_fields = self._validate_versioned_fields()
+        document: Dict[str, Any] = {
             "metadata": {
                 "version": self.version,
                 "agent_id": self.agent_id,
@@ -133,12 +150,6 @@ class MemoryPack:
             "relationship_adjudications": [
                 record.to_dict() for record in self.relationship_adjudications
             ],
-            "relationship_consequences": [
-                record.to_dict() for record in self.relationship_consequences
-            ],
-            "narrative_tension_links": [
-                record.to_dict() for record in self.narrative_tension_links
-            ],
             "persona_growth_proposals": [
                 proposal.to_dict() for proposal in self.persona_growth_proposals
             ],
@@ -155,6 +166,14 @@ class MemoryPack:
                 for decision in self.persona_reflection_decisions
             ],
         }
+        if supports_v050a1_fields:
+            document["relationship_consequences"] = [
+                record.to_dict() for record in self.relationship_consequences
+            ]
+            document["narrative_tension_links"] = [
+                record.to_dict() for record in self.narrative_tension_links
+            ]
+        return document
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MemoryPack":

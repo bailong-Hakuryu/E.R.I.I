@@ -23,7 +23,7 @@ EXCLUDED_DIRECTORIES = {
     "htmlcov",
     "node_modules",
 }
-DOCUMENTATION_DIRECTORIES = ("docs", ".github")
+DOCUMENTATION_DIRECTORIES = ("docs", ".github", "experiments")
 INLINE_LINK = re.compile(
     r"!?\[[^\]\n]*\]\(\s*(?P<target><[^>\n]+>|[^)\s]+)"
 )

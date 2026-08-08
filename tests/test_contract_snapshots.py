@@ -99,6 +99,23 @@ class ContractSnapshotTests(unittest.TestCase):
                         rc1["compatibility_catalog"]["package_version"] = CURRENT_RELEASE
                     self.assertEqual(final, rc1)
 
+    def test_v050a1_memory_pack_contract_freezes_one_way_compatibility(self) -> None:
+        legacy = read_contract(STABLE_040_RELEASE, "data-formats")
+        current = read_contract(CURRENT_RELEASE, "data-formats")
+        legacy_format = legacy["compatibility_catalog"]["formats"]["memory_pack"]
+        current_format = current["compatibility_catalog"]["formats"]["memory_pack"]
+
+        self.assertEqual(legacy_format["current_version"], "0.4.0a8")
+        self.assertEqual(current_format["current_version"], "0.5.0a1")
+        self.assertIn("0.4.0a8", current_format["readable_versions"])
+
+        legacy_fields = set(legacy["memory_pack_envelope"]["root_fields"])
+        current_fields = set(current["memory_pack_envelope"]["root_fields"])
+        self.assertEqual(
+            current_fields - legacy_fields,
+            {"relationship_consequences", "narrative_tension_links"},
+        )
+
     def test_check_mode_reports_a_readable_diff_without_rewriting(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             generated = Path(temporary_directory) / "contracts"

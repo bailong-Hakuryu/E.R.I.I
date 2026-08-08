@@ -1,79 +1,60 @@
-# CI 测试状态说明
+# CI 与本地验证状态
 
-## 当前状态 (v0.5.0a1)
+> 快照日期：2026-08-08
+>
+> 源版本：`0.5.0a1`（Alpha）
+>
+> 基线提交：`b91abc65b60ce6e621663ea0792bd34fbcff37db`
+>
+> 工作区：有未提交改动
+>
+> 环境：Windows NT 10.0.26200.0 / Python 3.12.13
 
-### ✅ 核心功能测试：全部通过
-- **571 passed** - 核心功能测试
-- Consequence 系统：完整通过
-- Recall 集成：完整通过
-- 存储层：完整通过
-- Engine API：完整通过
+本页记录当前工作区的可复现验证证据，不代表发布认证、生产稳定性或 SLA。
 
-### ⚠️ 已知问题
+## 本次验证
 
-#### 1. Windows 临时目录权限错误（4 个）
-```
-ERROR tests/test_relationship_consequence_engine.py::test_*
-PermissionError: [WinError 5] 拒绝访问: 'C:\\Users\\ROG\\AppData\\Local\\Temp\\pytest-of-ROG'
-```
+| 范围 | 命令 | 结果 |
+|---|---|---|
+| 根回归测试 | `$env:TEMP='.tmp'; $env:TMP='.tmp'; python -m pytest -q tests --ignore=tests/test_full_erii_real_api_integration.py --ignore=tests/test_real_api_integration_simple.py --basetemp .tmp/pytest-root-final3` | PASS：`621 passed, 5 skipped, 98 warnings, 466 subtests passed` |
+| DeepSeek 实验离线测试 | `python -m pytest -q experiments/deepseek-continuity-review/tests` | PASS：`45 passed` |
+| 静态检查 | `python -m ruff check erii tests examples benchmarks scripts experiments/deepseek-continuity-review` | PASS |
+| 源码编译 | `python -m compileall -q erii tests examples benchmarks scripts experiments/deepseek-continuity-review` | PASS |
+| 凭据检查 | `python scripts/check_secrets.py` | PASS：提交候选文件中未发现凭据形态字面量 |
+| 文档链接 | `python scripts/check_docs.py` | PASS：`156` 个 Markdown 文件、`208` 个本地链接 |
+| 冻结契约 | `python scripts/freeze_contracts.py --check` | PASS：`4` 个快照均为当前版本 |
+| 示例 | `python -m erii.demo --output-dir .tmp/final-demo` | PASS |
+| 构建 | `python -m build --no-isolation` | PASS：生成 sdist 与 wheel |
+| 制品元数据 | `.scratch/ci-dev-venv312/Scripts/twine.exe check --strict dist/erii-0.5.0a1.tar.gz dist/erii-0.5.0a1-py3-none-any.whl` | PASS：两个制品均通过 |
+| 制品边界 | 检查 sdist/wheel 文件表与元数据 | PASS：版本 `0.5.0a1`、Python `>=3.11`；本地真实 API 探针、日志及可拆实验模块均未进入核心制品 |
+| 差异格式 | `git diff --check` | PASS；仅有 Git 的 LF/CRLF 提示 |
 
-**原因**：Windows 系统临时目录权限问题，与代码无关  
-**影响**：仅影响 Windows 本地测试，不影响 Linux CI  
-**状态**：已知环境问题，不阻塞发布
+构建制品：
 
-#### 2. Lifecycle 测试需要更新（~10 个）
-```
-tests/test_lifecycle_sqlite_coordinator.py
-tests/test_lifecycle_upgrade.py
-tests/test_lifecycle_memory_pack_staging_import.py
-tests/test_longitudinal_eval.py
-tests/test_recent_timeline_storage.py
-```
+- `dist/erii-0.5.0a1-py3-none-any.whl`
+  - SHA-256：`f4ef039c90bfe19da3ca1c662d1c83129df3dcc93334c553aebfb1759aadd86b`
+- `dist/erii-0.5.0a1.tar.gz`
+  - SHA-256：`8d96fa567492c6684ac9f314c0d4173a7e604778838e7c03fb4ee4b798e818af`
 
-**原因**：这些测试硬编码了 SQLite schema v9，现在已升级到 v10  
-**影响**：不影响核心功能，仅影响 lifecycle 测试套件  
-**状态**：需要更新测试中的版本期望值
+本次使用本地 CI 开发虚拟环境中的 `twine` 完成严格元数据检查。GitHub 工作流仍保留同类检查；本页不把工作流配置等同于远端执行结果。
 
-#### 3. 契约快照对比测试（3 个）
-```
-tests/test_contract_snapshots.py::test_b1_rc1_and_final_contracts_are_retained_without_final_drift
-```
+## 未运行与验证边界
 
-**原因**：测试对比 0.4.0 vs 0.5.0a1 的契约差异（预期行为）  
-**影响**：无，这是版本升级的正常现象  
-**状态**：测试设计为验证版本间的契约变化
+- 真实 DeepSeek API 探针：`NOT RUN`。CI 清空 `DEEPSEEK_API_KEY`；离线测试验证解析、引用边界、提示预算、fixture 与适配器契约，不证明远程可用性、模型准确率、延迟、成本或服务稳定性。
+- GitHub Actions：当前工作区尚未提交，因此没有与该快照对应的远端运行结果。
+- 平台矩阵：本页只记录上述 Windows / Python 3.12.13 实跑结果；Python 3.11、3.13、3.14 与其他操作系统由远端工作流覆盖，当前快照未实跑。
+- 生产部署、真实用户负载、长期运行、多租户授权与数据加密边界不由本页验证。
 
-## 建议
+## 已知警告
 
-### 选项 1：当前状态发布（推荐）
-- 核心功能完整且测试通过
-- 已知问题都是环境或版本升级相关，不影响功能
-- 可以在后续 patch 版本中修复 lifecycle 测试
+根测试报告 `98 warnings`，主要包括：
 
-### 选项 2：修复所有测试后发布
-- 需要更新 10+ 个 lifecycle 测试
-- 需要更新升级策略名称（schema-6-to-9 → schema-6-to-10）
-- 可能需要更新测试固件
+- Starlette `TestClient` 与当前 `httpx` 组合的弃用提示；
+- `erii/server/app.py:1151` 的 FastAPI `on_event("shutdown")` 弃用提示，后续应迁移到 lifespan；
+- 测试为验证兼容路径而主动调用 `remember()`、`adjudicate_relationship_candidates()` 等旧 API 产生的弃用提示。
 
-## 测试覆盖率
-
-| 组件 | 测试状态 |
-|------|---------|
-| Consequence 核心 | ✅ 100% 通过 |
-| Recall 集成 | ✅ 100% 通过 |
-| 存储层 | ✅ 100% 通过 |
-| Engine API | ✅ 100% 通过 |
-| REST API | ✅ 100% 通过 |
-| MemoryPack | ✅ 100% 通过 |
-| Lifecycle (除升级) | ✅ 100% 通过 |
-| SQLite 升级测试 | ⚠️ 需要更新版本号 |
-| Windows 环境 | ⚠️ 临时目录权限问题 |
+这些警告未导致本次测试失败，但仍应在后续版本中持续收口。
 
 ## 结论
 
-**v0.5.0a1 的核心功能完整且稳定**，CI 失败主要是测试基础设施需要适配新版本，不影响实际使用。
-
-建议：
-1. 当前版本可以安全使用
-2. 创建 issue 跟踪 lifecycle 测试更新
-3. 在 v0.5.0a2 或 v0.5.1 中修复测试
+`0.5.0a1` 是活跃的 Alpha 源码里程碑。当前可确认的范围仅限上表中实际执行且退出码为 `0` 的命令；离线测试、构建成功和本地全绿均不等同于正式发布或生产就绪。

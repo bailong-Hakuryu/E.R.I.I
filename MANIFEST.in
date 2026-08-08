@@ -1,0 +1,5 @@
+# Maintainer-local real-provider probes and their outputs never enter source distributions.
+exclude tests/test_full_erii_real_api_integration.py
+exclude tests/test_real_api_integration_simple.py
+exclude tests/FULL_PROJECT_TEST_REPORT.txt
+exclude tests/*_API_TEST_OUTPUT.log

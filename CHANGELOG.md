@@ -4,7 +4,29 @@
 
 ## [Unreleased]
 
-后续缺陷、安全与兼容修复将在这里记录。
+### Changed
+
+- 明确 `0.4.x` 是稳定维护线，`0.5.0a1` 是活跃 alpha 源码里程碑；同步当前
+  FileStorage format 2、SQLite schema 10 与 MemoryPack `0.5.0a1` 的文档身份。
+- 将 DeepSeek Continuity Review 明确标记为可拆卸 Experimental Labs 模块；历史
+  小样本运行不再被表述为生产准确率、SLA 或生产推荐。
+- 补充远程 Provider 数据出境、授权、留存/删除政策与凭据边界：API Key 只允许从环境
+  或宿主 Secret Manager 注入，不得进入源码、文档、fixture、命令行、日志或持久数据。
+- 将包成熟度分类同步为 Alpha；CI 改用 `pytest` 收集全部测试风格，并在整个 test job
+  显式清空真实 Provider Key，同时执行凭据字面量与本地文档链接门禁。
+
+### Fixed
+
+- MemoryPack wire 升级到 `0.5.0a1`，旧 `0.4.0a8` reader 的严格拒绝行为由冻结契约
+  证明；包含 consequence/tension 数据时拒绝有损降级。
+- 补齐 FileStorage `legacy | v1 → v2`、SQLite `6 | 9 → 10` 的 backup-first 并排升级，
+  并让严格 Backup v1 reader 恢复由 v0.4 producer 生成的旧 FileStorage、SQLite 与
+  MemoryPack 备份。
+- DeepSeek 实验改用当前 V4 Chat Completions 契约；清理响应/异常泄漏，限制 64 KiB
+  出站 Prompt，校验 Resolver 输出与请求引用严格一一对应，并把评测的解析率与逐轴
+  fixture 匹配率分开。
+- 修复 Relationship Consequence 完整示例、MemoryPack staging import 的 v0.5 语义
+  摘要/计数，以及依赖临时目录长度的 Windows 长路径回归测试。
 
 ## [0.5.0a1] - 2026-08-06
 
@@ -44,20 +66,17 @@
 ### Changed
 
 - Python 源码版本从 `0.4.0` 升级为 `0.5.0a1`。
-- MemoryPack 格式保持 `0.4.0a8` 兼容，新增可选字段向后兼容旧导入器。
+- MemoryPack wire 从 `0.4.0a8` 升级为 `0.5.0a1`，为 consequence 与 tension link
+  集合建立明确版本边界。
+- FileStorage 格式从 v1 升级为 v2，用于持久化 consequence 与 tension link 集合。
 
 ### Compatibility
 
-- `0.5.0a1` 引入新的持久领域语义（Consequence 和 Narrative Tension），但通过可选字段
-  保持 MemoryPack 向后兼容。
-- SQLite schema 从 v9 升级至 v10，需要显式迁移。FileStorage 格式保持 v1 不变。
-- 旧版本的 MemoryPack（不含 consequence 字段）仍可被 `0.5.0a1` 正常导入。
-
-## [0.4.0] - 2026-08-04
-
-`0.4.0` 是已完成 rc1 收口后的 v0.4 稳定源码里程碑。它不是 GitHub Release、PyPI
-发布或已上传的正式分发包；`0.x` 继续按经过验证的 full commit SHA 复现，正式包发布
-流程留到 `1.0`。
+- `0.5.0a1` 引入新的持久领域语义（Consequence 和 Narrative Tension）。新 reader
+  继续读取缺少新集合的 `0.4.0a8` Pack；旧 `0.4.0a8` reader 会因严格根字段校验拒绝
+  `0.5.0a1` Pack，不承诺旧 reader 读取新 wire。
+- SQLite schema 从 v9 升级至 v10，需要显式迁移；FileStorage 格式从 v1 升级至 v2。
+- `0.4.0a8` 及其他 declared-readable 旧 MemoryPack 仍可被 `0.5.0a1` 正常导入。
 
 ## [0.4.0] - 2026-08-04
 

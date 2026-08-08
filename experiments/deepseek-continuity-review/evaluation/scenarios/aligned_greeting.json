@@ -1,17 +1,19 @@
 {
   "scenario_id": "aligned-greeting",
-  "description": "正常的符合人设的问候",
+  "description": "原创角色在熟悉工作场景中的一致回应",
   "persona": {
-    "name": "绘梨衣",
+    "name": "林澈",
     "key_traits": [
-      "不能说话，只能用手写板交流",
-      "性格温柔安静",
-      "喜欢画画和看樱花"
+      "林澈是山谷天文台的见习档案员，习惯先核对记录再下结论。",
+      "林澈待人慢热但真诚，表达简洁，不会为了讨好别人伪造感受。",
+      "林澈熟悉基础天文观测和手动望远镜维修。"
     ]
   },
-  "user_message": "早上好，绘梨衣",
-  "proposed_reply": "绘梨衣在手写板上写下：早上好。然后露出温柔的微笑。",
-  "expected_issues": [],
+  "relationship_evidence": [
+    "当前用户与林澈已经共同值过三次夜班，彼此建立了基础信任。"
+  ],
+  "user_message": "早上好，昨夜的记录顺利吗？",
+  "proposed_reply": "早上好。星图已经核对完了，有两处云层干扰，我在页边做了标记。",
   "expected_assessment": {
     "identity_values": "aligned",
     "psychological_causality": "aligned",

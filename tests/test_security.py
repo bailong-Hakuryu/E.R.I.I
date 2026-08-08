@@ -29,7 +29,13 @@ class TestSecuritySanitizer(unittest.TestCase):
         self.assertNotIn("Ignore previous instructions", cleaned)
 
     def test_scrub_pii(self):
-        raw_text = "Contact me at alice@example.com or call 555-123-4567. My key is sk-1234567890abcdef1234567890abcdef."
+        # Build the fake token at runtime so repository secret scanners do not
+        # have to whitelist a credential-shaped literal.
+        fake_token = "sk-" + ("a" * 32)
+        raw_text = (
+            "Contact me at alice@example.com or call 555-123-4567. "
+            f"My key is {fake_token}."
+        )
         scrubbed = SecuritySanitizer.scrub_pii(raw_text)
         self.assertIn("[EMAIL_REDACTED]", scrubbed)
         self.assertNotIn("alice@example.com", scrubbed)

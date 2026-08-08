@@ -38,7 +38,8 @@ E.R.I.I. 是可嵌入 Python 宿主的内核，不是聊天模型、万能 Agent
 
 ## 从源码安装
 
-当前稳定源码里程碑身份是 `0.5.0a1`，要求 Python 3.11–3.14：
+当前检出的活跃开发源码身份是 `0.5.0a1`（alpha），要求 Python 3.11–3.14。
+`0.4.x` 是稳定维护线；需要较低变更风险的集成应固定经过审查的 `0.4.x` full commit SHA：
 
 ```bash
 git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
@@ -126,12 +127,15 @@ E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，�
 详见 [Host Integration](docs/host-integration.md) 和
 [API Stability](docs/api-stability.md)。
 
-## v0.5.0 新特性：Relationship Consequence
+## v0.5.0a1 Alpha：Relationship Consequence
 
-`0.5.0` 引入 **Relationship Consequence** 和 **Narrative Tension** 系统，用于追踪关系决策的长期影响和叙事张力状态：
+活跃开发里程碑 `0.5.0a1` 引入 **Relationship Consequence** 和
+**Narrative Tension** 最小纵切，用于追踪关系决策的长期影响和叙事张力状态。
+这是 alpha 源码能力，不等于稳定发布或生产就绪声明：
 
 - **后果记录**：从已完成且连续性受支持的关系事件记录持久后果（伤害、信任变化、边界违反等）
-- **叙事张力追踪**：投影后果的当前状态（未处理、已处理未解决、已解决、关系终止）
+- **叙事张力追踪**：投影后果的当前状态（未处理、已处理未解决、共同和解、边界稳定、
+  关系终止或被取代）
 - **来源权威**：统一的来源校验确保只有可证明的最终回复才能产生后果
 - **私有边界**：后果投影仅对 `RecallAudience.AGENT_PRIVATE` 可见
 - **生命周期集成**：删除关系事件时自动级联删除相关后果
@@ -173,13 +177,15 @@ Relationship Consequence 和 Narrative Tension 系统；它不是已上传的 Gi
 | Python | `3.11`–`3.14` |
 | SQLite | schema `10` |
 | FileStorage | format `2` |
-| MemoryPack | `0.4.0a8` |
+| MemoryPack | `0.5.0a1` |
 | Lifecycle Backup | `1` |
 | Lifecycle Plan | writer `3`，readers `1`–`3` |
 
 `v0.5.0a1` 引入 Relationship Consequence 和 Narrative Tension 作为新的持久语义，
-SQLite schema 升级至 v10，FileStorage 升级至 format 2。MemoryPack 保持 `0.4.0a8`
-以维持向后兼容。Character Deliberation 和伤害后修复决策仍未实现。
+SQLite schema 升级至 v10，FileStorage 升级至 format 2，MemoryPack wire 升级至
+`0.5.0a1`。新 reader 可以读取 `0.4.0a8` Pack；旧 `0.4.0a8` reader 会因严格根字段
+校验拒绝 `0.5.0a1` Pack，不能把这种单向可读性写成双向兼容。Character Deliberation
+和伤害后修复决策仍未实现。
 
 ## 已有内核能力
 
@@ -213,20 +219,22 @@ Adapter/实验；E.R.I.I. 不强制使用某个 Provider，也不建议为了使
 
 **DeepSeek Continuity Review** ([experiments/deepseek-continuity-review](experiments/deepseek-continuity-review/))
 
-实现了 `ContinuityEvaluatorV1` 契约，探索 DeepSeek thinking mode 在角色连续性检测上的效果。
+该可拆卸 Labs 模块探索 DeepSeek thinking mode 是否适合实现
+`ContinuityEvaluatorV1`。现有真实 API 记录只是一次小样本、手工场景的探索性运行；
+它没有建立生产准确率、SLA 或可复现成本/延迟优势；单次场景通过数不能当作准确率或
+生产推荐。模块未安装、禁用或整体删除时，普通 Turn、Recall、Continuity、MemoryPack
+和生命周期能力必须保持可用。
 
-- **状态**: ✅ 真实 API 测试完成 (2026-08-07)
-- **结果**: Thinking ON 达到 100% 检测准确率（6/6 场景）
-- **成本**: +137% tokens，+614% 延迟
-- **推荐**: 生产环境使用场景分类策略
-
-详见 [evaluation/EXECUTIVE_SUMMARY.md](experiments/deepseek-continuity-review/evaluation/EXECUTIVE_SUMMARY.md)
-
-该模块完全可拆卸，删除不影响 E.R.I.I. 核心功能。
+远程模型调用会把所选 Prompt、证据、对话或记忆发送到对应 Provider。宿主必须在调用前
+取得适当授权，最小化出站数据，并核对 Provider 的地区、留存、删除和训练政策。API Key
+只能从环境变量或宿主 Secret Manager 注入，不能写入源码、文档、fixture、命令行参数、
+日志或持久角色数据。实验状态与原始记录见
+[实验目录](experiments/deepseek-continuity-review/)，但其中的历史结果不构成内核质量证明。
 
 ## 安全、数据与维护
 
-当前项目由单人长期维护，不提供 SLA。FileStorage、SQLite、MemoryPack 和 Lifecycle
+当前项目由单人长期维护，不提供 SLA。`0.4.x` 是稳定维护线，`0.5.0a1` 是活跃 alpha
+源码里程碑。FileStorage、SQLite、MemoryPack 和 Lifecycle
 Backup 默认明文；参考 REST 服务只有单一 owner key，不是每用户授权或多租户安全边界。
 正式产品仍需在宿主侧补齐身份、对象授权、TLS、加密、密钥管理、限流、租户隔离和
 外部副本删除编排。

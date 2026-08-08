@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Historical release](https://img.shields.io/badge/historical-v0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
-[![Source](https://img.shields.io/badge/source-v0.4.0-blue.svg)](CHANGELOG.md)
+[![Source](https://img.shields.io/badge/source-v0.5.0a1-blue.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11--3.14-green.svg)](pyproject.toml)
 
 [简体中文](README.md)
@@ -47,8 +47,9 @@ framework, or turnkey multi-tenant chat product.
 
 ## Install from source
 
-The current stable source-milestone identity is `0.4.0` and requires Python
-3.11–3.14:
+The active development checkout identifies as `0.5.0a1` (alpha) and requires
+Python 3.11–3.14. The `0.4.x` line is the stable maintenance line; integrations
+that prioritize lower change risk should pin a reviewed full `0.4.x` commit SHA:
 
 ```bash
 git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
@@ -147,6 +148,18 @@ starting points for new integrations.
 Read [Host Integration](docs/host-integration.md) and
 [API Stability](docs/api-stability.md).
 
+## v0.5.0a1 Alpha: Relationship Consequence
+
+The active `0.5.0a1` source milestone introduces the minimum vertical slice for
+**Relationship Consequence** and **Narrative Tension**. It records durable
+effects from supported, delivered relationship events; projects their current
+tension state (`unaddressed`, `addressed_unresolved`, `mutually_reconciled`,
+`boundary_stabilized`, `relationship_ended`, or `superseded`); keeps that
+projection Agent-private; and includes it in storage and lifecycle operations.
+This is alpha source capability, not a stable release or production-readiness
+claim. See the
+[Migration Guide](docs/migration-0.5.0.md) and [Changelog](CHANGELOG.md).
+
 ## Reference
 
 - [Getting Started: one-command isolation and restart proof](docs/getting-started.md)
@@ -171,25 +184,28 @@ Read [Host Integration](docs/host-integration.md) and
 `0.4.0b1` is an accepted source baseline at commit
 `f6dca322379c4ea88320c69d752cab471d035e95`.
 The `0.4.0rc1` source-closure evidence is fixed at commit
-`58ea8e69df28bec8e755e0a0d2a175679c18a694`. The current `0.4.0` accepts that
-work as the stable v0.4 source milestone; it is not an uploaded GitHub or
-package-registry distribution.
+`58ea8e69df28bec8e755e0a0d2a175679c18a694`. That work remains the stable
+`0.4.x` maintenance line. The active checkout is the `0.5.0a1` alpha source
+milestone; it is not an uploaded GitHub or package-registry distribution.
 
 The version axes remain independent:
 
 | Axis | Current value |
 | --- | --- |
-| Python source identity | `0.4.0` |
+| Python source identity | `0.5.0a1` |
 | Python | `3.11`–`3.14` |
-| SQLite | schema `9` |
-| FileStorage | format `1` |
-| MemoryPack | `0.4.0a8` |
+| SQLite | schema `10` |
+| FileStorage | format `2` |
+| MemoryPack | `0.5.0a1` |
 | Lifecycle Backup | `1` |
 | Lifecycle Plan | writer `3`, readers `1`–`3` |
 
-`v0.4.0` does not add a relationship dimension, memory kind, or persona-change
-channel. It does not implement v0.5 Relationship Consequence, Narrative
-Tension, post-harm repair, or durable Character Deliberation semantics.
+`v0.5.0a1` adds Relationship Consequence and Narrative Tension as durable alpha
+semantics. It advances SQLite to schema 10, FileStorage to format 2, and the
+MemoryPack wire to `0.5.0a1`. The new reader accepts `0.4.0a8` packs; the strict
+`0.4.0a8` reader rejects `0.5.0a1` packs with their new root fields, so this is
+one-way readability rather than bidirectional compatibility. Post-harm repair
+decisions and durable Character Deliberation remain unimplemented.
 
 ## Existing kernel capabilities
 
@@ -204,6 +220,7 @@ Tension, post-harm repair, or durable Character Deliberation semantics.
   authority;
 - append-only Relationship Events, five-axis state projection, Promises, and
   Open Loops;
+- Relationship Consequences and deterministic Narrative Tension projection;
 - Persona Reflection, approval-gated Growth Proposals, Episodes, and Chapters;
 - five-axis Continuity Review, Delivery Exception, Context Baseline, and Voice
   Trace;
@@ -227,9 +244,30 @@ Future model collaboration is not tied to DeepSeek. A Deliberation Ensemble
 would still have one Character Actor; Reviewers cannot vote to define the
 character or directly write persona, relationship, or memory state.
 
+### Experimental module
+
+**DeepSeek Continuity Review**
+([experiments/deepseek-continuity-review](experiments/deepseek-continuity-review/))
+is a removable Labs experiment that explores whether thinking mode can
+implement `ContinuityEvaluatorV1`. The available real-API record is one small,
+hand-written exploratory run. It does not establish production accuracy, an
+SLA, reproducible cost/latency gains, or a production recommendation; a
+single-run scenario pass count is not an accuracy metric. Core Turn, Recall,
+Continuity, MemoryPack, and lifecycle paths must continue to work when the
+module is absent, disabled, or deleted.
+
+Remote model calls send selected prompts, evidence, conversations, or memories
+to that Provider. Hosts must obtain appropriate authorization, minimize egress,
+and review the Provider's region, retention, deletion, and training policies.
+API keys must come only from environment variables or a host secret manager;
+never place them in source, documentation, fixtures, command-line arguments,
+logs, or durable character data. Historical experiment output is not evidence
+of kernel quality.
+
 ## Security, data, and maintenance
 
-E.R.I.I. is maintained seriously by one person and provides no SLA.
+E.R.I.I. is maintained seriously by one person and provides no SLA. `0.4.x` is
+the stable maintenance line; `0.5.0a1` is the active alpha source milestone.
 FileStorage, SQLite, MemoryPack, and Lifecycle Backup are plaintext by default.
 The reference REST service has one owner key, not per-user authorization or a
 multi-tenant security boundary. A product host must add identity,

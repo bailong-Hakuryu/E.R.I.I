@@ -26,20 +26,20 @@ Source Turn 的 `adjudicate_relationship_candidates()` 在 b1 发出
 
 | 格式/运行时 | 当前值 | 当前 Reader 接受 |
 | --- | --- | --- |
-| Package metadata | `0.4.0` source identity | v0.4 稳定源码里程碑；最后一个历史发布是 `0.4.0a8` |
+| Package metadata | `0.5.0a1` source identity | 活跃 alpha 源码线；v0.4 仍是稳定维护线，最后一个历史发布是 `0.4.0a8` |
 | Python | `>=3.11`，测试至 `3.14` | 3.11–3.14 |
-| SQLite | schema `9` | `0`–`9` 可识别；旧 schema 不由 Storage 自动升级 |
-| FileStorage | format `1` | `legacy`, `1` |
-| MemoryPack | `0.4.0a8` | `0.1.0`, `0.2.0`, `0.4.0`, `0.4.0a2`–`0.4.0a8` |
+| SQLite | schema `10` | `0`–`10` 可识别；旧 schema 不由 Storage 自动升级 |
+| FileStorage | format `2` | `legacy`, `1`, `2` |
+| MemoryPack | `0.5.0a1` | `0.1.0`, `0.2.0`, `0.4.0`, `0.4.0a2`–`0.4.0a8`, `0.5.0a1` |
 | Lifecycle Backup | `1` | `1` |
 | Lifecycle Plan | writer `3` | readers `1`, `2`, `3` |
 
-这些轴分别演进。包版本 `0.4.0` 不把 MemoryPack 重命名为 `0.4.0`，也不自动改变 SQLite
+这些轴分别演进。包版本不会自动把 MemoryPack 重命名为相同版本，也不自动改变 SQLite
 schema、提取器 schema、评估器或关系策略版本。
 
 ## “可读、恢复、升级、导入”不是一件事
 
-| 动作 | 含义 | v0.4 保证 |
+| 动作 | 含义 | 当前保证 |
 | --- | --- | --- |
 | inspect/readable | 能识别并严格校验格式身份 | 不等于 Storage 可以直接打开或数据已升级 |
 | backup | 捕获完整逻辑 payload 到 Backup v1 | 保持被检测到的原格式；不迁移 |
@@ -52,26 +52,30 @@ schema、提取器 schema、评估器或关系策略版本。
 创建 FileStorage/SQLite。`ERIIEngine.import_memory(overwrite=True)` 的在线合并语义
 不等于 lifecycle fresh import，也不提供全库原子替换。
 
-## v0.4 数据生命周期支持矩阵
+## 当前数据生命周期支持矩阵
 
 - `LifecycleInspector` 对 FileStorage、SQLite、MemoryPack 和 Lifecycle Backup
   零写入地返回 `missing | empty | current | migration_required`、版本、文件数、警告和
   不含正文的内容指纹。
 - FileStorage、SQLite 与 MemoryPack 都可以创建 Lifecycle Backup v1，并恢复到同种
   live target 的缺失路径。
-- FileStorage `legacy → 1`、SQLite `6 → 9`、以及所有已声明的旧可读 MemoryPack →
-  `0.4.0a8` 有显式 `UpgradeRequest` 路线。
-- SQLite schema `0`–`5`、`7`、`8` 虽可由 inspector 识别，但 v0.4 没有为它们声明经过
+- v0.4 Backup v1 中 producer-relative 的 FileStorage v1、SQLite v9、MemoryPack
+  `0.4.0a8` current/version/status 身份会先按冻结的旧版本目录校验，再按当前目录
+  重新分类并验证 payload；这也覆盖当时的 migration-required 来源以及 FileStorage/
+  SQLite empty 来源。未知 producer 目录或不匹配的 status/version 仍会失败关闭。
+- FileStorage `legacy → 2` 与 `1 → 2`、SQLite `6 → 10` 与 `9 → 10`，以及所有已声明
+  的旧可读 MemoryPack → `0.5.0a1` 有显式 `UpgradeRequest` 路线。
+- SQLite schema `0`–`5`、`7`、`8` 虽可由 inspector 识别，但当前版本没有为它们声明经过
   fixture 验证的 lifecycle upgrade 路线；不得把“可识别”写成“可升级”。
 - 当前 Storage 构造不会把旧 SQLite 作为隐式迁移入口；需要升级的 schema 失败关闭并
   要求使用 lifecycle 流程。
 - `MemoryPackImportRequest` 可以把 current 或 declared-readable Pack 原子发布到全新
-  FileStorage v1 或 SQLite v9；已存在目标和在线 merge 不支持。
-- 当前 FileStorage v1 由规范 `.erii-store.json` 声明。没有 manifest 的历史目录会被
+  FileStorage v2 或 SQLite v10；已存在目标和在线 merge 不支持。
+- 当前 FileStorage v2 由规范 `.erii-store.json` 声明。没有 manifest 的历史目录会被
   lifecycle inspector 识别为 `legacy`；inspect、backup 和 restore 不会偷偷赋予新身份。
 - Backup-first erase 支持关系、Source Turn、Relationship Event 与完整用户四种范围；
-  relationship rebuild 从剩余权威历史重算派生投影。两者只支持 current FileStorage v1
-  与 SQLite v9。
+  relationship rebuild 从剩余权威历史重算派生投影。两者只支持 current FileStorage v2
+  与 SQLite v10。
 
 新计划使用 contract v3，绑定策略、来源指纹、目标父目录、可选 pre-change backup 与
 selector。严格 reader 仍按原字段和摘要规则读取/执行 v1 backup/restore 与 v2 既有操作；
@@ -79,9 +83,10 @@ selector。严格 reader 仍按原字段和摘要规则读取/执行 v1 backup/r
 
 ## MemoryPack 权威兼容
 
-MemoryPack `0.4.0a8` 携带规范 Source Turn、Review/Delivery Record、归档 Artifact
+MemoryPack `0.5.0a1` 携带规范 Source Turn、Review/Delivery Record、归档 Artifact
 Evidence 与 tombstone commitments、Relationship Event、Persona Reflection 和持久
-Relationship Processing Run。现代 schema `"2"` 产物在首次写入前必须闭合到精确
+Relationship Processing Run；当前 reader 继续读取 `0.4.0a8`。现代 schema `"2"`
+产物在首次写入前必须闭合到精确
 Source Turn，并匹配类型、稳定 ID 和规范载荷摘要。
 
 旧 Pack 可读不代表缺失的现代权威会被补造。升级与导入不会从当前摘要猜测消息级

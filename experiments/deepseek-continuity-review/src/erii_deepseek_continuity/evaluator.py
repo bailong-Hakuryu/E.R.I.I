@@ -10,6 +10,9 @@ Key guarantees:
 - Zero provider brand in core persistence
 """
 
+from collections.abc import Sequence
+import unicodedata
+
 from erii.models.continuity import (
     ContinuityEvaluatorDescriptor,
     ContinuityEvaluationRequest,
@@ -17,7 +20,12 @@ from erii.models.continuity import (
 )
 
 from .client import DeepSeekClient
-from .evidence_resolver import EvidenceResolver
+from .evidence_resolver import (
+    EvidenceResolutionError,
+    EvidenceResolver,
+    ResolvedEvidence,
+    ResolvedVoiceActivation,
+)
 from .prompt_builder import build_review_prompt
 from .response_parser import parse_to_decision
 
@@ -81,6 +89,11 @@ class DeepSeekContinuityEvaluator:
             activations=request.voice_pattern_activations,
         )
 
+        # A custom resolver is an authority boundary.  It must not silently
+        # omit, add, duplicate, or rewrite any request-bound reference before
+        # the prompt leaves the process.
+        _require_exact_resolution(request, resolved_evidence, resolved_activations)
+
         # 3. Build review prompt (with resolved evidence)
         messages = build_review_prompt(
             request=request,
@@ -102,3 +115,46 @@ class DeepSeekContinuityEvaluator:
 
         # 6. Return real decision (raw reasoning already discarded in client layer)
         return decision
+
+
+def _require_exact_resolution(
+    request: ContinuityEvaluationRequest,
+    resolved_evidence: Sequence[ResolvedEvidence],
+    resolved_activations: Sequence[ResolvedVoiceActivation],
+) -> None:
+    requested_refs = request.persona_context_refs + request.relationship_context_refs
+    if not isinstance(resolved_evidence, Sequence) or len(resolved_evidence) != len(
+        requested_refs
+    ):
+        raise EvidenceResolutionError("resolved_evidence_contract_mismatch") from None
+    for requested, resolved in zip(requested_refs, resolved_evidence, strict=True):
+        if (
+            not isinstance(resolved, ResolvedEvidence)
+            or resolved.ref_id != requested.ref_id
+            or resolved.kind != requested.kind.value
+            or not isinstance(resolved.excerpt, str)
+            or not any(
+                unicodedata.category(character)[0] in {"L", "N", "P", "S"}
+                for character in resolved.excerpt
+            )
+            or len(resolved.excerpt) > 200
+        ):
+            raise EvidenceResolutionError("resolved_evidence_contract_mismatch") from None
+
+    requested_activations = request.voice_pattern_activations
+    if not isinstance(resolved_activations, Sequence) or len(
+        resolved_activations
+    ) != len(requested_activations):
+        raise EvidenceResolutionError("resolved_activation_contract_mismatch") from None
+    for requested, resolved in zip(
+        requested_activations,
+        resolved_activations,
+        strict=True,
+    ):
+        if (
+            not isinstance(resolved, ResolvedVoiceActivation)
+            or resolved.activation_id != requested.activation_id
+            or resolved.pattern_id != requested.pattern_id
+            or resolved.condition_ids != requested.condition_ids
+        ):
+            raise EvidenceResolutionError("resolved_activation_contract_mismatch") from None

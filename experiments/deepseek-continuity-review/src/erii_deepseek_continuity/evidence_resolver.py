@@ -10,9 +10,9 @@ Key constraints:
 """
 
 from dataclasses import dataclass
-from typing import Sequence, Protocol
+from typing import Protocol, Sequence
+
 from erii.models.continuity import ContinuityEvidenceRef, VoicePatternActivation
-from erii.models.continuity_evidence import ContinuityEvidenceKind
 
 
 @dataclass(frozen=True)
@@ -104,9 +104,11 @@ class FakeEvidenceResolver:
 
 class EvidenceResolutionError(Exception):
     """Evidence resolution failed (contains no sensitive info)."""
+
     pass
 
 
 class CrossRelationshipLeakError(Exception):
     """Attempted to resolve evidence from another relationship (security error)."""
+
     pass

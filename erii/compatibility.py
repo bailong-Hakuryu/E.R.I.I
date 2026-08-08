@@ -47,7 +47,7 @@ FILE_STORAGE_FORMAT = FormatCompatibility(
 )
 MEMORY_PACK_FORMAT = FormatCompatibility(
     format_id="erii.memory-pack",
-    current_version="0.4.0a8",
+    current_version="0.5.0a1",
     readable_versions=(
         "0.1.0",
         "0.2.0",
@@ -59,6 +59,7 @@ MEMORY_PACK_FORMAT = FormatCompatibility(
         "0.4.0a6",
         "0.4.0a7",
         "0.4.0a8",
+        "0.5.0a1",
     ),
 )
 LIFECYCLE_BACKUP_FORMAT = FormatCompatibility(
@@ -106,6 +107,20 @@ MEMORY_PACK_ROOT_FIELDS = frozenset(
         "persona_reflection_decisions",
     }
 )
+_MEMORY_PACK_V050A1_EXTENSION_FIELDS = frozenset(
+    {
+        "relationship_consequences",
+        "narrative_tension_links",
+    }
+)
+_MEMORY_PACK_LEGACY_ROOT_FIELDS = (
+    MEMORY_PACK_ROOT_FIELDS - _MEMORY_PACK_V050A1_EXTENSION_FIELDS
+)
+_MEMORY_PACK_PRE_V050A1_VERSIONS = frozenset(
+    MEMORY_PACK_FORMAT.readable_versions[
+        : MEMORY_PACK_FORMAT.readable_versions.index("0.5.0a1")
+    ]
+)
 _MEMORY_PACK_OBJECT_COLLECTIONS = (
     "nodes",
     "timeline",
@@ -139,6 +154,11 @@ def require_supported_version(
     return detected_version
 
 
+def _memory_pack_supports_v050a1_fields(version: str) -> bool:
+    """Returns whether a supported wire version includes the v0.5.0a1 fields."""
+    return version not in _MEMORY_PACK_PRE_V050A1_VERSIONS
+
+
 def validate_memory_pack_envelope(data: object) -> Dict[str, Any]:
     """Validates the MemoryPack envelope before any nested model is constructed."""
     if not isinstance(data, dict):
@@ -165,7 +185,19 @@ def validate_memory_pack_envelope(data: object) -> Dict[str, Any]:
             details.append("unknown " + ", ".join(sorted(str(item) for item in unknown)))
         raise ValueError("MemoryPack metadata fields are invalid: " + "; ".join(details))
 
-    require_supported_version(MEMORY_PACK_FORMAT, metadata["version"])
+    version = require_supported_version(MEMORY_PACK_FORMAT, metadata["version"])
+    allowed_root_fields = (
+        MEMORY_PACK_ROOT_FIELDS
+        if _memory_pack_supports_v050a1_fields(version)
+        else _MEMORY_PACK_LEGACY_ROOT_FIELDS
+    )
+    incompatible_root = set(data) - allowed_root_fields
+    if incompatible_root:
+        raise ValueError(
+            f"MemoryPack version {version!r} contains fields introduced in "
+            f"{MEMORY_PACK_FORMAT.current_version!r}: "
+            + ", ".join(sorted(str(item) for item in incompatible_root))
+        )
     for field_name in ("agent_id", "user_id", "exported_at"):
         value = metadata[field_name]
         if not isinstance(value, str) or not value.strip():

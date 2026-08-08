@@ -74,10 +74,12 @@ class MemoryPackStagingImportTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     first.semantic_sha256,
-                    "34ffa4a970cf481cfb7ca59bb7574de667b03e045e94cd1b6f9053d746adef90",
+                    "e73a3b8f742f3f5c9a43ac539682347702d532a99ab1d412b3b241eb7beb189f",
                 )
                 self.assertEqual(first.counts["turn_records"], 1)
                 self.assertEqual(first.counts["relationship_events"], 1)
+                self.assertEqual(first.counts["relationship_consequences"], 0)
+                self.assertEqual(first.counts["narrative_tension_links"], 0)
                 serialized = json.dumps(first.to_dict(), ensure_ascii=False)
                 self.assertNotIn(pack.core_memory, serialized)
                 self.assertNotIn(

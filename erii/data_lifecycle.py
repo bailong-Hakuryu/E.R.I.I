@@ -64,8 +64,18 @@ _READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS = frozenset(
 )
 _BACKUP_STRATEGY_ID = "backup-byte-preserving-v1"
 _RESTORE_STRATEGY_ID = "restore-byte-preserving-v1"
-_FILE_STORAGE_LEGACY_TO_V1_STRATEGY_ID = "file-storage-legacy-to-v1"
+_FILE_STORAGE_LEGACY_TO_V2_STRATEGY_ID = "file-storage-legacy-to-v2"
+_FILE_STORAGE_V1_TO_V2_STRATEGY_ID = "file-storage-v1-to-v2"
 _SQLITE_SCHEMA_6_TO_10_STRATEGY_ID = "sqlite-schema-6-to-10"
+_SQLITE_SCHEMA_9_TO_10_STRATEGY_ID = "sqlite-schema-9-to-10"
+_FILE_STORAGE_UPGRADE_STRATEGIES = {
+    "legacy": _FILE_STORAGE_LEGACY_TO_V2_STRATEGY_ID,
+    "1": _FILE_STORAGE_V1_TO_V2_STRATEGY_ID,
+}
+_SQLITE_UPGRADE_STRATEGIES = {
+    "6": _SQLITE_SCHEMA_6_TO_10_STRATEGY_ID,
+    "9": _SQLITE_SCHEMA_9_TO_10_STRATEGY_ID,
+}
 _MEMORY_PACK_STRATEGY_PREFIX = "memory-pack-"
 _ERASE_STRATEGY_PREFIX = "erase-staged-"
 _REBUILD_STRATEGY_PREFIX = "rebuild-staged-"
@@ -114,6 +124,36 @@ class LifecycleTargetKind(str, Enum):
     SQLITE = "sqlite"
     MEMORY_PACK = "memory_pack"
     BACKUP = "backup"
+
+
+_BACKUP_V1_V040_PRODUCER_FORMATS = {
+    LifecycleTargetKind.FILE_STORAGE: FormatCompatibility(
+        format_id="erii.file-storage",
+        current_version="1",
+        readable_versions=("legacy", "1"),
+    ),
+    LifecycleTargetKind.SQLITE: FormatCompatibility(
+        format_id="erii.sqlite",
+        current_version="9",
+        readable_versions=tuple(str(version) for version in range(10)),
+    ),
+    LifecycleTargetKind.MEMORY_PACK: FormatCompatibility(
+        format_id="erii.memory-pack",
+        current_version="0.4.0a8",
+        readable_versions=(
+            "0.1.0",
+            "0.2.0",
+            "0.4.0",
+            "0.4.0a2",
+            "0.4.0a3",
+            "0.4.0a4",
+            "0.4.0a5",
+            "0.4.0a6",
+            "0.4.0a7",
+            "0.4.0a8",
+        ),
+    ),
+}
 
 
 class LifecycleStatus(str, Enum):
@@ -676,6 +716,63 @@ def _content_from_dict(value: object) -> LifecycleContentIdentity:
     )
 
 
+def _content_status_for_catalog(
+    compatibility: FormatCompatibility,
+    detected_version: object,
+) -> LifecycleStatus:
+    if detected_version is None:
+        return LifecycleStatus.EMPTY
+    detected = require_supported_version(compatibility, detected_version)
+    return (
+        LifecycleStatus.CURRENT
+        if detected == compatibility.current_version
+        else LifecycleStatus.MIGRATION_REQUIRED
+    )
+
+
+def _content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
+    """Normalizes only frozen Backup-v1 producer catalogs before payload checks.
+
+    Backup v1 persists the producer's ``current_version`` and status. The v0.4
+    catalog therefore describes FileStorage v1, SQLite v9, and MemoryPack
+    v0.4.0a8 as current, while this reader correctly classifies them as migration
+    sources. Known v0.4 producer views are validated against their exact old
+    readable sets, then reclassified against the current catalog. Lifecycle
+    plans and live assessments remain current-catalog strict.
+    """
+    if not isinstance(value, dict):
+        return _content_from_dict(value)
+    try:
+        kind = LifecycleTargetKind(value.get("kind"))
+    except (TypeError, ValueError):
+        return _content_from_dict(value)
+    historical = _BACKUP_V1_V040_PRODUCER_FORMATS.get(kind)
+    if (
+        historical is None
+        or value.get("format_id") != historical.format_id
+        or value.get("current_version") != historical.current_version
+    ):
+        return _content_from_dict(value)
+
+    producer_status = _content_status_for_catalog(
+        historical,
+        value.get("detected_version"),
+    )
+    if value.get("status") != producer_status.value:
+        raise LifecyclePlanError(
+            "backup source status does not match its historical producer catalog"
+        )
+
+    current = _compatibility_for_kind(kind)
+    normalized = dict(value)
+    normalized["status"] = _content_status_for_catalog(
+        current,
+        value.get("detected_version"),
+    ).value
+    normalized["current_version"] = current.current_version
+    return _content_from_dict(normalized)
+
+
 def _directory_identity_to_dict(
     identity: LifecycleDirectoryIdentity,
 ) -> Dict[str, object]:
@@ -867,17 +964,20 @@ def _plan_from_document(value: object) -> LifecyclePlan:
 def _upgrade_strategy_id(source: LifecycleAssessment) -> str:
     if (
         source.target.kind is LifecycleTargetKind.FILE_STORAGE
-        and source.detected_version == "legacy"
+        and source.status is LifecycleStatus.MIGRATION_REQUIRED
         and source.current_version == FILE_STORAGE_FORMAT.current_version
     ):
-        return _FILE_STORAGE_LEGACY_TO_V1_STRATEGY_ID
+        strategy_id = _FILE_STORAGE_UPGRADE_STRATEGIES.get(source.detected_version)
+        if strategy_id is not None:
+            return strategy_id
     if (
         source.target.kind is LifecycleTargetKind.SQLITE
         and source.status is LifecycleStatus.MIGRATION_REQUIRED
-        and source.detected_version == "6"
         and source.current_version == SQLITE_FORMAT.current_version
     ):
-        return _SQLITE_SCHEMA_6_TO_10_STRATEGY_ID
+        strategy_id = _SQLITE_UPGRADE_STRATEGIES.get(source.detected_version)
+        if strategy_id is not None:
+            return strategy_id
     if (
         source.target.kind is LifecycleTargetKind.MEMORY_PACK
         and source.status is LifecycleStatus.MIGRATION_REQUIRED
@@ -1947,23 +2047,51 @@ def _upgrade_snapshot(
 ) -> _PayloadSnapshot:
     source = _materialize_snapshot(source)
     assert source.files is not None
-    if strategy_id == _SQLITE_SCHEMA_6_TO_10_STRATEGY_ID:
-        return _upgrade_sqlite_snapshot(source)
+    if strategy_id in _SQLITE_UPGRADE_STRATEGIES.values():
+        return _upgrade_sqlite_snapshot(strategy_id, source)
     if strategy_id.startswith(_MEMORY_PACK_STRATEGY_PREFIX):
         return _upgrade_memory_pack_snapshot(strategy_id, source)
-    if strategy_id != _FILE_STORAGE_LEGACY_TO_V1_STRATEGY_ID:
+    if strategy_id not in _FILE_STORAGE_UPGRADE_STRATEGIES.values():
         raise LifecyclePlanError("lifecycle upgrade strategy is unavailable")
+    return _upgrade_file_storage_snapshot(strategy_id, source)
+
+
+def _upgrade_file_storage_snapshot(
+    strategy_id: str,
+    source: _PayloadSnapshot,
+) -> _PayloadSnapshot:
+    assert source.files is not None
+    expected_strategy = _FILE_STORAGE_UPGRADE_STRATEGIES.get(
+        source.content.detected_version
+    )
     if (
-        source.content.kind is not LifecycleTargetKind.FILE_STORAGE
+        strategy_id != expected_strategy
+        or source.content.kind is not LifecycleTargetKind.FILE_STORAGE
         or source.content.status is not LifecycleStatus.MIGRATION_REQUIRED
-        or source.content.detected_version != "legacy"
         or source.content.current_version != FILE_STORAGE_FORMAT.current_version
     ):
         raise LifecyclePlanError("FileStorage upgrade source identity is invalid")
-    if FILE_STORAGE_MANIFEST in source.files:
-        raise StorageIntegrityError("legacy FileStorage unexpectedly contains a manifest")
 
     files = dict(source.files)
+    if source.content.detected_version == "legacy":
+        if FILE_STORAGE_MANIFEST in files:
+            raise StorageIntegrityError(
+                "legacy FileStorage unexpectedly contains a manifest"
+            )
+    else:
+        manifest_bytes = files.get(FILE_STORAGE_MANIFEST)
+        if manifest_bytes is None:
+            raise StorageIntegrityError("versioned FileStorage is missing its manifest")
+        try:
+            manifest = json.loads(manifest_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise StorageIntegrityError("FileStorage manifest is malformed") from exc
+        if manifest != {
+            "format": FILE_STORAGE_FORMAT.format_id,
+            "version": 1,
+        }:
+            raise StorageIntegrityError("FileStorage v1 manifest identity is invalid")
+
     files[FILE_STORAGE_MANIFEST] = _canonical_json(
         {
             "format": FILE_STORAGE_FORMAT.format_id,
@@ -1984,11 +2112,17 @@ def _upgrade_snapshot(
     )
 
 
-def _upgrade_sqlite_snapshot(source: _PayloadSnapshot) -> _PayloadSnapshot:
+def _upgrade_sqlite_snapshot(
+    strategy_id: str,
+    source: _PayloadSnapshot,
+) -> _PayloadSnapshot:
+    expected_strategy = _SQLITE_UPGRADE_STRATEGIES.get(
+        source.content.detected_version
+    )
     if (
-        source.content.kind is not LifecycleTargetKind.SQLITE
+        strategy_id != expected_strategy
+        or source.content.kind is not LifecycleTargetKind.SQLITE
         or source.content.status is not LifecycleStatus.MIGRATION_REQUIRED
-        or source.content.detected_version != "6"
         or source.content.current_version != SQLITE_FORMAT.current_version
         or set(source.files) != {"database.sqlite3"}
     ):
@@ -2425,7 +2559,7 @@ def _read_backup_bundle(target: LifecycleTarget) -> _BackupBundle:
     if not _is_sha256(operation_id) or not _is_sha256(plan_digest):
         raise StorageIntegrityError("backup operation identity is invalid")
     try:
-        source_content = _content_from_dict(manifest["source"])
+        source_content = _content_from_backup_manifest(manifest["source"])
     except UnsupportedFormatError:
         raise
     except (LifecyclePlanError, TypeError, ValueError) as exc:

@@ -9,13 +9,42 @@ Key guarantees:
 - Can be deleted without affecting E.R.I.I. core
 """
 
+from .client import DeepSeekAPIError, DeepSeekClient
 from .evaluator import DeepSeekContinuityEvaluator
-from .client import DeepSeekClient, DeepSeekAPIError
-from .evidence_resolver import FakeEvidenceResolver
+from .evidence_resolver import (
+    CrossRelationshipLeakError,
+    EvidenceResolver,
+    EvidenceResolutionError,
+    FakeEvidenceResolver,
+    ResolvedEvidence,
+    ResolvedVoiceActivation,
+)
+from .real_evidence_resolver import (
+    ERIIStorageBackend,
+    FileStorageAdapter,
+    RealEvidenceResolver,
+    SQLiteStorageAdapter,
+    StorageBackend,
+)
+from .prompt_builder import MAX_REVIEW_PROMPT_BYTES, PromptBudgetError
+from .response_parser import ParsingError
 
 __all__ = [
     "DeepSeekContinuityEvaluator",
     "DeepSeekClient",
     "DeepSeekAPIError",
+    "ERIIStorageBackend",
+    "EvidenceResolver",
+    "EvidenceResolutionError",
     "FakeEvidenceResolver",
+    "FileStorageAdapter",
+    "CrossRelationshipLeakError",
+    "ParsingError",
+    "PromptBudgetError",
+    "MAX_REVIEW_PROMPT_BYTES",
+    "RealEvidenceResolver",
+    "ResolvedEvidence",
+    "ResolvedVoiceActivation",
+    "SQLiteStorageAdapter",
+    "StorageBackend",
 ]

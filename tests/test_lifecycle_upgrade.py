@@ -36,7 +36,7 @@ FIXTURE_ROOT = (
 )
 FIXTURE_SOURCE = FIXTURE_ROOT / "source"
 PRODUCER_COMMIT = "b2cae61663c8612cb804ce16a358a192d3dd6d53"
-UPGRADE_STRATEGY = "file-storage-legacy-to-v1"
+UPGRADE_STRATEGY = "file-storage-legacy-to-v2"
 FILE_STORAGE_V1_MANIFEST = b'{"format":"erii.file-storage","version":1}'
 FILE_STORAGE_V2_MANIFEST = b'{"format":"erii.file-storage","version":2}'
 
@@ -116,6 +116,12 @@ class LifecycleUpgradeTests(unittest.TestCase):
         shutil.copytree(FIXTURE_SOURCE, source_path)
         return self.target(LifecycleTargetKind.FILE_STORAGE, source_path), source_path
 
+    def copied_v1_source(self, root: Path) -> tuple[LifecycleTarget, Path]:
+        source_path = root / "v1-store"
+        shutil.copytree(FIXTURE_SOURCE, source_path)
+        (source_path / ".erii-store.json").write_bytes(FILE_STORAGE_V1_MANIFEST)
+        return self.target(LifecycleTargetKind.FILE_STORAGE, source_path), source_path
+
     def upgrade_request(
         self,
         lifecycle: DataLifecycleCoordinator,
@@ -184,7 +190,7 @@ class LifecycleUpgradeTests(unittest.TestCase):
             self.assertNotEqual(first.content.fingerprint, first.source.fingerprint)
             self.assertIn("UpgradeRequest", erii.__all__)
 
-    def test_upgrade_preserves_source_and_publishes_verified_backup_then_v1(self) -> None:
+    def test_upgrade_preserves_source_and_publishes_verified_backup_then_v2(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
             root = Path(root_dir)
             lifecycle = DataLifecycleCoordinator()
@@ -244,6 +250,94 @@ class LifecycleUpgradeTests(unittest.TestCase):
             )
             self.assertEqual(retried.outcome, LifecycleOutcome.ALREADY_COMPLETE)
             self.assertEqual(retried.operation_id, report.operation_id)
+
+    def test_v1_to_v2_updates_only_manifest_and_publishes_backup_first(self) -> None:
+        with tempfile.TemporaryDirectory() as root_dir:
+            root = Path(root_dir)
+            lifecycle = DataLifecycleCoordinator()
+            source_target, source_path = self.copied_v1_source(root)
+            source = lifecycle.inspect(source_target)
+            destination = self.target(
+                LifecycleTargetKind.FILE_STORAGE,
+                root / "upgraded-v2-store",
+            )
+            backup_destination = self.target(
+                LifecycleTargetKind.BACKUP,
+                root / "v1-source.eriibak",
+            )
+            plan = lifecycle.plan(
+                UpgradeRequest(source, destination, backup_destination)
+            )
+            source_before = tree_snapshot(source_path)
+            source_files = file_bytes(source_path)
+            real_publish = lifecycle_module._rename_no_replace
+            published_targets: list[Path] = []
+
+            def observe_publication(staging: Path, target: Path) -> None:
+                target = Path(target)
+                if target == Path(destination.path):
+                    self.assertTrue(Path(backup_destination.path).is_dir())
+                    self.assertEqual(
+                        lifecycle.inspect(backup_destination).status,
+                        LifecycleStatus.CURRENT,
+                    )
+                real_publish(staging, target)
+                published_targets.append(target)
+
+            self.assertEqual(source.detected_version, "1")
+            self.assertEqual(source.status, LifecycleStatus.MIGRATION_REQUIRED)
+            self.assertEqual(plan.strategy_id, "file-storage-v1-to-v2")
+
+            with mock.patch.object(
+                lifecycle_module,
+                "_rename_no_replace",
+                side_effect=observe_publication,
+            ):
+                report = lifecycle.execute(plan)
+
+            self.assertEqual(report.outcome, LifecycleOutcome.APPLIED)
+            self.assertEqual(
+                published_targets,
+                [Path(backup_destination.path), Path(destination.path)],
+            )
+            self.assertEqual(tree_snapshot(source_path), source_before)
+
+            upgraded = lifecycle.inspect(destination)
+            self.assertEqual(upgraded.status, LifecycleStatus.CURRENT)
+            self.assertEqual(upgraded.detected_version, "2")
+            upgraded_files = file_bytes(Path(destination.path))
+            self.assertEqual(
+                upgraded_files.pop(".erii-store.json"),
+                FILE_STORAGE_V2_MANIFEST,
+            )
+            self.assertEqual(source_files.pop(".erii-store.json"), FILE_STORAGE_V1_MANIFEST)
+            self.assertEqual(upgraded_files, source_files)
+
+            backup_payload = Path(backup_destination.path) / "payload"
+            self.assertEqual(file_bytes(backup_payload), file_bytes(source_path))
+            backup_manifest = json.loads(
+                (Path(backup_destination.path) / "manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(backup_manifest["source"]["detected_version"], "1")
+
+            restored_target = self.target(
+                LifecycleTargetKind.FILE_STORAGE,
+                root / "restored-v1-source",
+            )
+            lifecycle.execute(
+                lifecycle.plan(
+                    RestoreRequest(
+                        backup=lifecycle.inspect(backup_destination),
+                        destination=restored_target,
+                    )
+                )
+            )
+            restored = lifecycle.inspect(restored_target)
+            self.assertEqual(restored.status, LifecycleStatus.MIGRATION_REQUIRED)
+            self.assertEqual(restored.detected_version, "1")
+            self.assertEqual(file_bytes(Path(restored_target.path)), file_bytes(source_path))
 
     def test_target_publication_failure_preserves_backup_and_plan_can_retry(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:

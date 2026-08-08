@@ -1,0 +1,46 @@
+{
+  "fixture_contract": "1",
+  "storage_kind": "lifecycle_backup",
+  "producer": {
+    "package_version": "0.4.0b1",
+    "commit": "f6dca322379c4ea88320c69d752cab471d035e95",
+    "interface": "erii.DataLifecycleCoordinator.execute(BackupRequest)"
+  },
+  "data_classification": "synthetic_non_user_data",
+  "source_identity": {
+    "kind": "file_storage",
+    "status": "current",
+    "format_id": "erii.file-storage",
+    "detected_version": "1",
+    "current_version": "1",
+    "fingerprint": "ed87ec6d5853398340dee30c886bbdc89e35a14ebfdbda7a744d4575d9b21c28",
+    "file_count": 4
+  },
+  "backup_files": [
+    {
+      "path": "backup/manifest.json",
+      "size": 1147,
+      "sha256": "6b6273e2aec9a30cfa782059d85844d21affa62e1137327d1cdf07953162dd64"
+    },
+    {
+      "path": "backup/payload/.erii-store.json",
+      "size": 42,
+      "sha256": "260bcee698c39a77d09d4e28f9b14f3ac8d525760cebdc565fdee4e61420b3ec"
+    },
+    {
+      "path": "backup/payload/fixture_agent_3074860a/fixture_user_47a7552d/core_memory.json",
+      "size": 121,
+      "sha256": "8ca3eefedc7f5b60873d010e8dcbc9582607b288fe1f046e5d2db2fbec0b0610"
+    },
+    {
+      "path": "backup/payload/fixture_agent_3074860a/fixture_user_47a7552d/nodes.json",
+      "size": 785,
+      "sha256": "e2fd064c25f37b43a236a76e0681d1aba7bef37ca764679e7e5989d4ce74e369"
+    },
+    {
+      "path": "backup/payload/fixture_agent_3074860a/fixture_user_47a7552d/timeline.json",
+      "size": 249,
+      "sha256": "febe52b44dbb0d9c94f6df3a323e3ea3e0f320a6d705f85f292da6099099a222"
+    }
+  ]
+}

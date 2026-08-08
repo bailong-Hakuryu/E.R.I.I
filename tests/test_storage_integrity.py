@@ -1,4 +1,4 @@
-"""Fail-closed storage integrity contracts for the v0.4 Beta lifecycle."""
+"""Fail-closed storage integrity contracts across maintained source lines."""
 
 from contextlib import closing
 import os
@@ -32,11 +32,23 @@ class FileStorageIntegrityTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows extended-length path contract")
     def test_atomic_write_supports_temp_path_beyond_legacy_max_path(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
-            long_root = Path(root_dir) / ("x" * 130)
+            base = Path(root_dir)
+            probe_root = base / "probe"
+            probe_storage = FileStorage(str(probe_root))
+            probe_core = Path(probe_storage._get_core_path(AGENT_ID, USER_ID))
+            suffix_length = len(str(probe_core)) - len(str(probe_root))
+            target_core_length = 240
+            component_length = (
+                target_core_length - len(str(base)) - 1 - suffix_length
+            )
+            self.assertGreater(component_length, 0)
+            self.assertLess(component_length, 255)
+
+            long_root = base / ("x" * component_length)
             storage = FileStorage(str(long_root))
             core_path = Path(storage._get_core_path(AGENT_ID, USER_ID))
 
-            self.assertLess(len(str(core_path)), 260)
+            self.assertEqual(len(str(core_path)), target_core_length)
             self.assertGreaterEqual(len(str(core_path)) + 37, 260)
 
             storage.save_core_memory(AGENT_ID, USER_ID, "long path value")

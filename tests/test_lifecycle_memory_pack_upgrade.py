@@ -1,4 +1,4 @@
-"""Public MemoryPack upgrade contracts for the v0.4 Beta lifecycle Module."""
+"""Public MemoryPack upgrade contracts for the v0.5 alpha lifecycle module."""
 
 import hashlib
 import json
@@ -63,7 +63,7 @@ class LifecycleMemoryPackUpgradeTests(unittest.TestCase):
             source_bytes = source_path.read_bytes()
             destination = self._target(
                 LifecycleTargetKind.MEMORY_PACK,
-                root / "upgraded-a8.erii",
+                root / "upgraded-v050a1.erii",
             )
             backup_destination = self._target(
                 LifecycleTargetKind.BACKUP,
@@ -82,7 +82,7 @@ class LifecycleMemoryPackUpgradeTests(unittest.TestCase):
                 )
             )
 
-            self.assertEqual(plan.strategy_id, "memory-pack-0.4.0a7-to-0.4.0a8")
+            self.assertEqual(plan.strategy_id, "memory-pack-0.4.0a7-to-0.5.0a1")
             self.assertEqual(source_path.read_bytes(), source_bytes)
             self.assertFalse(Path(destination.path).exists())
             self.assertFalse(Path(backup_destination.path).exists())
@@ -93,11 +93,11 @@ class LifecycleMemoryPackUpgradeTests(unittest.TestCase):
             self.assertEqual(source_path.read_bytes(), source_bytes)
             upgraded = lifecycle.inspect(destination)
             self.assertEqual(upgraded.status, LifecycleStatus.CURRENT)
-            self.assertEqual(upgraded.detected_version, "0.4.0a8")
+            self.assertEqual(upgraded.detected_version, "0.5.0a1")
             upgraded_document = json.loads(Path(destination.path).read_text("utf-8"))
             self.assertEqual(
                 upgraded_document["metadata"]["version"],
-                "0.4.0a8",
+                "0.5.0a1",
             )
             self.assertEqual(
                 upgraded_document["core_memory"],
@@ -178,8 +178,8 @@ class LifecycleMemoryPackUpgradeTests(unittest.TestCase):
                     agent_id="fixture-agent",
                     user_id="fixture-user",
                     core_memory="synthetic portable memory",
+                    version=version,
                 ).to_dict()
-                document["metadata"]["version"] = version
                 source_path = root / "source.erii"
                 source_path.write_text(
                     json.dumps(document, ensure_ascii=False),

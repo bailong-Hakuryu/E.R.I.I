@@ -1,8 +1,6 @@
 """Test span calculator with Unicode, emoji, and duplicate quotes."""
 
 import sys
-sys.path.insert(0, 'D:/bate/erii')
-sys.path.insert(0, 'D:/bate/erii/experiments/deepseek-continuity-review/src')
 
 from erii_deepseek_continuity.span_calculator import (
     calculate_span,
@@ -156,7 +154,7 @@ def test_mixed_unicode_and_emoji():
     """Test mixed Unicode and emoji."""
     print("Test: Mixed Unicode and emoji...")
 
-    reply = "绘梨衣很开心 😊 今天天气很好"
+    reply = "林澈很开心 😊 今天天气很好"
     result = calculate_span(
         proposed_reply=reply,
         reply_quote="😊",

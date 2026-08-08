@@ -372,8 +372,9 @@ class ERIIEngine:
             user_msg: Deprecated alias for user_message.
         """
         warnings.warn(
-            "ERIIEngine.remember() is deprecated in 0.4.0b1 and is planned for "
-            "removal in 0.5.0; record a canonical Turn and call archive_turn() instead",
+            "ERIIEngine.remember() is deprecated in 0.4.0b1; removal is deferred "
+            "to a later incompatible milestone; record a canonical Turn and call "
+            "archive_turn() instead",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -1951,7 +1952,7 @@ class ERIIEngine:
         """
         warnings.warn(
             "ERIIEngine.adjudicate_relationship_candidates() is deprecated in "
-            "0.4.0b1 and is planned for removal in 0.5.0; use "
+            "0.4.0b1; removal is deferred to a later incompatible milestone. Use "
             "adjudicate_turn_candidates() for a persisted Turn or "
             "process_relationship_turn() for automatic processing",
             DeprecationWarning,

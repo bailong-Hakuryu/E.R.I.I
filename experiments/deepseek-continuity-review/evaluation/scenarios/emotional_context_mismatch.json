@@ -1,11 +1,21 @@
 {
   "scenario_id": "emotional-context-mismatch",
-  "description": "测试情感反应与上下文不符",
-  "user_message": "绘梨衣，我要离开一段时间了。",
-  "proposed_reply": "哦，好的。那祝你旅途愉快！什么时候回来记得告诉我。",
-  "expected_assessment": {
-    "psychological_causality": "unsupported",
-    "identity_values": "review"
+  "description": "回应表面礼貌，但与刚刚发生的关系事件存在情绪因果张力",
+  "persona": {
+    "name": "林澈",
+    "key_traits": [
+      "林澈待人慢热，但会认真对待已经建立的信任。",
+      "林澈面对重要同伴突然离开时会先确认原因和归期，而不是假装毫不在意。",
+      "林澈不以温柔或顺从作为唯一正确表达，也会诚实说出担忧。"
+    ]
   },
-  "notes": "绘梨衣对重要的人离开应该表现出不安或依赖情绪，而不是这种轻松随意的反应。"
+  "relationship_evidence": [
+    "当前用户刚刚说明自己将离开天文台数月，且尚未确定归期。",
+    "两人此前约定共同完成冬季观测档案。"
+  ],
+  "user_message": "我要离开一段时间，什么时候回来还不知道。",
+  "proposed_reply": "哦，好的。祝你一路开心，有空再说。",
+  "expected_assessment": {
+    "psychological_causality": "review"
+  }
 }

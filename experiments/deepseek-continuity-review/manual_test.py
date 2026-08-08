@@ -1,8 +1,6 @@
 """Manual test runner for DeepSeek evaluator (no pytest required)."""
 
 import sys
-sys.path.insert(0, 'D:/bate/erii')
-sys.path.insert(0, 'D:/bate/erii/experiments/deepseek-continuity-review/src')
 
 from erii.models.continuity import (
     ContinuityEvaluationRequest,
@@ -124,7 +122,7 @@ def test_evaluator_returns_real_decision():
         ContinuityAxis.KNOWLEDGE_MEMORY_SCOPE,
         ContinuityAxis.VOICE_STYLE,
     }
-    assert axes == expected_axes, f"Should have all 5 axes"
+    assert axes == expected_axes, "Should have all 5 axes"
 
     print("OK Test 1 passed")
 
@@ -145,7 +143,6 @@ def test_no_reasoning_leak():
     )
 
     def transport_with_reasoning(payload):
-        import json
         # Create aligned response
         fake_aligned = make_fake_transport_aligned({persona_ref.ref_id})
         response = fake_aligned(payload)

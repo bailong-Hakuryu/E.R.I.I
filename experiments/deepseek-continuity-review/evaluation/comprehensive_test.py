@@ -1,356 +1,211 @@
-"""Comprehensive real API test with detailed reporting.
+"""Opt-in real-provider evaluation with separate parse and expectation metrics."""
 
-Tests multiple scenarios and generates a detailed report comparing:
-- Thinking enabled vs disabled
-- Detection accuracy across different OOC types
-- Token usage and latency
-"""
-
-import sys
+import argparse
+from dataclasses import asdict, dataclass
+import json
 import os
 from pathlib import Path
-
-# Force UTF-8 encoding for Windows console
-if sys.platform == 'win32':
-    sys.stdout.reconfigure(encoding='utf-8')
-    sys.stderr.reconfigure(encoding='utf-8')
-
-# Add paths
-script_dir = Path(__file__).parent
-project_root = script_dir.parent.parent.parent
-sys.path.insert(0, str(project_root))
-sys.path.insert(0, str(script_dir.parent / 'src'))
-sys.path.insert(0, str(script_dir))
-
-import json
 import time
-from dataclasses import dataclass
-from typing import Optional
-from erii.models.continuity import ContinuityEvaluationRequest
-from erii.models.continuity_evidence import ContinuityEvidenceRef, ContinuityEvidenceKind
+from typing import Callable
 
 from erii_deepseek_continuity import (
-    DeepSeekContinuityEvaluator,
+    CrossRelationshipLeakError,
+    DeepSeekAPIError,
     DeepSeekClient,
+    DeepSeekContinuityEvaluator,
+    EvidenceResolutionError,
+    ParsingError,
+    PromptBudgetError,
 )
 
-# Import scenario resolver from same directory
-import importlib.util
-spec = importlib.util.spec_from_file_location("scenario_resolver", script_dir / "scenario_resolver.py")
-scenario_resolver = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(scenario_resolver)
-ScenarioEvidenceResolver = scenario_resolver.ScenarioEvidenceResolver
+try:
+    from .scenario_resolver import (
+        ScenarioEvidenceResolver,
+        create_request_from_scenario,
+        load_scenario,
+        score_expected_assessments,
+    )
+except ImportError:  # Direct script execution from the evaluation directory.
+    from scenario_resolver import (  # type: ignore[no-redef]
+        ScenarioEvidenceResolver,
+        create_request_from_scenario,
+        load_scenario,
+        score_expected_assessments,
+    )
 
 
-@dataclass
-class TestResult:
-    """Result of one test run."""
-    scenario_name: str
+@dataclass(frozen=True)
+class EvaluationRun:
+    """Auditable outcome of one provider call."""
+
+    scenario_id: str
     thinking_enabled: bool
-    success: bool
-    decision: Optional[object]
-    error: Optional[str]
+    parse_succeeded: bool
+    error_code: str | None
     latency_ms: int
     prompt_tokens: int
     completion_tokens: int
     reasoning_tokens: int
-    findings_summary: dict
+    findings: dict[str, dict[str, str]]
+    expectation_score: dict
 
 
-def load_scenario(scenario_path: Path) -> dict:
-    """Load evaluation scenario from JSON."""
-    with open(scenario_path, encoding='utf-8') as f:
-        return json.load(f)
-
-
-def create_request_from_scenario(scenario: dict) -> ContinuityEvaluationRequest:
-    """Create request from scenario."""
-    persona_ref = ContinuityEvidenceRef.create(
-        ContinuityEvidenceKind.PERSONA_CLAIM,
-        {
-            "manifest_id": "test-manifest",
-            "content_fingerprint": "0" * 64,
-            "claim_id": "test-claim",
-        },
-    )
-
-    return ContinuityEvaluationRequest(
-        turn_id=scenario["scenario_id"],
-        relationship_id="test-relationship",
-        persona_id="test-persona",
-        user_message=scenario["user_message"],
-        proposed_reply=scenario["proposed_reply"],
-        persona_manifest_id="test-manifest",
-        context_baseline_fingerprint="0" * 64,
-        persona_context_refs=(persona_ref,),
-        relationship_context_refs=(),
-        voice_pattern_activations=(),
-    )
-
-
-def test_scenario(
+def run_scenario(
+    *,
     api_key: str,
     scenario: dict,
     thinking_enabled: bool,
-) -> TestResult:
-    """Test one scenario with given thinking mode."""
-
-    scenario_name = scenario["scenario_id"]
-
-    # Create evaluator
+    model: str = "deepseek-v4-flash",
+    timeout_seconds: float = 60.0,
+    max_tokens: int = 4096,
+    transport: Callable[[dict], dict] | None = None,
+) -> EvaluationRun:
+    """Run one call; parsing and fixture agreement remain distinct outcomes."""
+    request = create_request_from_scenario(scenario)
     client = DeepSeekClient(
         api_key=api_key,
-        model="deepseek-chat",
+        model=model,
         thinking_enabled=thinking_enabled,
         reasoning_effort="high",
-        timeout_seconds=60.0,
-        max_tokens=8192,
+        timeout_seconds=timeout_seconds,
+        max_tokens=max_tokens,
+        transport=transport,
     )
-
     evaluator = DeepSeekContinuityEvaluator(
         client=client,
-        evidence_resolver=ScenarioEvidenceResolver(),
+        evidence_resolver=ScenarioEvidenceResolver(scenario, request),
     )
 
-    # Create request
-    request = create_request_from_scenario(scenario)
-
-    # Evaluate
-    start_time = time.time()
+    started = time.monotonic()
+    decision = None
+    error_code = None
     try:
         decision = evaluator.evaluate(request)
-        latency_ms = int((time.time() - start_time) * 1000)
+    except (
+        CrossRelationshipLeakError,
+        DeepSeekAPIError,
+        EvidenceResolutionError,
+        ParsingError,
+        PromptBudgetError,
+    ) as exc:
+        error_code = str(exc) or type(exc).__name__
+    except Exception:
+        error_code = "unexpected_evaluation_error"
+    latency_ms = int((time.monotonic() - started) * 1000)
 
-        # Extract findings summary
-        findings_summary = {}
-        for finding in decision.findings:
-            findings_summary[finding.axis.value] = {
-                "assessment": finding.assessment.value,
-                "reason": finding.reason_code.value,
-                "severity": finding.severity.value,
-            }
+    usage = client.last_usage
+    details = usage.get("completion_tokens_details", {})
+    if not isinstance(details, dict):
+        details = {}
+    findings = {
+        finding.axis.value: {
+            "assessment": finding.assessment.value,
+            "reason_code": finding.reason_code.value,
+            "severity": finding.severity.value,
+        }
+        for finding in decision.findings
+    } if decision is not None else {}
+    return EvaluationRun(
+        scenario_id=scenario["scenario_id"],
+        thinking_enabled=thinking_enabled,
+        parse_succeeded=decision is not None,
+        error_code=error_code,
+        latency_ms=latency_ms,
+        prompt_tokens=_usage_int(usage.get("prompt_tokens")),
+        completion_tokens=_usage_int(usage.get("completion_tokens")),
+        reasoning_tokens=_usage_int(details.get("reasoning_tokens")),
+        findings=findings,
+        expectation_score=score_expected_assessments(decision, scenario),
+    )
 
-        # Get token usage from last response (stored in client)
-        usage = getattr(client, '_last_usage', {})
 
-        return TestResult(
-            scenario_name=scenario_name,
-            thinking_enabled=thinking_enabled,
-            success=True,
-            decision=decision,
-            error=None,
-            latency_ms=latency_ms,
-            prompt_tokens=usage.get('prompt_tokens', 0),
-            completion_tokens=usage.get('completion_tokens', 0),
-            reasoning_tokens=usage.get('completion_tokens_details', {}).get('reasoning_tokens', 0),
-            findings_summary=findings_summary,
+def build_report(runs: list[EvaluationRun]) -> dict:
+    """Aggregate declared-axis matches without treating parseability as accuracy."""
+    expected_total = sum(
+        run.expectation_score["expected_axes_total"] for run in runs
+    )
+    expected_matched = sum(
+        run.expectation_score["expected_axes_matched"] for run in runs
+    )
+    return {
+        "schema_version": "deepseek-continuity-eval-v2",
+        "provider_calls": len(runs),
+        "parse_succeeded": sum(1 for run in runs if run.parse_succeeded),
+        "expected_axes_total": expected_total,
+        "expected_axes_matched": expected_matched,
+        "expected_axis_match_rate": (
+            expected_matched / expected_total if expected_total else None
+        ),
+        "runs": [asdict(run) for run in runs],
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--scenarios-dir",
+        type=Path,
+        default=Path(__file__).with_name("scenarios"),
+    )
+    parser.add_argument(
+        "--thinking",
+        choices=("on", "off", "both"),
+        default="both",
+    )
+    parser.add_argument("--model", default="deepseek-v4-flash")
+    parser.add_argument("--timeout-seconds", type=float, default=60.0)
+    parser.add_argument("--max-tokens", type=int, default=4096)
+    parser.add_argument("--delay-seconds", type=float, default=1.0)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args(argv)
+
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    if not api_key:
+        print(
+            json.dumps(
+                {
+                    "status": "not_run",
+                    "reason": "DEEPSEEK_API_KEY environment variable is missing",
+                }
+            )
         )
+        return 2
 
-    except Exception as e:
-        latency_ms = int((time.time() - start_time) * 1000)
-        return TestResult(
-            scenario_name=scenario_name,
-            thinking_enabled=thinking_enabled,
-            success=False,
-            decision=None,
-            error=str(e),
-            latency_ms=latency_ms,
-            prompt_tokens=0,
-            completion_tokens=0,
-            reasoning_tokens=0,
-            findings_summary={},
-        )
+    scenario_paths = sorted(args.scenarios_dir.glob("*.json"))
+    scenarios = [load_scenario(path) for path in scenario_paths]
+    modes = {
+        "on": (True,),
+        "off": (False,),
+        "both": (True, False),
+    }[args.thinking]
 
+    runs: list[EvaluationRun] = []
+    for scenario in scenarios:
+        for thinking_enabled in modes:
+            runs.append(
+                run_scenario(
+                    api_key=api_key,
+                    scenario=scenario,
+                    thinking_enabled=thinking_enabled,
+                    model=args.model,
+                    timeout_seconds=args.timeout_seconds,
+                    max_tokens=args.max_tokens,
+                )
+            )
+            if args.delay_seconds > 0:
+                time.sleep(args.delay_seconds)
 
-def generate_report(results: list[TestResult], scenarios: dict):
-    """Generate detailed markdown report."""
-
-    print("\n" + "="*80)
-    print("DEEPSEEK CONTINUITY REVIEW - 完整测试报告")
-    print("="*80)
-
-    # Group by scenario
-    by_scenario = {}
-    for result in results:
-        if result.scenario_name not in by_scenario:
-            by_scenario[result.scenario_name] = {}
-        key = "thinking_on" if result.thinking_enabled else "thinking_off"
-        by_scenario[result.scenario_name][key] = result
-
-    # Summary stats
-    print("\n## 总体统计\n")
-    total = len(results)
-    successful = sum(1 for r in results if r.success)
-    print(f"- 总测试数: {total}")
-    print(f"- 成功: {successful}/{total}")
-    print(f"- 失败: {total - successful}/{total}")
-
-    # Per-scenario analysis
-    print("\n## 场景分析\n")
-
-    for scenario_name, scenario_results in by_scenario.items():
-        scenario = scenarios[scenario_name]
-        print(f"\n### {scenario_name}")
-        print(f"**描述**: {scenario['description']}")
-        print(f"**用户消息**: {scenario['user_message']}")
-        print(f"**提议回复**: {scenario['proposed_reply']}")
-
-        # Compare thinking on vs off
-        on_result = scenario_results.get('thinking_on')
-        off_result = scenario_results.get('thinking_off')
-
-        if on_result and off_result:
-            print("\n#### Thinking ON vs OFF 对比\n")
-            print("| 指标 | Thinking ON | Thinking OFF |")
-            print("|------|-------------|--------------|")
-            print(f"| 成功 | {'✅' if on_result.success else '❌'} | {'✅' if off_result.success else '❌'} |")
-            print(f"| 延迟 | {on_result.latency_ms}ms | {off_result.latency_ms}ms |")
-            print(f"| Prompt Tokens | {on_result.prompt_tokens} | {off_result.prompt_tokens} |")
-            print(f"| Completion Tokens | {on_result.completion_tokens} | {off_result.completion_tokens} |")
-            print(f"| Reasoning Tokens | {on_result.reasoning_tokens} | {off_result.reasoning_tokens} |")
-
-            # Compare findings
-            if on_result.success and off_result.success:
-                print("\n#### Findings 对比\n")
-                print("| 维度 | Thinking ON | Thinking OFF | 匹配 |")
-                print("|------|-------------|--------------|------|")
-
-                expected = scenario.get('expected_assessment', {})
-
-                for axis in ['identity_values', 'psychological_causality', 'relationship_scope',
-                            'knowledge_memory_scope', 'voice_style']:
-                    on_finding = on_result.findings_summary.get(axis, {})
-                    off_finding = off_result.findings_summary.get(axis, {})
-
-                    on_assess = on_finding.get('assessment', 'N/A')
-                    off_assess = off_finding.get('assessment', 'N/A')
-
-                    match = '✅' if on_assess == off_assess else '❌'
-
-                    # Check against expected
-                    expected_assess = expected.get(axis)
-                    if expected_assess:
-                        on_correct = '✓' if on_assess == expected_assess else '✗'
-                        off_correct = '✓' if off_assess == expected_assess else '✗'
-                        on_display = f"{on_assess} {on_correct}"
-                        off_display = f"{off_assess} {off_correct}"
-                    else:
-                        on_display = on_assess
-                        off_display = off_assess
-
-                    print(f"| {axis} | {on_display} | {off_display} | {match} |")
-
-        # Show errors if any
-        for key, result in scenario_results.items():
-            if not result.success:
-                print(f"\n**错误 ({key})**: {result.error}")
-
-    # Token cost analysis
-    print("\n## Token 成本分析\n")
-
-    thinking_on_results = [r for r in results if r.thinking_enabled and r.success]
-    thinking_off_results = [r for r in results if not r.thinking_enabled and r.success]
-
-    if thinking_on_results:
-        avg_reasoning = sum(r.reasoning_tokens for r in thinking_on_results) / len(thinking_on_results)
-        avg_completion = sum(r.completion_tokens for r in thinking_on_results) / len(thinking_on_results)
-        avg_total = sum(r.prompt_tokens + r.completion_tokens for r in thinking_on_results) / len(thinking_on_results)
-        print(f"### Thinking ON")
-        print(f"- 平均 Reasoning Tokens: {avg_reasoning:.0f}")
-        print(f"- 平均 Completion Tokens: {avg_completion:.0f}")
-        print(f"- 平均 Total Tokens: {avg_total:.0f}")
-
-    if thinking_off_results:
-        avg_completion = sum(r.completion_tokens for r in thinking_off_results) / len(thinking_off_results)
-        avg_total = sum(r.prompt_tokens + r.completion_tokens for r in thinking_off_results) / len(thinking_off_results)
-        print(f"\n### Thinking OFF")
-        print(f"- 平均 Completion Tokens: {avg_completion:.0f}")
-        print(f"- 平均 Total Tokens: {avg_total:.0f}")
-
-    # Latency analysis
-    print("\n## 延迟分析\n")
-
-    if thinking_on_results:
-        avg_latency = sum(r.latency_ms for r in thinking_on_results) / len(thinking_on_results)
-        print(f"### Thinking ON")
-        print(f"- 平均延迟: {avg_latency:.0f}ms ({avg_latency/1000:.1f}s)")
-
-    if thinking_off_results:
-        avg_latency = sum(r.latency_ms for r in thinking_off_results) / len(thinking_off_results)
-        print(f"\n### Thinking OFF")
-        print(f"- 平均延迟: {avg_latency:.0f}ms ({avg_latency/1000:.1f}s)")
-
-    print("\n" + "="*80)
-    print("测试完成")
-    print("="*80)
+    report = build_report(runs)
+    serialized = json.dumps(report, ensure_ascii=False, indent=2)
+    print(serialized)
+    if args.output is not None:
+        args.output.write_text(serialized + "\n", encoding="utf-8")
+    return 0
 
 
-def main():
-    # API key has been deleted after testing
-    API_KEY = None  # sk-1b7ccf891c61455da68e00483218341e (已删除)
-
-    if not API_KEY:
-        print("=" * 80)
-        print("测试已完成 - API Key 已删除")
-        print("=" * 80)
-        print("\n完整测试报告请查看:")
-        print("  - evaluation/FINAL_TEST_REPORT.md")
-        print("  - evaluation/COMPARISON_REPORT.md")
-        print("  - evaluation/TEST_RESULTS.md")
-        print("\n测试摘要:")
-        print("  - 场景数: 6")
-        print("  - 总测试: 12 (Thinking ON + OFF)")
-        print("  - Thinking ON: 6/6 成功 (100%)")
-        print("  - Thinking OFF: 1/6 成功 (17%)")
-        print("\n关键发现:")
-        print("  ✓ Thinking mode 对复杂 OOC 检测至关重要")
-        print("  ✓ 成本增加 2.4x，延迟增加 7.1x")
-        print("  ✗ Thinking OFF 存在系统性 severity 规则违反")
-        return
-
-    # Find scenario files
-    scenarios_dir = Path(__file__).parent / "scenarios"
-    scenario_files = sorted(scenarios_dir.glob("*.json"))
-
-    if not scenario_files:
-        print("No scenario files found!")
-        return
-
-    print(f"Found {len(scenario_files)} scenarios")
-    print(f"Will test each scenario with thinking ON and OFF")
-    print(f"Total tests: {len(scenario_files) * 2}\n")
-
-    # Load all scenarios
-    scenarios = {}
-    for scenario_file in scenario_files:
-        scenario = load_scenario(scenario_file)
-        scenarios[scenario["scenario_id"]] = scenario
-
-    # Run tests
-    results = []
-
-    for scenario_file in scenario_files:
-        scenario = load_scenario(scenario_file)
-
-        print(f"\nTesting: {scenario['scenario_id']}")
-
-        # Test with thinking ON
-        print("  - Thinking ON...", end=" ", flush=True)
-        result_on = test_scenario(API_KEY, scenario, thinking_enabled=True)
-        results.append(result_on)
-        print("✓" if result_on.success else "✗")
-        time.sleep(2)  # Rate limiting
-
-        # Test with thinking OFF
-        print("  - Thinking OFF...", end=" ", flush=True)
-        result_off = test_scenario(API_KEY, scenario, thinking_enabled=False)
-        results.append(result_off)
-        print("✓" if result_off.success else "✗")
-        time.sleep(2)  # Rate limiting
-
-    # Generate report
-    generate_report(results, scenarios)
+def _usage_int(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

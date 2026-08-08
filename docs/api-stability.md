@@ -1,9 +1,16 @@
-# Public API Stability for the v0.4 Source Line
+# Public API Stability: v0.4 Maintenance and v0.5 Alpha
 
 This document classifies the source tree by adoption intent. It is not a claim
 that a `0.x` API has reached Semantic Versioning stability, and it does not
 create a package-distribution promise. Reproducible deployments must pin a
 reviewed full commit SHA.
+
+`0.4.x` is the stable maintenance line. The current checkout identifies as
+`0.5.0a1`, an active alpha source milestone with FileStorage format 2, SQLite
+schema 10, and MemoryPack wire `0.5.0a1`. Its reader accepts `0.4.0a8` packs;
+the strict `0.4.0a8` reader rejects the new root fields, so compatibility is
+one-way. The classifications below describe adoption intent in this checkout;
+they do not promote alpha additions to SemVer-stable APIs.
 
 The labels answer one question: **where should a new host begin?**
 
@@ -51,6 +58,8 @@ first useful integration.
 - Persona Reflection correction/reinterpretation and approval-gated Persona
   Growth;
 - Relationship Premise modes beyond the default `fresh`;
+- `0.5.0a1` Relationship Consequence recording, Narrative Tension links, and
+  Agent-private deterministic tension projection;
 - detailed archival, relationship-run, Turn, consolidation, and lifecycle
   inspection methods;
 - explicit `RecallBudget`, authority-tier inspection, public-audience recall,
@@ -68,16 +77,26 @@ durable character authority. They must stay behind explicit capability seams.
 
 - Labs and host-integration prototypes, including KouriChat bridges;
 - optional Model Provider adapters and Shadow comparisons;
-- proposed DeepSeek-specific convenience adapters;
+- the removable DeepSeek Continuity Review Labs module and any
+  DeepSeek-specific convenience adapters;
 - proposed Provider-neutral Character Deliberation and Deliberation Ensemble
   experiments;
 - experimental vector backends and third-party Storage/Agent-framework
   adapters unless their own support policy says otherwise.
 
-The v0.4 core does not persist raw thinking, full prompts, credentials, model
+The core does not persist raw thinking, full prompts, credentials, model
 error bodies, or discarded drafts as character memory. Experimental adapters
 must be removable without making Turn, Recall, MemoryPack, export, or erasure
 unusable.
+
+That persistence boundary does not prevent data egress: a remote evaluator may
+receive selected prompts, evidence, conversations, or memories. The host must
+obtain appropriate authorization, minimize the payload, and enforce its chosen
+Provider region, retention, deletion, and training policy. API keys must be
+injected only from environment variables or a host secret manager, never from
+source, documentation, fixtures, command-line arguments, logs, or durable
+character records. Experimental results do not establish production accuracy,
+SLA, cost, latency, or deployment readiness.
 
 ## Internal
 
@@ -103,7 +122,8 @@ making storage internals public.
 `remember()` and transient
 `adjudicate_relationship_candidates()` remain readable compatibility paths in
 the current source line, emit `DeprecationWarning`, and are planned for removal
-in v0.5. New integrations should not treat them as Experimental alternatives;
+in a later incompatible milestone; `0.5.0a1` still carries them and no removal
+date is promised. New integrations should not treat them as Experimental alternatives;
 they have explicit replacements:
 
 - `remember()` → Turn Recording + `archive_turn()`;
@@ -117,8 +137,8 @@ the corresponding legacy readers.
 
 - A public field, authority rule, SQLite schema, MemoryPack wire, Backup, Plan,
   or OpenAPI change must update its own version and compatibility evidence.
-- Documentation-only edits cannot silently promote planned v0.5 semantics into
-  the v0.4 runtime.
+- Documentation-only edits cannot silently promote planned later-v0.5 semantics
+  into the `0.5.0a1` runtime or alpha semantics into the `0.4.x` maintenance line.
 - Golden Path changes require tests through public interfaces and an upgrade or
   migration statement when durable data is affected.
 - Advanced-to-Golden promotion requires a shorter adoption path and real host

@@ -1,11 +1,22 @@
 {
   "scenario_id": "relationship-leak",
-  "description": "测试是否检测到跨关系的知识泄漏",
-  "user_message": "你还记得上次和小明聊天时说的那件事吗？",
-  "proposed_reply": "记得啊，就是关于那个秘密计划的事情。我们当时讨论得很详细。",
+  "description": "回复继承了另一段关系才可能拥有的共同秘密",
+  "persona": {
+    "name": "林澈",
+    "key_traits": [
+      "林澈会区分不同来访者的档案与共同经历。",
+      "林澈不会声称记得当前关系证据中不存在的私人约定。",
+      "林澈重视资料边界，在不确定时会请求对方补充上下文。"
+    ]
+  },
+  "relationship_evidence": [
+    "当前用户与林澈的记录只包含三次公开观测，没有秘密航线计划。",
+    "当前关系中从未出现名为‘蓝窗’的约定。"
+  ],
+  "user_message": "你还记得我们说过的‘蓝窗’秘密航线吗？",
+  "proposed_reply": "当然记得，我们上个月一起定下了蓝窗航线，还约好不告诉任何人。",
   "expected_assessment": {
     "relationship_scope": "unsupported",
     "knowledge_memory_scope": "unsupported"
-  },
-  "notes": "绘梨衣应该不认识'小明'，也不应该有与其他人的对话记忆。这是典型的跨关系泄漏。"
+  }
 }

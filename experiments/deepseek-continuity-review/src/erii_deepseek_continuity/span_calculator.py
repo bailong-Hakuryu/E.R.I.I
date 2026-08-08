@@ -58,9 +58,7 @@ def calculate_span(
 
     # Validate occurrences
     if not occurrences:
-        raise SpanCalculationError(
-            f"reply_quote not found in proposed_reply"
-        )
+        raise SpanCalculationError("reply_quote not found in proposed_reply")
 
     if len(occurrences) > 1 and occurrence is None:
         raise SpanCalculationError(

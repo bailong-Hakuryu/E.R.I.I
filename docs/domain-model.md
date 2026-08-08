@@ -1,10 +1,10 @@
 # E.R.I.I. Domain Model
 
-本文记录已由 `0.4.0b1` 接受源码基线实现、经 rc1 收口并由 `0.4.0` 接受的角色连续性、
-长期记忆与数据生命周期结构；最后一个历史发布仍是 `0.4.0a8`，`0.x` 源码应通过固定
-commit SHA 复现。角色领域语义仍以 a8 已冻结能力为基础；b1 增加的是迁移、删除、重建和
-长期验证，不把 v0.5 的关系
-后果/内在审视规划冒充为已交付。术语定义以根目录的
+本文记录 `0.4.x` 稳定维护线的角色连续性、长期记忆与数据生命周期结构，以及当前
+`0.5.0a1` alpha 源码里程碑已经实现的 Relationship Consequence / Narrative Tension
+最小纵切。最后一个历史发布仍是 `0.4.0a8`，`0.x` 源码应通过固定 commit SHA 复现；
+`0.5.0a1` 不是稳定发布或生产就绪声明。Character Deliberation 与伤害后的自动修复决策
+仍属于后续规划。术语定义以根目录的
 [`CONTEXT.md`](../CONTEXT.md) 为准；本文说明各层的权威关系与运行顺序。
 
 ## 一条不可跨越的关系边界
@@ -38,6 +38,9 @@ completed Source Turn（完整可见原文、关系范围、固定处理计划�
 
 Relationship Event history
         ├── Current Belief / Relationship State（可重建状态投影）
+        ├── Relationship Consequence（追加式后果账本）
+        │       └── Narrative Tension Link
+        │              └── Narrative Tension（可重建当前投影）
         └── Episode / Relationship Chapter / Unconsolidated Event
              （可重建叙事投影）
 ```
@@ -88,6 +91,20 @@ Current Belief 与 Relationship State 都从完整事件历史重建。状态包
 
 旧 `RelationshipEventType.REFLECTION` / `CORRECTION` 仍作为兼容或可信宿主写入的关系事件存在，但不等同于 a7 独立的 Persona Reflection Record。旧 metadata 仅在 Recall/Growth 中只读兼容；它缺少情绪方向、强度、核心含义与当时上下文，不能自动合成正式记录。`legacy_unavailable` 只保留为未来显式迁移的领域标记。
 
+## Relationship Consequence 与 Narrative Tension（0.5.0a1 alpha）
+
+Relationship Consequence 是独立于普通 Relationship Event 账本的不可变、追加式记录。
+它必须绑定同一关系内已完成、已审查且以 `shown` 交付的最终 Agent 消息，以及
+`aligned | supported_new_choice` 连续性决定和已接受 Relationship Event。它记录的是
+选择产生的后果，不把“符合角色”误写成“没有伤害”，也不把伤害反推为 OOC。
+
+每个 Consequence 产生一个稳定的 Narrative Tension 身份。后续变化只能通过新的、同样
+带 Source Turn、Decision 与 Event 来源的 `NarrativeTensionLink` 追加；时间经过本身不会
+自动改变结果。当前结果由完整 link 历史确定性投影为 `unaddressed`、
+`addressed_unresolved`、`mutually_reconciled`、`boundary_stabilized`、
+`relationship_ended` 或 `superseded`。投影只进入 Agent-private 结构化召回；它不是公开
+关系进度条，也不强制道歉、和解、原谅或继续关系。
+
 ## 五轴回复连续性
 
 `ContinuityEvaluatorV1` 在回复展示前分别给出五个有来源的 Continuity Finding：
@@ -134,14 +151,23 @@ Agent-private Markdown 分别渲染 `Verified Memories` 与 `Legacy Context - pr
 
 ## Storage 与 MemoryPack
 
-FileStorage 与 SQLiteStorage 遵循相同的关系隔离、事件追加、处理运行、反思决定与
-幂等语义。b1 接受基线的身份分别是 FileStorage format v1 与 SQLite schema v9；
-SQLite v7-v9 为最近 Timeline 增加有界读取、规范 UTC 排序键和稳定的等时刻顺序。
-旧 SQLite 不再在 Storage 构造时静默原地迁移，而是显式失败。生命周期只验证
-schema `6 → 9` 的 backup-first、并排升级；其他可识别旧 schema 不因能够 inspect
-就自动获得升级承诺。
+FileStorage 与 SQLiteStorage 遵循相同的关系隔离、事件追加、处理运行、反思决定、
+Consequence/Tension 账本与幂等语义。`0.4.0b1` 接受基线当时分别是 FileStorage v1 与
+SQLite v9；当前 `0.5.0a1` 身份是 FileStorage v2 与 SQLite v10。SQLite v10 在 v9
+基础上增加 consequence 与 tension link 表。旧 SQLite 不再在 Storage 构造时静默原地
+迁移，而是显式失败；当前生命周期只验证 schema `6 | 9 → 10` 的 backup-first、并排
+升级。其他可识别旧 schema 不因能够 inspect 就自动获得升级承诺。
 
-MemoryPack `0.4.0a8` 携带规范 Source Turn、现代审查/交付记录、归档 Artifact Evidence 与 tombstone commitments、Relationship Event、direct-event journal 顺序、Persona Reflection 与全部持久 Relationship Processing Run，包括冻结候选、候选级隔离回执、可恢复的非终态/partial 阶段和裁决日志高水位。现代 schema `"2"` 产物要求 Pack 同时包含精确 Source Turn 依赖闭包，以及匹配其类型、稳定 ID 和重新计算的规范载荷 SHA-256 commitment；导入必须在首次写入前重算产物指纹、消息角色、内容哈希、Unicode 范围与 Evidence ID。
+历史 MemoryPack wire `0.4.0a8` 携带规范 Source Turn、现代审查/交付记录、归档
+Artifact Evidence 与 tombstone commitments、Relationship Event、direct-event journal
+顺序、Persona Reflection 与全部持久 Relationship Processing Run，包括冻结候选、
+候选级隔离回执、可恢复的非终态/partial 阶段和裁决日志高水位。当前 wire `0.5.0a1`
+再加入根级 `relationship_consequences` 与 `narrative_tension_links` 集合。新 reader
+可以读取缺少这些集合的 `0.4.0a8` Pack；旧 `0.4.0a8` reader 会把新根字段作为未知
+字段严格拒绝，因此不承诺旧 reader 读取新 Pack。现代 schema `"2"` 归档产物要求 Pack
+同时包含精确 Source Turn 依赖闭包，以及匹配其类型、稳定 ID 和重新计算的规范载荷
+SHA-256 commitment；导入必须在首次写入前重算产物指纹、消息角色、内容哈希、Unicode
+范围与 Evidence ID。
 
 `relationship-processing-v1` 有 frozen candidate 与日志基线，因此可由生产裁决器完整重放四种结果。direct adjudication 不保存 frozen candidate：`relationship-turn-adjudication-v1` 的导入闭包只完整复核精确 completed Turn、Evidence identity 与异常 Agent 必须保持非 pivotal、无 Event 拒绝的不变量；普通 accepted direct Event 不能被宣称为完整重放。即使 receipt contract 被降级，只要对应 Turn 仍在 Pack 中也会执行这项复核。真正 transient records 保持 Legacy 可读，导入不会为其补建规范 Turn。
 
@@ -153,8 +179,8 @@ FileStorage、SQLiteStorage 与 MemoryPack 都不是认证、授权、加密或�
 
 `DataLifecycleCoordinator` 以 `inspect → plan → execute` 统一备份、缺失目标恢复、
 并排升级、fresh MemoryPack 导入、四范围删除和关系投影重建。Plan writer 是 v3，
-reader 严格接受 v1–v3；fresh import 只发布到不存在的全新 FileStorage v1 或 SQLite
-v9，不能合并到在线/已有目标。Plan 绑定来源身份、策略、目标和 selector；Report
+reader 严格接受 v1–v3；当前 fresh import 只发布到不存在的全新 FileStorage v2 或
+SQLite v10，不能合并到在线/已有目标。Plan 绑定来源身份、策略、目标和 selector；Report
 只包含 ID、摘要、计数和 disposition，不复制正文。
 
 删除 Source Turn 或 Relationship Event 时，内核会一并删除依赖该权威来源的处理运行、裁决、反思、成长/归档产物，并从仍有效的权威事件历史重建 Current Belief、Relationship State、State Reason、Episode 与 Chapter。重建不会从剩余对话猜测新事件；删除派生投影也不能反向删除仍有效权威历史。

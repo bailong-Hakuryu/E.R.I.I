@@ -177,6 +177,8 @@ def _content_free_counts(pack: MemoryPack) -> dict[str, int]:
         "relationship_events",
         "relationship_direct_event_ids",
         "relationship_adjudications",
+        "relationship_consequences",
+        "narrative_tension_links",
         "persona_growth_proposals",
         "persona_compilation_proposals",
         "persona_manifests",

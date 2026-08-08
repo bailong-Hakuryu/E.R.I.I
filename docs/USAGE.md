@@ -2,13 +2,16 @@
 
 **English** · [简体中文](USAGE_zh-CN.md)
 
-> This guide describes the stable `0.4.0` source milestone. Its durable
-> behavior starts from the accepted b1 baseline at
+> The stable maintenance line is `0.4.x`; the current checkout is the active
+> `0.5.0a1` alpha source milestone. Durable v0.4 behavior starts from the
+> accepted b1 baseline at
 > `f6dca322379c4ea88320c69d752cab471d035e95`. The project does not distribute a
 > package for every `0.x` source milestone. The last historical GitHub release
 > remains `v0.4.0a8`; use the documentation inside that tag for its Python 3.9
-> contract. Pin a reviewed full commit SHA for later source states. Neither
-> state is a complete public-production security boundary.
+> contract. Current durable identities are FileStorage format 2, SQLite schema
+> 10, and MemoryPack wire `0.5.0a1`. Pin a reviewed full commit SHA. Neither the
+> maintenance line nor the alpha checkout is a complete public-production
+> security boundary.
 
 E.R.I.I. is a character-continuity and long-term-memory kernel for
 relationship-oriented AI characters, companions, and narrative applications.
@@ -23,11 +26,11 @@ If you only want to get something running, complete the “Installation” and �
 
 [Start here](#four-rules-to-understand-first) · [Installation](#installation) · [Ten-minute example](#run-it-in-ten-minutes) · [Real chat loop](#next-step-integrate-one-real-conversation-turn) · [Turn Recording](#turn-recording-the-canonical-source-ledger) · [Reliable archival](#reliable-archival-derive-long-term-memory-from-a-source-turn) · [Automatic relationship processing](#automatic-relationship-processing-from-source-turn-to-event-reflection-and-consolidation) · [Core objects](#core-objects)
 
-[Model providers](#model-provider-selection) · [Import a persona](#import-your-own-persona-markdown) · [Relationship premise](#choose-where-the-relationship-begins) · [Persona compilation](#advanced-compile-and-approve-a-structured-persona) · [Conversation memory](#save-ordinary-conversation-memories)
+[Model providers](#model-provider-selection) · [Consequences and tensions](#relationship-consequences-and-narrative-tension-050a1-alpha) · [Import a persona](#import-your-own-persona-markdown) · [Relationship premise](#choose-where-the-relationship-begins) · [Persona compilation](#advanced-compile-and-approve-a-structured-persona) · [Conversation memory](#save-ordinary-conversation-memories)
 
 [Relationship adjudication](#advanced-write-relationship-changes-separate-trusted-and-model-generated-input) · [Persona growth](#advanced-persona-growth-is-not-an-ordinary-relationship-event) · [Recall](#recall-memories) · [Promises and Open Loops](#promises-and-unfinished-matters)
 
-[Storage](#filestorage-or-sqlite) · [v0.4 data lifecycle](#v04-data-lifecycle) · [MemoryPack](#memorypack-backup-migration-and-user-data-portability) · [REST](#reference-rest-service) · [Troubleshooting](#troubleshooting) · [Production checklist](#pre-production-checklist) · [Examples](#more-runnable-examples)
+[Storage](#filestorage-or-sqlite) · [Data lifecycle](#data-lifecycle-v04-baseline-and-current-alpha) · [MemoryPack](#memorypack-backup-migration-and-user-data-portability) · [REST](#reference-rest-service) · [Troubleshooting](#troubleshooting) · [Production checklist](#pre-production-checklist) · [Examples](#more-runnable-examples)
 
 ## Four Rules to Understand First
 
@@ -52,6 +55,7 @@ If you only want to get something running, complete the “Installation” and �
 | Reliably save conversation-derived memories and recall prompt context | canonical Turn Recording → `archive_turn()` → `process_pending()` / `drain()` → `recall()` |
 | Maintain an independent persona and user relationship | `initialize_relationship()` → Relationship Event → `recall_structured()`; start with `full`, or approve a Persona Manifest first |
 | Automatically derive Relationship Events and persona reflections from a completed turn | configure `RelationshipEventExtractorV1` / `PersonaReflectionInterpreterV1` → `process_relationship_turn()` |
+| Preserve the consequence of a supported, shown character choice and its later outcome | accepted Relationship Event → `record_relationship_consequence()` → later `record_narrative_tension_link()` → Agent-private `recall_structured()` |
 | Manually submit Relationship Event candidates for tests, correction tools, or advanced workflows | persist a completed Turn → `adjudicate_turn_candidates()` |
 | Preserve promises or unfinished matters | `record_promise()` / `record_open_loop()` |
 | Back up, upgrade, erase, rebuild, or freshly import data | `DataLifecycleCoordinator.inspect()` → `plan()` → `execute()` |
@@ -61,13 +65,15 @@ If you only want to get something running, complete the “Installation” and �
 Real products normally combine canonical Turn Recording, reliable archival, and
 relationship processing. The deprecated `remember()` and transient
 `adjudicate_relationship_candidates()` compatibility entries emit
-`DeprecationWarning` in b1 and are planned for removal in v0.5.
+`DeprecationWarning`. They remain present in `0.5.0a1`; removal is deferred to a
+later incompatible milestone, with no promised date.
 
 ## Installation
 
 ### Requirements
 
-- `0.4.0` requires Python 3.11–3.14. The current workflow runs the
+- The active `0.5.0a1` source and stable `0.4.0` milestone require Python
+  3.11–3.14. The current workflow runs the
   declared matrix on Linux and named storage/build/Demo smoke paths on Windows;
   this is not a claim about unlisted platform combinations. The immutable
   `v0.4.0a8` release is the last version that promises Python 3.9 support.
@@ -76,9 +82,10 @@ relationship processing. The deprecated `remember()` and transient
 
 ### Install the Current Version from GitHub
 
-Clone the repository to work with the stable v0.4 source milestone. Pin a reviewed
-full commit SHA in any long-lived deployment. Publishing an `0.x` distribution
-is not a prerequisite for the next development stage:
+Cloning `main` currently installs the active `0.5.0a1` alpha source milestone.
+Pin a reviewed full commit SHA in every long-lived deployment; select a reviewed
+`0.4.x` commit when the stable maintenance line is required. Publishing an
+`0.x` distribution is not a prerequisite for the next development stage:
 
 ```bash
 git clone https://github.com/bailong-Hakuryu/E.R.I.I.git
@@ -141,7 +148,7 @@ Confirm that installation succeeded:
 python -c "import erii; print(erii.__version__)"
 ```
 
-The current source should print `0.4.0`.
+The current source should print `0.5.0a1`.
 
 For long-lived deployments, pin a verified commit or immutable release instead
 of allowing deployment scripts to follow `main` unconditionally.
@@ -350,7 +357,8 @@ This example passes `processing_channels=()` because it demonstrates only canoni
 
 The older `remember()` archival path and raw-Source-Turn relationship
 adjudication API remain compatibility interfaces. In b1 both emit
-`DeprecationWarning` and are planned for removal in v0.5. They do not let the
+`DeprecationWarning`; they are still present in `0.5.0a1`, with removal deferred
+to a later incompatible milestone. They do not let the
 kernel safely infer that two independent legacy calls describe the same
 interaction. New hosts must preserve the canonical Turn first.
 
@@ -362,20 +370,20 @@ If generation or continuity evaluation fails in a retryable way, leave the Turn 
 
 ## Model Provider Selection
 
-The current v0.4 source does not include Character Deliberation or a DeepSeek
-character-deliberation module. The `.[openai]` extra only supplies an optional
-SDK for custom host integrations. The `OpenAIAdapter` described later is a
-legacy memory-extraction Adapter; sharing a wire format does not turn it into
-the planned character-deliberation capability.
+The active `0.5.0a1` core does not define durable Character Deliberation. A
+removable DeepSeek Continuity Review experiment exists under
+`../experiments/deepseek-continuity-review/`,
+but it is Experimental: it is not installed by the base package, does not
+establish production accuracy, cost, latency, SLA, or deployment readiness, and
+can be removed without disabling core Turn, Recall, MemoryPack, or lifecycle
+paths. The `.[openai]` extra only supplies an optional SDK for custom host
+integrations. The `OpenAIAdapter` described later remains a legacy
+memory-extraction Adapter, not Character Deliberation.
 
-As of 2026-08-03, the maintainer considers DeepSeek an optional Provider worth
-trying first in budget-sensitive experiments, based on hands-on tests, its
-official [thinking mode](https://api-docs.deepseek.com/guides/thinking_mode/),
-and its relatively accessible
-[public pricing](https://api-docs.deepseek.com/quick_start/pricing/). It is not
-required by E.R.I.I., and an otherwise working host, storage, or deployment
+DeepSeek is one optional Provider for experiments, not an E.R.I.I. dependency
+or production recommendation. An otherwise working host, storage, or deployment
 should not be rebuilt merely to adopt it. Prices, model names, and behavior can
-change. Before remote use, read the
+change. Before any remote use, read the Provider's current
 [privacy policy](https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html?locale=en_US),
 minimize transmitted persona, recall, and conversation data, and disclose the
 data destination to the User.
@@ -387,6 +395,32 @@ chooses Providers; reviewers do not vote to define the character and cannot
 write persona, relationship, memory, or Turn state directly. See
 [ADR-0117](adr/0117-keep-character-deliberation-provider-neutral.md) and the
 [Roadmap](../ROADMAP.md) for the accepted direction and version order.
+
+## Relationship Consequences and Narrative Tension (`0.5.0a1` Alpha)
+
+`0.5.0a1` adds an explicit consequence journal; it does not infer “harm” from
+sentiment or equate continuity with harmlessness. The source gate requires the
+exact final Agent message from a completed, reviewed, `shown` Turn whose verdict
+is `aligned` or `supported_new_choice`, plus its accepted Relationship Event.
+
+```text
+completed + reviewed + shown Turn
+  → accepted Relationship Event
+  → record_relationship_consequence()
+  → unaddressed Narrative Tension
+  → later supported shown Turn + accepted Event
+  → record_narrative_tension_link()
+  → deterministic Agent-private recall projection
+```
+
+The later link is append-only and source-bound. Elapsed time alone does not
+resolve a tension, and the kernel does not force apology, forgiveness,
+reconciliation, or continuation of the relationship. Public recall omits these
+projections; use `RecallAudience.AGENT_PRIVATE` when the character needs the
+current sourced consequence state.
+
+See the [v0.5 migration guide](migration-0.5.0.md) for the typed effects,
+outcomes, and complete method signatures.
 
 ## Turn Recording: The Canonical Source Ledger
 
@@ -796,8 +830,9 @@ It does not export pending/processing work, the raw idempotency key, detailed at
 ### Legacy `remember()` remains available
 
 `remember()` still supports existing `llm=` / `BaseLLMAdapter` integrations and
-the old persistent task queue, but b1 emits `DeprecationWarning` and plans to
-remove this Python entry in v0.5. It does not create a canonical Turn Record,
+the old persistent task queue. It emits `DeprecationWarning` and remains in
+`0.5.0a1`; removal is deferred to a later incompatible milestone. It does not
+create a canonical Turn Record,
 reliable receipt, structured provenance, or atomic archival batch. New
 integrations should use:
 
@@ -1468,7 +1503,8 @@ For a more complete runnable example, see [`examples/07_structured_persona_recal
 ## Save Ordinary Conversation Memories
 
 This section documents migration of an old integration. `remember()` emits
-`DeprecationWarning` in b1 and is planned for removal in v0.5. New integrations
+`DeprecationWarning` and remains present in `0.5.0a1`; removal is deferred to a
+later incompatible milestone. New integrations
 must use canonical Turn Recording plus the `MemoryExtractorV1` /
 `archive_turn()` flow described in
 [Reliable archival](#reliable-archival-derive-long-term-memory-from-a-source-turn).
@@ -1912,6 +1948,10 @@ In `0.4.0a7`, relationship processing runs, explicit zero-result decisions, form
 
 On `0.4.0b1`, the legacy `nodes.json`, `core_memory.json`, and `timeline.json` paths also use flush, fsync, and atomic replacement. A missing file retains its documented empty/default meaning, but malformed JSON, an invalid record, or an I/O failure raises `StorageIntegrityError` instead of pretending that the data is empty. A failed publication raises `StorageWriteError` and leaves the previous valid document in place. Do not catch either error and immediately write an empty replacement; preserve the affected files for inspection or the explicit v0.4 lifecycle migration/recovery tooling.
 
+The current `0.5.0a1` FileStorage identity is format 2. It adds the durable
+Relationship Consequence and Narrative Tension Link collections. Format 1 is a
+readable historical/upgrade source, not the current write identity.
+
 ### SQLiteStorage
 
 ```python
@@ -1946,12 +1986,17 @@ upgrade route.
 
 On `0.4.0b1`, malformed or identity-inconsistent SQLite MemoryNode and structured Timeline rows raise `StorageIntegrityError`. A collection read never skips a damaged row and returns a misleading partial result.
 
-FileStorage remains the default in the current release. To select SQLite, explicitly pass a `SQLiteStorage` instance. Neither storage implementation is a multi-tenant authorization boundary, and both store data in plaintext by default.
+The current `0.5.0a1` SQLite identity is schema 10. It adds
+`relationship_consequences` and `narrative_tension_links`; schema 9 is a
+supported upgrade source, not the current write identity.
 
-## v0.4 Data Lifecycle
+FileStorage remains the default in the current alpha source milestone. To select SQLite, explicitly pass a `SQLiteStorage` instance. Neither storage implementation is a multi-tenant authorization boundary, and both store data in plaintext by default.
 
-`0.4.0b1` can identify a FileStorage directory, a
-SQLite database, or a MemoryPack before migration code is allowed to touch it:
+## Data Lifecycle: v0.4 Baseline and Current Alpha
+
+`0.4.0b1` introduced zero-write inspection. The current catalog retains that
+contract and recognizes current FileStorage v2, SQLite v10, and MemoryPack
+`0.5.0a1` before migration code is allowed to touch them:
 
 ```python
 from erii.data_lifecycle import (
@@ -1969,7 +2014,7 @@ assessment = LifecycleInspector().inspect(
 )
 
 print(assessment.status.value)       # current / migration_required / empty / missing
-print(assessment.detected_version)   # for example, "9"
+print(assessment.detected_version)   # for example, "10"
 print(assessment.fingerprint)        # SHA-256; no conversation text
 ```
 
@@ -1980,7 +2025,7 @@ conversation, Timeline, or memory text.
 
 Inspection is deliberately zero-write: it does not instantiate `FileStorage`
 or `SQLiteStorage`, create a missing path, switch SQLite journal mode, recover
-transactions, run migrations, or write the FileStorage v1 manifest. A
+transactions, run migrations, or write the FileStorage v2 manifest. A
 manifest-less FileStorage directory is therefore reported as `legacy` /
 `migration_required`, even when the current source reader can still read
 it. Stop writers before inspection; a non-empty SQLite WAL/journal or a source
@@ -2091,23 +2136,25 @@ operations.
 
 ### Upgrade, fresh import, erase, and rebuild
 
-b1 supports exactly these upgrade routes:
+For historical reference, the accepted b1 baseline supported FileStorage
+`legacy → 1`, SQLite `6 → 9`, and declared-readable older MemoryPacks to
+`0.4.0a8`. The current `0.5.0a1` lifecycle targets exactly:
 
-- FileStorage `legacy → 1`;
-- SQLite schema `6 → 9`;
-- every declared-readable older MemoryPack → `0.4.0a8`.
+- FileStorage `legacy | 1 → 2`;
+- SQLite schema `6 | 9 → 10`;
+- every declared-readable older MemoryPack → `0.5.0a1`.
 
 Each upgrade requires a missing side-by-side destination and a separate missing
 backup destination. Source and backup are preserved. “Readable” does not imply a
-verified SQLite migration route: schemas `0–5`, `7`, and `8` are not upgraded by
-b1.
+verified SQLite migration route: schemas `0–5`, `7`, and `8` are still not
+current upgrade sources.
 
 `MemoryPackImportRequest` validates a current or declared-readable Pack inside
-isolated staging and publishes it to a **missing, fresh** FileStorage v1 or
-SQLite v9 target. It is not an atomic merge into an existing store.
+isolated staging and publishes it to a **missing, fresh** FileStorage v2 or
+SQLite v10 target. It is not an atomic merge into an existing store.
 
 `EraseRequest` supports relationship, Source Turn, Relationship Event, and
-complete-user selectors on current FileStorage v1 or SQLite v9. `RebuildRequest`
+complete-user selectors on current FileStorage v2 or SQLite v10. `RebuildRequest`
 recomputes one relationship's derived projections without deleting its
 authoritative events. Both operations are backup-first. Reports carry IDs,
 counts, digests and disposition groups, never the deleted conversation or
@@ -2116,7 +2163,9 @@ persona bodies.
 Source Turn and Relationship Event deletion follows frozen processing
 dependencies. If a later processing run's direct/adjudication journal prefix
 included the removed authority, that run and its dependent events, reflections,
-growth records and archival artifacts are revoked transitively. Source
+growth records, archival artifacts, Relationship Consequences, and Narrative
+Tension Links are revoked transitively. Rebuild then deterministically projects
+the surviving consequence/tension history. Source
 transcripts outside the selector remain. A surviving modern Turn whose
 `TurnContextBaseline` included the removed prefix is downgraded to an explicit
 legacy record without continuity-assessment authority; E.R.I.I. does not invent
@@ -2195,7 +2244,7 @@ engine.import_memory(
 )
 ```
 
-MemoryPack `0.4.0a8` carries:
+Current MemoryPack wire `0.5.0a1` carries all of the v0.4 portable history plus:
 
 - Core Memory, MemoryNodes, and the legacy Experiential Timeline;
 - provenance-complete structured `timeline_entries`;
@@ -2208,6 +2257,14 @@ MemoryPack `0.4.0a8` carries:
 - schema `"2"` Artifact Evidence references and their exact Source Turn dependency closure;
 - formal Persona Reflection Records and explicit reflection/no-reflection decision identity;
 - all durable Relationship Processing runs, including recoverable non-terminal/partial phases, frozen decisions, source/processing identity, legal zero-result outcomes, and candidate-level exceptional-Agent rejection receipts.
+- root `relationship_consequences` and `narrative_tension_links`, preserving the
+  source-bound consequence journal and deterministic tension projection inputs.
+
+The `0.5.0a1` reader accepts declared-readable old packs, including
+`0.4.0a8`; missing consequence/tension collections are interpreted as empty.
+Compatibility is one-way: the strict `0.4.0a8` reader rejects a `0.5.0a1` Pack's
+new root fields. Do not describe this as bidirectional wire compatibility, and
+do not relabel a new Pack as an old version.
 
 The processing ledger does not duplicate the complete prompt, persona source, Source Transcript, model reasoning, or growing relationship history. The canonical transcript remains in `turn_records`; each run keeps its bounded frozen decision, two direct-event/adjudication journal high-water marks, a complete baseline fingerprint, and the identities required to resume after migration. Export and exact-identity import hold the same relationship-processing guard as the coordinator, so a Pack cannot capture a half-finished transition and import cannot interleave a foreign journal prefix with online processing. Import never guesses prior history from wall-clock `recorded_at`: it replays `relationship-processing-v1` frozen candidates through the production adjudicator against the frozen journal prefixes, considering only the head of each journal so both journals retain their own FIFO order. Before ordinary memory fields are written, import preflights the complete immutable Relationship/Blueprint identity, exact Source Turns, stable Timeline identities, canonical run identity and versions, target decision conflicts, the union of target and incoming temporal history, every replayable processing receipt/Event result, and each formal reflection's unique accepted source against its Evidence, baseline, relationship-bound Manifest, approved growth, and genuinely prior history. For every modern archival artifact it recomputes the canonical immutable commit-payload fingerprint and matches the tombstone commitment, then recomputes the resolved message role, message hash, Unicode range, and Evidence ID from the packed Source Turn. The per-run baseline metadata remains constant-size.
 

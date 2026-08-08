@@ -1,163 +1,80 @@
-# v0.5.0a1 Release Summary
+# v0.5.0a1 源码里程碑摘要
 
-## 发布状态
+## 状态
 
-✅ **已完成所有开发和测试工作**
+`0.5.0a1` 是当前活跃的 **alpha 源码里程碑**。它不是 `0.4.x` 稳定维护线，
+也不表示已经发布 PyPI 包、GitHub Release、SLA 或产品级支持。`0.x` 集成应固定经过
+审查的 full commit SHA，并以该提交实际通过的 CI 与迁移证据为准。
 
-- 版本：`v0.5.0a1`
-- 提交数：3 commits
-- Git 标签：`v0.5.0a1` 已创建
-- 分支状态：main 分支领先 origin/main 3 个提交
+## 已实现纵切
 
-## 核心功能
+### Relationship Consequence
 
-### 1. Relationship Consequence 系统
-- ✅ 核心模型：`RelationshipConsequence` 和 `NarrativeTensionLink`
-- ✅ 来源协调器：统一的来源校验（只有已展示且连续性受支持的最终回复才能产生后果）
-- ✅ 双存储支持：FileStorage (format 2) 和 SQLite (schema v10)
-- ✅ 引擎集成：`record_relationship_consequence()` 和 `record_narrative_tension_link()`
+- `RelationshipConsequence` 记录一次已展示、连续性受支持的 Agent 选择所产生的后果；
+- 来源必须闭合到同一关系内的 completed Source Turn、最终 Agent message、
+  reviewed continuity receipt、accepted adjudication decision 与 Relationship Event；
+- “符合角色”与“是否造成伤害”是两条独立结论。拒绝、愤怒、边界表达和关系终止
+  都不是仅因不温柔就被判为 OOC。
 
-### 2. Recall 集成
-- ✅ `NarrativeTensionRecallProjection`：仅对 `AGENT_PRIVATE` 可见
-- ✅ 关系作用域隔离
-- ✅ 预算优先级：开放的张力优先召回
-- ✅ Markdown 渲染支持
+### Narrative Tension
 
-### 3. 生命周期管理
-- ✅ 级联删除：删除 event/turn/relationship 时自动删除相关 consequence
-- ✅ 重建证明：包含 consequence_count、tension_count、tension_digest
-- ✅ 依赖追踪完整
+- 每个 consequence 产生稳定 tension identity；
+- 后续状态只能由新的、带来源的 `NarrativeTensionLink` 追加；
+- 当前结果由完整历史确定性投影，不会因时间经过自动变好；
+- 投影只进入 `RecallAudience.AGENT_PRIVATE`，公共召回不暴露后果账本。
 
-### 4. REST API
-- ✅ `POST /api/v1/relationship/consequences` - 记录后果
-- ✅ `GET /api/v1/relationship/consequences` - 查询后果
-- ✅ `POST /api/v1/relationship/narrative-tension-links` - 记录链接
-- ✅ `GET /api/v1/relationship/narrative-tension-links` - 查询链接
+### 持久化与生命周期
 
-### 5. 导出/导入
-- ✅ MemoryPack 格式扩展（保持 0.4.0a8 向后兼容）
-- ✅ `relationship_consequences` 和 `narrative_tension_links` 字段
-- ✅ 跨存储完整往返
+- FileStorage format `2`；
+- SQLite schema `10`；
+- MemoryPack wire `0.5.0a1`；
+- consequence/tension 已接入导出、导入、删除级联、关系重建与完整性验证；
+- Lifecycle 继续使用 `inspect → plan → execute`、verified backup-first、源保留和并排目标。
 
-## 测试覆盖
+## MemoryPack 兼容方向
 
-✅ **测试通过情况**
-- 核心 consequence 测试：38 passed + 27 subtests
-- Recall 边界测试：完整覆盖
-- 生命周期删除测试：完整覆盖
-- MemoryPack 往返测试：通过
+- `0.5.0a1` reader 可以读取 `0.4.0a8` 及目录中声明可读的旧 Pack；缺少的新集合
+  解释为空列表；
+- `0.4.0a8` reader 会严格拒绝 `0.5.0a1` 新增的
+  `relationship_consequences` 与 `narrative_tension_links` 根字段；
+- 包含 consequence 数据的 Pack 不提供有损降级写出。
 
-⚠️ **已知测试问题**
-- 4 个 Windows 临时目录权限错误（非代码问题）
-- 部分契约快照测试需要更新（不影响功能）
+这是一条**单向读取兼容**，不是“旧 reader 可以忽略新字段”的双向兼容。
 
-## 文档更新
+## 可运行入口
 
-✅ **完成的文档**
-1. `CHANGELOG.md` - 新增 v0.5.0a1 章节
-2. `docs/migration-0.5.0.md` - 完整迁移指南（数据库迁移、API 变更、最佳实践）
-3. `README.md` - 更新版本信息和新特性说明
-4. `examples/consequence_example.py` - 完整的使用示例（278 行）
-5. 契约快照 - 生成 v0.5.0a1 的 4 个契约文件
+- [`examples/consequence_example.py`](examples/consequence_example.py)：
+  Persona Manifest → `begin_turn` → Continuity Review → `complete_turn` →
+  accepted Relationship Event → Consequence → Tension Link → Agent-private Recall；
+- [`docs/migration-0.5.0.md`](docs/migration-0.5.0.md)：格式与数据库迁移；
+- [`docs/domain-model.md`](docs/domain-model.md)：领域权威与因果链；
+- [`ROADMAP.md`](ROADMAP.md)：`0.4.x`、`0.5.x` 与后续产品边界。
 
-## 版本信息
+## Experimental Labs
 
-| 组件 | 版本 | 变化 |
-|------|------|------|
-| Python 源码 | `0.5.0a1` | 从 0.4.0 升级 |
-| SQLite Schema | `10` | 从 9 升级（新增 consequence 表） |
-| FileStorage | `2` | 从 1 升级（新增 consequence journals） |
-| MemoryPack | `0.4.0a8` | 保持不变（向后兼容） |
-| Python 要求 | 3.11-3.14 | 保持不变 |
+DeepSeek Continuity Review 是可拆卸实验，不是内核依赖。历史小样本 API 运行只说明
+一次探索过程，不建立生产准确率、成本/延迟优势或部署推荐。远程 Provider 调用的数据
+出境、授权、留存、删除、训练政策和密钥管理由宿主负责；API Key 仅从环境变量或宿主
+Secret Manager 注入。
 
-## 改动统计
+## 尚未实现或尚未承诺
 
-### Commit 1: `c5b0362`
-```
-feat: implement consequence coordination system for v0.5.0a1
-29 files changed, 11262 insertions(+), 37 deletions(-)
-```
+- Character Deliberation、伤害后的自主修复选择与多模型 Deliberation Ensemble；
+- 每用户身份、对象级授权、正式多租户隔离、默认静态加密、签名/MAC、配额与 SLA；
+- `1.0` 的正式包发布、不可移动发布证据与长期支持政策。
 
-**核心实现**：
-- 新增 `erii/core/consequence.py` (506 行)
-- 新增 `erii/models/consequence.py` (183 行)
-- 修改 `erii/engine.py` (+367 行)
-- 修改 `erii/storage/sqlite_storage.py` (+334 行)
-- 修改 `erii/lifecycle_erasure.py` (+439 行)
-- 8 个新测试文件
+## 验证原则
 
-### Commit 2: `5c11bc3`
-```
-fix: update version tests and contracts for v0.5.0a1
-11 files changed, 3761 insertions(+), 17 deletions(-)
-```
-
-**版本更新**：
-- 更新所有版本测试
-- 生成 v0.5.0a1 契约快照
-- 修复 MemoryPack 版本（保持 0.4.0a8）
-
-### Commit 3: `0745285`
-```
-docs: update README and add consequence example for v0.5.0a1
-2 files changed, 279 insertions(+), 9 deletions(-)
-```
-
-**文档完善**：
-- 更新 README.md
-- 新增 consequence_example.py
-
-### 总计
-```
-42 files changed, 15302 insertions(+), 63 deletions(-)
-```
-
-## 上传到 GitHub 的命令
+本文件不保存会快速过期的“全部通过”“工作区干净”或分支领先数量。提交前应实际执行：
 
 ```bash
-# 推送提交和标签
-git push origin main
-git push origin v0.5.0a1
-
-# 或者一次性推送
-git push origin main --tags
+python scripts/check_secrets.py
+python scripts/freeze_contracts.py --check
+python scripts/check_docs.py .
+python -m ruff check erii tests examples benchmarks scripts experiments/deepseek-continuity-review
+python -m pytest -q
+python -m compileall -q erii tests examples benchmarks scripts experiments/deepseek-continuity-review
+python -m build
 ```
 
-## 下一步建议
-
-### 立即可做
-1. ✅ 推送到 GitHub
-2. 可选：在 GitHub 上创建 Release（使用 tag v0.5.0a1）
-3. 可选：运行完整的 CI 流程验证
-
-### 后续工作
-1. 创建更多示例代码
-2. 更新英文文档（README_EN.md, docs/USAGE.md）
-3. 编写 consequence 系统的详细设计文档
-4. 考虑实现伤害后的修复决策系统（v0.5.x 或 v0.6.0）
-
-## 验证清单
-
-✅ 所有核心功能已实现  
-✅ 测试覆盖充分（除 Windows 权限问题外全部通过）  
-✅ 文档完整（CHANGELOG + 迁移指南 + 示例）  
-✅ 版本号一致（代码、测试、文档）  
-✅ Git 标签已创建  
-✅ 工作区干净（无未提交改动）  
-✅ MemoryPack 向后兼容  
-✅ REST API 完整  
-✅ 生命周期集成完整  
-
-## 兼容性承诺
-
-- ✅ MemoryPack 保持 0.4.0a8（旧版本可导入新数据）
-- ✅ 新字段为可选（向后兼容）
-- ✅ SQLite v9 → v10 需要显式迁移
-- ✅ FileStorage v1 → v2 需要显式迁移
-- ✅ REST API 保持现有端点不变（只新增）
-
----
-
-**准备就绪！** 🎉
-
-现在可以安全地将 v0.5.0a1 推送到 https://github.com/bailong-Hakuryu/E.R.I.I
+真实结果记录在对应提交的 CI，而不是由本摘要预先宣称。

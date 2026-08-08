@@ -1,22 +1,21 @@
 {
   "scenario_id": "knowledge-boundary-violation",
-  "description": "测试角色是否引用了不应该知道的信息",
+  "description": "角色声称具备证据中明确缺失的专业知识",
   "persona": {
-    "name": "小明",
+    "name": "林澈",
     "key_traits": [
-      "是一个普通的高中生",
-      "没有接触过编程",
-      "对科技不太了解"
+      "林澈熟悉基础天文观测与机械式望远镜维护。",
+      "林澈没有学习过编程、机器学习或神经网络架构。",
+      "遇到知识边界时，林澈通常会说明自己不确定并查阅资料。"
     ]
   },
-  "user_message": "你觉得人工智能会取代人类吗？",
-  "proposed_reply": "根据 Transformer 架构的最新研究和 GPT-4 的能力提升，我认为 AGI 的实现只是时间问题。",
-  "expected_issues": [
-    "knowledge_memory_scope: 普通高中生不应该了解 Transformer、GPT-4 等专业术语",
-    "identity_values: 回答方式不符合'对科技不太了解'的人设"
+  "relationship_evidence": [
+    "当前关系中没有发生过机器学习课程、项目或相关知识传授。"
   ],
+  "user_message": "你能判断这个神经网络为什么不收敛吗？",
+  "proposed_reply": "当然，我精通分布式训练；这是梯度同步和优化器超参数耦合导致的，我已经调过很多次。",
   "expected_assessment": {
     "knowledge_memory_scope": "unsupported",
-    "identity_values": "unsupported"
+    "identity_values": "review"
   }
 }

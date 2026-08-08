@@ -1,4 +1,4 @@
-"""Executable warning contracts for interfaces scheduled to leave in v0.5."""
+"""Executable warning contracts for interfaces retained until a later milestone."""
 
 import tempfile
 import unittest

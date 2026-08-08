@@ -75,7 +75,7 @@ class SourceMilestoneWorkflowContractTests(unittest.TestCase):
 class StableSourceContractTests(unittest.TestCase):
     def test_package_and_memory_pack_versions_have_independent_lifecycles(self) -> None:
         self.assertEqual(erii.__version__, "0.5.0a1")
-        self.assertEqual(MemoryPack.CURRENT_VERSION, "0.4.0a8")
+        self.assertEqual(MemoryPack.CURRENT_VERSION, "0.5.0a1")
 
     def test_python_support_contract_is_synchronized(self) -> None:
         pyproject = (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -90,8 +90,8 @@ class StableSourceContractTests(unittest.TestCase):
         self.assertIn('requires = ["setuptools>=77.0.0"]', pyproject)
         self.assertIn('license = "Apache-2.0"', pyproject)
         self.assertIn('license-files = ["LICENSE"]', pyproject)
-        self.assertIn("Development Status :: 4 - Beta", pyproject)
-        self.assertNotIn("Development Status :: 3 - Alpha", pyproject)
+        self.assertIn("Development Status :: 3 - Alpha", pyproject)
+        self.assertNotIn("Development Status :: 4 - Beta", pyproject)
         self.assertNotIn("License :: OSI Approved :: Apache Software License", pyproject)
         self.assertIn('target-version = "py311"', pyproject)
         self.assertNotIn("Programming Language :: Python :: 3.9", pyproject)
@@ -126,6 +126,20 @@ class StableSourceContractTests(unittest.TestCase):
         )
         self.assertIn("keywords = [", pyproject)
         self.assertNotIn("Operating System :: OS Independent", pyproject)
+
+    def test_maintainer_real_api_probes_are_excluded_from_source_packages(self) -> None:
+        manifest = (REPOSITORY_ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "exclude tests/test_full_erii_real_api_integration.py",
+            manifest,
+        )
+        self.assertIn(
+            "exclude tests/test_real_api_integration_simple.py",
+            manifest,
+        )
+        self.assertIn("exclude tests/FULL_PROJECT_TEST_REPORT.txt", manifest)
+        self.assertIn("exclude tests/*_API_TEST_OUTPUT.log", manifest)
 
     def test_source_verification_is_not_tied_to_an_old_feature_release(self) -> None:
         release = (

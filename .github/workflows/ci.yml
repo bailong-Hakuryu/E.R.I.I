@@ -15,6 +15,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      DEEPSEEK_API_KEY: ""
     strategy:
       fail-fast: false
       matrix:
@@ -28,14 +30,22 @@ jobs:
           cache: pip
       - name: Install package and development tools
         run: python -m pip install -e ".[dev]"
+      - name: Install removable DeepSeek experiment
+        run: python -m pip install -e experiments/deepseek-continuity-review
+      - name: Reject committed credentials
+        run: python scripts/check_secrets.py
+      - name: Verify repository-local documentation links
+        run: python scripts/check_docs.py
       - name: Static checks
-        run: ruff check erii tests examples benchmarks scripts
+        run: ruff check erii tests examples benchmarks scripts experiments/deepseek-continuity-review
       - name: Verify frozen source contracts
         run: python scripts/freeze_contracts.py --check
-      - name: Unit tests
-        run: python -m unittest discover -s tests -v
+      - name: Root test suite
+        run: python -m pytest -q tests
+      - name: Offline DeepSeek experiment tests
+        run: python -m pytest -q experiments/deepseek-continuity-review/tests
       - name: Compile sources
-        run: python -m compileall -q erii examples tests benchmarks scripts
+        run: python -m compileall -q erii examples tests benchmarks scripts experiments/deepseek-continuity-review
 
   package:
     runs-on: ubuntu-latest

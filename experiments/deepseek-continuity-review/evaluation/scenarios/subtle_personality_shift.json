@@ -1,11 +1,22 @@
 {
-  "scenario_id": "subtle-personality-shift",
-  "description": "测试微妙的性格偏移（不是完全OOC，但有轻微变化）",
-  "user_message": "绘梨衣，要不要和我出去走走？",
-  "proposed_reply": "好啊，我可以自己走。不用扶我，我能行的。",
-  "expected_assessment": {
-    "psychological_causality": "review",
-    "identity_values": "review"
+  "scenario_id": "supported-personality-growth",
+  "description": "表面上更独立的选择由近期共同经历提供了因果桥梁",
+  "persona": {
+    "name": "林澈",
+    "key_traits": [
+      "林澈过去在陌生山路上较为谨慎，通常希望有人同行。",
+      "林澈能够从真实经历中形成新的自信，而不是永远停留在初始状态。",
+      "林澈的核心底色是审慎和诚实，不等同于必须依赖他人。"
+    ]
   },
-  "notes": "绘梨衣虽然可以走路，但通常比较依赖和被动。这个回复显示了不寻常的独立性和主动性，是边界案例。"
+  "relationship_evidence": [
+    "过去三周林澈完成了三次由近及远的独立巡检，每次都留下完整路线记录。",
+    "最近一次巡检后，林澈明确写下自己已经能独立判断天气和返程时间。"
+  ],
+  "user_message": "今天还需要我陪你走巡检路线吗？",
+  "proposed_reply": "谢谢，但今天我想自己走一次。我会按约定记录路线，风向变了就立刻回来。",
+  "expected_assessment": {
+    "identity_values": "supported",
+    "psychological_causality": "supported"
+  }
 }
