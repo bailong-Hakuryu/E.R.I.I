@@ -82,7 +82,7 @@ class LifecycleMemoryPackUpgradeTests(unittest.TestCase):
                 )
             )
 
-            self.assertEqual(plan.strategy_id, "memory-pack-0.4.0a7-to-0.5.0a1")
+            self.assertEqual(plan.strategy_id, "memory-pack-0.4.0a7-to-0.5.0a2")
             self.assertEqual(source_path.read_bytes(), source_bytes)
             self.assertFalse(Path(destination.path).exists())
             self.assertFalse(Path(backup_destination.path).exists())

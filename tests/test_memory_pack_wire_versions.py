@@ -61,7 +61,7 @@ class MemoryPackWireVersionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             ValueError,
-            "fields introduced in '0.5.0a1'",
+            "fields introduced in '0.5.0a2'",
         ):
             MemoryPack.from_dict(mislabeled_document)
 
