@@ -121,24 +121,18 @@ class TestCredentialManager:
     def test_detect_key_leakage_various_formats(self):
         """Test detection of keys in various formats."""
         # Test cases aligned with KEY_PATTERN: requires prefix (sk-, token-, key-, api-) or 32+ chars
-        test_cases = [
-            ('api_key="sk-1234567890abcdef"', True),  # Has sk- prefix
-            ('token: token-abc1234567890def', True),  # Has token- prefix
-            ('SECRET=key-xyz9876543210fed', True),  # Has key- prefix
-            ('password="p@ssw0rd12345678901234567890123"', True),  # 32+ chars
-            ('credential: "api-123456789012"', True),  # Has api- prefix
-            ('Just normal text here', False),
-            ('api_key=""', False),  # Empty key
-            ('token: abc', False),  # Too short, no prefix
-            ('password="short"', False),  # Too short
-        ]
+        # Positive cases - should detect
+        assert len(CredentialManager.detect_key_leakage('api_key="sk-1234567890abcdef"')) > 0
+        assert len(CredentialManager.detect_key_leakage('token: token-abc1234567890def')) > 0
+        assert len(CredentialManager.detect_key_leakage('SECRET=key-xyz9876543210fed')) > 0
+        assert len(CredentialManager.detect_key_leakage('password="p@ssw0rd12345678901234567890123"')) > 0
+        assert len(CredentialManager.detect_key_leakage('credential: "api-123456789012"')) > 0
 
-        for text, should_detect in test_cases:
-            detected = CredentialManager.detect_key_leakage(text)
-            if should_detect:
-                assert len(detected) > 0, f"Should detect key in: {text}"
-            else:
-                assert len(detected) == 0, f"Should not detect key in: {text}"
+        # Negative cases - should not detect
+        assert len(CredentialManager.detect_key_leakage('Just normal text here')) == 0
+        assert len(CredentialManager.detect_key_leakage('api_key=""')) == 0
+        assert len(CredentialManager.detect_key_leakage('token: abc')) == 0
+        assert len(CredentialManager.detect_key_leakage('password="short"')) == 0
 
     def test_validate_no_literal_keys_clean_code(self):
         """Test validation passes for code without literal keys."""
