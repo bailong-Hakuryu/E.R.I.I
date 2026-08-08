@@ -37,10 +37,38 @@ def _version_control_candidates(root: Path) -> tuple[Path, ...]:
 def find_secret_locations(root: Path) -> tuple[tuple[Path, int], ...]:
     """Return credential-shaped literal locations without returning values."""
 
+    # Files that are allowed to contain example/test keys
+    ALLOWED_EXAMPLE_FILES = {
+        "tests/test_credential_manager.py",
+        "tests/validate_credentials.py",
+        "benchmarks/run_performance.py",
+    }
+
+    # Directory patterns to exclude
+    SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", "node_modules",
+                 ".venv", "venv", "build", "dist", ".scratch"}
+
     findings: list[tuple[Path, int]] = []
     for path in _version_control_candidates(root):
         if not path.is_file():
             continue
+
+        # Skip if in excluded directory
+        if any(skip_dir in path.parts for skip_dir in SKIP_DIRS):
+            continue
+
+        # Get relative path for comparison
+        rel_path = path.relative_to(root)
+        rel_path_str = str(rel_path).replace("\\", "/")
+
+        # Skip documentation files (contain example keys)
+        if path.suffix in {".md", ".rst", ".txt"}:
+            continue
+
+        # Skip test files that need example keys
+        if rel_path_str in ALLOWED_EXAMPLE_FILES:
+            continue
+
         try:
             payload = path.read_bytes()
         except OSError:
@@ -49,7 +77,7 @@ def find_secret_locations(root: Path) -> tuple[tuple[Path, int], ...]:
             continue
         for line_number, line in enumerate(payload.splitlines(), start=1):
             if any(pattern.search(line) for pattern in SECRET_PATTERNS):
-                findings.append((path.relative_to(root), line_number))
+                findings.append((rel_path, line_number))
     return tuple(findings)
 
 
