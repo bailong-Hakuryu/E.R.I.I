@@ -118,7 +118,6 @@ class TestCredentialManager:
         """Test fingerprint of empty key."""
         assert CredentialManager.get_key_fingerprint("") == "<no-key>"
 
-    @pytest.mark.skip(reason="CI cache issue - test passes locally but fails in CI with phantom test case")
     def test_detect_key_leakage_various_formats(self):
         """Test detection of keys in various formats."""
         # Test cases aligned with KEY_PATTERN: requires prefix (sk-, token-, key-, api-) or 32+ chars
