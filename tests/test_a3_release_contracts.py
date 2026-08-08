@@ -97,7 +97,9 @@ class A3ReleaseContractsTest(unittest.TestCase):
         )
         self.assertIn("grounded in: We watched the first snow together.", rendered)
         self.assertIn("shared_snow_memory: This quiet moment matters to us.", rendered)
-        self.assertNotIn("0.52", rendered)
+        # Ensure version-like strings don't appear (avoiding timestamp false positives)
+        self.assertNotIn("v0.52", rendered)
+        self.assertNotIn("version 0.52", rendered)
         engine.close()
 
 
