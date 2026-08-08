@@ -35,6 +35,12 @@ jobs:
         run: python -m pip install --no-cache-dir -e experiments/deepseek-continuity-review
       - name: Clear pytest cache
         run: find . -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true; find . -type d -name '.pytest_cache' -exec rm -rf {} + 2>/dev/null || true
+      - name: Debug - Check test file content
+        run: |
+          echo "=== Checking test file line 132 ==="
+          sed -n '130,135p' tests/test_credential_manager.py
+          echo "=== File hash ==="
+          sha256sum tests/test_credential_manager.py
       - name: Reject committed credentials
         run: python scripts/check_secrets.py
       - name: Verify repository-local documentation links
