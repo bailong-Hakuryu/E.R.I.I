@@ -45,6 +45,7 @@ example_custom_llm_memory/
 # Environments
 .env
 .venv
+.venv-build/
 env/
 venv/
 ENV/
