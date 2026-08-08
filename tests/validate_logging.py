@@ -4,7 +4,6 @@ import sys
 import os
 import logging
 import tempfile
-from pathlib import Path
 
 # Set UTF-8 encoding for Windows console
 if sys.platform == 'win32':
@@ -153,7 +152,7 @@ def test_log_configuration():
         # Check file was created
         assert os.path.exists(log_file), "Log file should be created"
 
-        print(f"  ✓ Logger configured, file created")
+        print("  ✓ Logger configured, file created")
 
 
 def test_key_redaction_in_logs():

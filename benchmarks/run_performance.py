@@ -13,7 +13,7 @@ import os
 import time
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, Any
 import json
 
 # Set UTF-8 encoding for Windows console
@@ -124,8 +124,7 @@ def benchmark_error_handling() -> Dict[str, Any]:
         StorageError,
         APIConnectionError,
         ValidationError,
-        ErrorCode,
-        ErrorSeverity
+        ErrorCode
     )
 
     results = {}
@@ -182,11 +181,11 @@ def benchmark_storage_operations() -> Dict[str, Any]:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # FileStorage benchmark
-        file_storage = FileStorage(root_dir=Path(tmpdir) / 'file_storage')
+        _ = FileStorage(root_dir=Path(tmpdir) / 'file_storage')
 
         # Test: Simple write/read cycle (using memory nodes as proxy)
         iterations = 100
-        test_data = {'test': 'data' * 100}  # ~400 bytes
+        _ = {'test': 'data' * 100}  # ~400 bytes
 
         start = time.perf_counter()
         for i in range(iterations):
@@ -196,7 +195,7 @@ def benchmark_storage_operations() -> Dict[str, Any]:
         results['file_storage_cycle_ms'] = (duration / iterations) * 1000 if iterations > 0 else 0
 
         # SQLiteStorage benchmark
-        sqlite_storage = SQLiteStorage(db_path=Path(tmpdir) / 'test.db')
+        _ = SQLiteStorage(db_path=Path(tmpdir) / 'test.db')
 
         start = time.perf_counter()
         for i in range(iterations):

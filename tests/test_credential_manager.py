@@ -8,7 +8,6 @@ Validates that the credential manager properly:
 """
 
 import logging
-import os
 import pytest
 
 from erii.security.credential_manager import (

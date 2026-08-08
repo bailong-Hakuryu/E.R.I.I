@@ -87,7 +87,7 @@ def test_env_loading():
     try:
         loaded_key = CredentialManager.get_api_key("test", env_var="TEST_API_KEY")
         assert loaded_key == test_key, f"Expected '{test_key}', got '{loaded_key}'"
-        print(f"  ✓ Loaded key from TEST_API_KEY")
+        print("  ✓ Loaded key from TEST_API_KEY")
         print(f"  ✓ Key fingerprint: {CredentialManager.get_key_fingerprint(loaded_key)}")
     finally:
         del os.environ["TEST_API_KEY"]
@@ -107,7 +107,7 @@ def test_missing_key():
     # Optional key should return None
     result = CredentialManager.get_api_key("missing", env_var="NONEXISTENT_KEY", required=False)
     assert result is None, "Optional missing key should return None"
-    print(f"  ✓ Optional missing key returned None")
+    print("  ✓ Optional missing key returned None")
 
 
 def test_redacting_formatter():
@@ -130,7 +130,7 @@ def test_redacting_formatter():
     formatted = formatter.format(record)
     assert "sk-1234567890abcdef" not in formatted, "Original key should be redacted"
     assert "***" in formatted or "sk-1***" in formatted, "Should contain redaction marker"
-    print(f"  ✓ Original: 'Using api_key=\"sk-1234567890abcdef\" for request'")
+    print("  ✓ Original: 'Using api_key=\"sk-1234567890abcdef\" for request'")
     print(f"  ✓ Redacted: '{formatted}'")
 
 

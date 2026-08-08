@@ -180,7 +180,7 @@ def test_sensitive_data_redaction():
     assert 'alice' in error_str or 'user' in error_str
     assert 'file_path' in error_str or '/tmp/data.db' in error_str
 
-    print(f"  ✓ Sensitive data redacted")
+    print("  ✓ Sensitive data redacted")
 
 
 def test_error_codes():

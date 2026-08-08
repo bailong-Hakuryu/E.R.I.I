@@ -12,7 +12,6 @@ Exit codes:
     1: Keys detected or script error
 """
 
-import os
 import sys
 from pathlib import Path
 

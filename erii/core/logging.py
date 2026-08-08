@@ -16,7 +16,6 @@ import sys
 import time
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import Any, Optional
 
 from erii.security.credential_manager import RedactingFormatter
