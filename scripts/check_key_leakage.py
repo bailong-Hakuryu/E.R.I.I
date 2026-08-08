@@ -25,7 +25,7 @@ if sys.platform == 'win32':
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from erii.security.credential_manager import CredentialManager, CredentialError
+from erii.security.credential_manager import CredentialManager, CredentialError  # noqa: E402
 
 
 def scan_file(file_path: Path) -> list[str]:
