@@ -465,9 +465,8 @@ class MyAdapter(BaseLLMAdapter):
 
 ## 相关文档
 
-- [安全最佳实践](security_best_practices.md)
-- [部署指南](deployment_guide.md)
-- [开发环境设置](development_setup.md)
+- [日志和错误处理指南](logging_and_error_handling.md)
+- [文档索引](../INDEX.md)
 
 ---
 

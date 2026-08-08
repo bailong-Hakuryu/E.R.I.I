@@ -605,9 +605,9 @@ raise StorageError(
 
 ## API 参考
 
-完整 API 文档请参阅：
-- [日志 API](../api/logging.md)
-- [错误 API](../api/errors.md)
+完整 API 文档请参阅源代码：
+- `erii/core/logging.py` - 日志系统实现
+- `erii/errors.py` - 错误处理实现
 
 ---
 

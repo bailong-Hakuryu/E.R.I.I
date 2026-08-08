@@ -150,10 +150,10 @@ except Exception as e:
 
 ## 📚 完整文档
 
-1. [版本路线图](ROADMAP_v0.5.0a2.md)
-2. [API 密钥管理指南](guides/api_key_management.md)
-3. [日志和错误处理指南](guides/logging_and_error_handling.md)
-4. [完成总结](development/v0.5.0a2_completion.md)
+1. [版本路线图](docs/ROADMAP_v0.5.0a2.md)
+2. [API 密钥管理指南](docs/guides/api_key_management.md)
+3. [日志和错误处理指南](docs/guides/logging_and_error_handling.md)
+4. [完成总结](docs/development/v0.5.0a2_completion.md)
 
 ---
 

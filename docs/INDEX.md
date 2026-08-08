@@ -7,26 +7,26 @@
 ## 📚 快速导航
 
 ### 新用户入门
-1. **[README](../../README_v0.5.0a2.md)** - 版本概览和快速开始
-2. **[API 密钥管理指南](../guides/api_key_management.md)** - 安全配置必读
-3. **[日志和错误处理指南](../guides/logging_and_error_handling.md)** - 日志和错误使用
+1. **[README](../README.md)** - 项目主页
+2. **[API 密钥管理指南](guides/api_key_management.md)** - 安全配置必读
+3. **[日志和错误处理指南](guides/logging_and_error_handling.md)** - 日志和错误使用
 
 ### 开发者文档
-4. **[版本路线图](../ROADMAP_v0.5.0a2.md)** - 开发计划和任务清单
-5. **[完成总结](v0.5.0a2_completion.md)** - 开发成果详细总结
-6. **[验证报告](v0.5.0a2_verification.md)** - 测试结果和质量报告
-7. **[性能分析报告](v0.5.0a2_performance.md)** - 性能基准和优化建议
+4. **[版本路线图](ROADMAP_v0.5.0a2.md)** - 开发计划和任务清单
+5. **[完成总结](development/v0.5.0a2_completion.md)** - 开发成果详细总结
+6. **[验证报告](development/v0.5.0a2_verification.md)** - 测试结果和质量报告
+7. **[性能分析报告](development/v0.5.0a2_performance.md)** - 性能基准和优化建议
 
 ### 最终交付
-8. **[交付报告](v0.5.0a2_delivery.md)** - 完整交付清单
-9. **[最终总结](../../FINAL_SUMMARY.md)** - 项目最终总结
+8. **[交付报告](development/v0.5.0a2_delivery.md)** - 完整交付清单
+9. **[最终总结](../FINAL_SUMMARY.md)** - 项目最终总结
 
 ---
 
 ## 📖 按主题浏览
 
 ### 🔒 安全和凭据管理
-- [API 密钥管理指南](../guides/api_key_management.md)
+- [API 密钥管理指南](guides/api_key_management.md)
   - 快速开始
   - 安全最佳实践
   - 多环境配置
@@ -41,7 +41,7 @@
 - 完整测试覆盖
 
 ### 📊 日志和监控
-- [日志和错误处理指南](../guides/logging_and_error_handling.md)
+- [日志和错误处理指南](guides/logging_and_error_handling.md)
   - 日志系统使用
   - 审计日志
   - 性能监控
@@ -56,7 +56,7 @@
 - 日志轮转
 
 ### 🎯 错误处理
-- [日志和错误处理指南](../guides/logging_and_error_handling.md) (错误部分)
+- [日志和错误处理指南](guides/logging_and_error_handling.md) (错误部分)
   - 标准化错误码
   - 错误严重性分级
   - 丰富的错误上下文
@@ -70,7 +70,7 @@
 - JSON 序列化
 
 ### ⚡ 性能和优化
-- [性能分析报告](v0.5.0a2_performance.md)
+- [性能分析报告](development/v0.5.0a2_performance.md)
   - 性能基准测试
   - 性能影响分析
   - 优化建议
@@ -87,14 +87,14 @@
 ## 🎓 按场景浏览
 
 ### 场景 1: 首次使用 E.R.I.I.
-1. 阅读 [README](../../README_v0.5.0a2.md)
-2. 配置 API 密钥（参考[密钥管理指南](../guides/api_key_management.md)）
+1. 阅读 [README](../README.md)
+2. 配置 API 密钥（参考[密钥管理指南](guides/api_key_management.md)）
 3. 运行验证脚本确认配置正确
 4. 查看示例代码
 
 ### 场景 2: 生产环境部署
-1. 阅读 [API 密钥管理指南](../guides/api_key_management.md) - 安全配置
-2. 配置日志系统（参考[日志指南](../guides/logging_and_error_handling.md)）
+1. 阅读 [API 密钥管理指南](guides/api_key_management.md) - 安全配置
+2. 配置日志系统（参考[日志指南](guides/logging_and_error_handling.md)）
 3. 设置审计日志
 4. 配置监控和告警
 5. 运行性能基准测试
@@ -109,14 +109,14 @@
 ### 场景 4: 故障排查
 1. 查看日志输出
 2. 检查错误消息和恢复建议
-3. 参考[故障排查章节](../guides/api_key_management.md#故障排查)
+3. 参考[故障排查章节](guides/api_key_management.md)
 4. 查看性能监控数据
 
 ### 场景 5: 代码审查和质量保证
 1. 运行密钥泄露检测 (`python scripts/check_key_leakage.py`)
 2. 运行所有测试 (`python tests/validate_*.py`)
-3. 查看[验证报告](v0.5.0a2_verification.md)
-4. 检查[性能报告](v0.5.0a2_performance.md)
+3. 查看[验证报告](development/v0.5.0a2_verification.md)
+4. 检查[性能报告](development/v0.5.0a2_performance.md)
 
 ---
 
@@ -239,8 +239,8 @@ python benchmarks/run_performance.py
 
 ### 常见问题
 请先查看文档的"故障排查"章节：
-- [密钥管理故障排查](../guides/api_key_management.md#故障排查)
-- [日志错误故障排查](../guides/logging_and_error_handling.md#故障排查)
+- [密钥管理故障排查](guides/api_key_management.md)
+- [日志错误故障排查](guides/logging_and_error_handling.md)
 
 ---
 
