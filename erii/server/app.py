@@ -326,6 +326,22 @@ try:
             },
         )
 
+    def _standard_error(
+        status_code: int,
+        code: str,
+        message: str,
+        retryable: bool = False,
+    ) -> HTTPException:
+        """Creates a standardized error response."""
+        return HTTPException(
+            status_code=status_code,
+            detail={
+                "code": code,
+                "retryable": retryable,
+                "safe_summary": message,
+            },
+        )
+
     class RememberRequest(BaseModel):
         agent_id: str = "default_agent"
         user_id: str
@@ -573,7 +589,7 @@ try:
             )
             return {"status": "success", "message": "Turn logged for archival."}
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise _standard_error(400, "invalid_request", str(e))
         except Exception as e:
             raise _internal_server_error("remember", e) from e
 
@@ -589,7 +605,7 @@ try:
             )
             return {"status": "success", "context": context}
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise _standard_error(400, "invalid_request", str(e))
         except Exception as e:
             raise _internal_server_error("recall", e) from e
 
@@ -606,11 +622,11 @@ try:
             )
             return {"status": "success", "turn": turn.to_dict()}
         except RelationshipNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="turn not found") from exc
+            raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
         except TurnConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise _standard_error(409, "turn_conflict", str(exc))
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise _standard_error(422, "validation_error", str(exc))
 
     @app.post("/api/v1/turns")
     def api_record_turn(req: TurnRecordBody):
@@ -628,11 +644,11 @@ try:
             )
             return {"status": "success", "receipt": receipt.to_dict()}
         except RelationshipNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="turn not found") from exc
+            raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
         except TurnConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise _standard_error(409, "turn_conflict", str(exc))
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise _standard_error(422, "validation_error", str(exc))
 
     @app.get("/api/v1/turns")
     def api_list_turns(
@@ -652,7 +668,7 @@ try:
                 "turns": [turn.to_dict() for turn in turns],
             }
         except RelationshipNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="turn not found") from exc
+            raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
 
     @app.post("/api/v1/turns/{turn_id}/complete")
     def api_complete_turn(turn_id: str, req: TurnCompletionBody):
@@ -675,11 +691,11 @@ try:
             )
             return {"status": "success", "receipt": receipt.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError) as exc:
-            raise HTTPException(status_code=404, detail="turn not found") from exc
+            raise _standard_error(404, "turn_not_found", "Turn not found")
         except TurnConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise _standard_error(409, "conflict", str(exc))
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise _standard_error(422, "validation_error", str(exc))
 
     @app.post("/api/v1/turns/{turn_id}/continuity/evaluate")
     def api_evaluate_turn_continuity(
@@ -698,13 +714,13 @@ try:
             )
             return {"status": "success", "result": result.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError) as exc:
-            raise HTTPException(status_code=404, detail="turn not found") from exc
+            raise _standard_error(404, "turn_not_found", "Turn not found")
         except TurnConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise _standard_error(409, "conflict", str(exc))
         except ContinuityEvaluationCapabilityError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            raise _standard_error(503, "service_unavailable", str(exc))
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise _standard_error(422, "validation_error", str(exc))
 
     @app.post("/api/v1/turns/{turn_id}/reply-attempts", status_code=201)
     def api_record_reply_attempt(turn_id: str, req: ReplyAttemptFailureBody):
@@ -721,11 +737,11 @@ try:
             )
             return {"status": "success", "attempt": attempt.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError) as exc:
-            raise HTTPException(status_code=404, detail="turn not found") from exc
+            raise _standard_error(404, "turn_not_found", "Turn not found")
         except TurnConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise _standard_error(409, "conflict", str(exc))
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise _standard_error(422, "validation_error", str(exc))
 
     @app.get("/api/v1/turns/{turn_id}/reply-attempts")
     def api_list_reply_attempts(turn_id: str, agent_id: str, user_id: str):
@@ -741,7 +757,7 @@ try:
                 "attempts": [attempt.to_dict() for attempt in attempts],
             }
         except (RelationshipNotFoundError, TurnNotFoundError) as exc:
-            raise HTTPException(status_code=404, detail="turn not found") from exc
+            raise _standard_error(404, "turn_not_found", "Turn not found")
 
     @app.post("/api/v1/turns/{turn_id}/abandon")
     def api_abandon_turn(turn_id: str, req: TurnAbandonmentBody):
@@ -755,11 +771,11 @@ try:
             )
             return {"status": "success", "turn": turn.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError) as exc:
-            raise HTTPException(status_code=404, detail="turn not found") from exc
+            raise _standard_error(404, "turn_not_found", "Turn not found")
         except TurnConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise _standard_error(409, "conflict", str(exc))
         except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise _standard_error(422, "validation_error", str(exc))
 
     @app.get("/api/v1/turns/{turn_id}")
     def api_get_turn(turn_id: str, agent_id: str, user_id: str):
@@ -768,7 +784,7 @@ try:
             turn = get_engine().get_turn(agent_id, user_id, turn_id)
             return {"status": "success", "turn": turn.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError) as exc:
-            raise HTTPException(status_code=404, detail="turn not found") from exc
+            raise _standard_error(404, "turn_not_found", "Turn not found")
 
     @app.post("/api/v1/archivals")
     def api_submit_archival(req: ArchivalSubmissionBody):
@@ -887,11 +903,11 @@ try:
             result = get_engine().recall_structured(req)
             return {"status": "success", "result": result.model_dump(mode="json")}
         except PersonaManifestRequiredError as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            raise _standard_error(409, "conflict", str(e))
         except RecallBudgetUnsatisfiedError as e:
-            raise HTTPException(status_code=422, detail=str(e))
+            raise _standard_error(422, "validation_error", str(e))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise _standard_error(400, "invalid_request", str(e))
         except Exception as e:
             raise _internal_server_error("structured_recall", e) from e
 
@@ -911,11 +927,11 @@ try:
                 "records": [record.to_dict() for record in result.records],
             }
         except (CandidateConflictError, TemporalHistoryConflictError) as e:
-            raise HTTPException(status_code=409, detail=str(e))
+            raise _standard_error(409, "conflict", str(e))
         except (RelationshipNotFoundError, TurnNotFoundError) as e:
-            raise HTTPException(status_code=404, detail=str(e))
+            raise _standard_error(404, "not_found", str(e))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise _standard_error(400, "invalid_request", str(e))
         except Exception as e:
             raise _internal_server_error("relationship_adjudication", e) from e
 
@@ -938,9 +954,9 @@ try:
                 "consequence": consequence.to_dict(),
             }
         except (RelationshipNotFoundError, TurnNotFoundError) as e:
-            raise HTTPException(status_code=404, detail=str(e))
+            raise _standard_error(404, "not_found", str(e))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise _standard_error(400, "invalid_request", str(e))
         except Exception as e:
             raise _internal_server_error("record_relationship_consequence", e) from e
 
@@ -964,7 +980,7 @@ try:
                 "consequences": [item.to_dict() for item in consequences],
             }
         except RelationshipNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+            raise _standard_error(404, "not_found", str(e))
         except Exception as e:
             raise _internal_server_error("list_relationship_consequences", e) from e
 
@@ -988,9 +1004,9 @@ try:
                 "link": link.to_dict(),
             }
         except (RelationshipNotFoundError, TurnNotFoundError) as e:
-            raise HTTPException(status_code=404, detail=str(e))
+            raise _standard_error(404, "not_found", str(e))
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise _standard_error(400, "invalid_request", str(e))
         except Exception as e:
             raise _internal_server_error("record_narrative_tension_link", e) from e
 
@@ -1014,7 +1030,7 @@ try:
                 "links": [item.to_dict() for item in links],
             }
         except RelationshipNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e))
+            raise _standard_error(404, "not_found", str(e))
         except Exception as e:
             raise _internal_server_error("list_narrative_tension_links", e) from e
 
@@ -1091,7 +1107,7 @@ try:
                 node_id=node_id,
             )
             if not success:
-                raise HTTPException(status_code=404, detail="Thought node not found.")
+                raise _standard_error(404, "thought_not_found", "Thought node not found")
             return {"status": "success", "message": "Thought resolved successfully."}
         except HTTPException:
             raise
