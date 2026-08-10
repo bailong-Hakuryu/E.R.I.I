@@ -29,6 +29,11 @@ class TestConcurrentWrites(unittest.TestCase):
         agent_id = "concurrent-agent"
         user_id = "concurrent-user"
 
+        # Set core memory first
+        engine_setup = ERIIEngine(storage_driver=self.storage)
+        engine_setup.set_core_memory(agent_id, user_id, "Test core")
+        engine_setup.close()
+
         def add_memories(thread_id: int, count: int) -> None:
             try:
                 engine = ERIIEngine(storage_driver=self.storage)
@@ -70,6 +75,7 @@ class TestConcurrentWrites(unittest.TestCase):
         def add_memories_for_agent(agent_id: str, count: int) -> None:
             try:
                 engine = ERIIEngine(storage_driver=self.storage)
+                engine.set_core_memory(agent_id, "user", f"{agent_id} core")
                 for i in range(count):
                     engine.remember(
                         agent_id,
@@ -107,17 +113,22 @@ class TestConcurrentWrites(unittest.TestCase):
     def test_concurrent_recall_operations(self) -> None:
         """Verify concurrent recall operations are safe."""
         engine = ERIIEngine(storage_driver=self.storage)
+        engine.set_core_memory("recall-agent", "recall-user", "Test core")
 
         # Add initial memories
         for i in range(20):
             engine.remember("recall-agent", "recall-user", f"Memory {i}", f"Response {i}")
 
+        engine.close()
+
         recall_results: List[str] = []
 
         def perform_recall(query: str) -> None:
             try:
-                results = engine.recall("recall-agent", "recall-user", query)
+                eng = ERIIEngine(storage_driver=self.storage)
+                results = eng.recall("recall-agent", "recall-user", query)
                 recall_results.append(results)
+                eng.close()
             except Exception as e:
                 self.errors.append(e)
 
@@ -135,8 +146,6 @@ class TestConcurrentWrites(unittest.TestCase):
         self.assertEqual(len(self.errors), 0, "Concurrent recalls should not error")
         # Verify all recalls completed
         self.assertEqual(len(recall_results), 5, "All recalls should complete")
-
-        engine.close()
 
 
 class TestTransactionIsolation(unittest.TestCase):
@@ -157,6 +166,7 @@ class TestTransactionIsolation(unittest.TestCase):
 
         # Pre-populate some memories
         engine = ERIIEngine(storage_driver=self.storage)
+        engine.set_core_memory(agent_id, user_id, "Test core")
         for i in range(10):
             engine.remember(agent_id, user_id, f"Base memory {i}", f"Response {i}")
         engine.close()
@@ -213,6 +223,11 @@ class TestRaceConditions(unittest.TestCase):
         """Verify concurrent operations don't create duplicate node IDs."""
         agent_id = "nodeid-agent"
         user_id = "nodeid-user"
+
+        # Set core memory first
+        engine_setup = ERIIEngine(storage_driver=self.storage)
+        engine_setup.set_core_memory(agent_id, user_id, "Test core")
+        engine_setup.close()
 
         def add_memories(count: int) -> None:
             try:
