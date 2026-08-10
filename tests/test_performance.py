@@ -7,7 +7,6 @@ import tempfile
 import shutil
 import time
 import unittest
-from typing import List
 
 from erii import ERIIEngine, SQLiteStorage
 

@@ -621,9 +621,9 @@ try:
                 interaction_context=req.interaction_context,
             )
             return {"status": "success", "turn": turn.to_dict()}
-        except RelationshipNotFoundError as exc:
+        except RelationshipNotFoundError:
             raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
-        except TurnConflictError as exc:
+        except TurnConflictError:
             raise _standard_error(409, "turn_conflict", str(exc))
         except ValueError as exc:
             raise _standard_error(422, "validation_error", str(exc))
@@ -643,9 +643,9 @@ try:
                 processing_channels=req.processing_channels,
             )
             return {"status": "success", "receipt": receipt.to_dict()}
-        except RelationshipNotFoundError as exc:
+        except RelationshipNotFoundError:
             raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
-        except TurnConflictError as exc:
+        except TurnConflictError:
             raise _standard_error(409, "turn_conflict", str(exc))
         except ValueError as exc:
             raise _standard_error(422, "validation_error", str(exc))
@@ -667,7 +667,7 @@ try:
                 "status": "success",
                 "turns": [turn.to_dict() for turn in turns],
             }
-        except RelationshipNotFoundError as exc:
+        except RelationshipNotFoundError:
             raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
 
     @app.post("/api/v1/turns/{turn_id}/complete")
@@ -690,9 +690,9 @@ try:
                 processing_channels=req.processing_channels,
             )
             return {"status": "success", "receipt": receipt.to_dict()}
-        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+        except (RelationshipNotFoundError, TurnNotFoundError):
             raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError as exc:
+        except TurnConflictError:
             raise _standard_error(409, "conflict", str(exc))
         except ValueError as exc:
             raise _standard_error(422, "validation_error", str(exc))
@@ -713,9 +713,9 @@ try:
                 relationship_context_refs=req.relationship_context_refs,
             )
             return {"status": "success", "result": result.to_dict()}
-        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+        except (RelationshipNotFoundError, TurnNotFoundError):
             raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError as exc:
+        except TurnConflictError:
             raise _standard_error(409, "conflict", str(exc))
         except ContinuityEvaluationCapabilityError as exc:
             raise _standard_error(503, "service_unavailable", str(exc))
@@ -736,9 +736,9 @@ try:
                 failure_classification=req.failure_classification,
             )
             return {"status": "success", "attempt": attempt.to_dict()}
-        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+        except (RelationshipNotFoundError, TurnNotFoundError):
             raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError as exc:
+        except TurnConflictError:
             raise _standard_error(409, "conflict", str(exc))
         except ValueError as exc:
             raise _standard_error(422, "validation_error", str(exc))
@@ -756,7 +756,7 @@ try:
                 "status": "success",
                 "attempts": [attempt.to_dict() for attempt in attempts],
             }
-        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+        except (RelationshipNotFoundError, TurnNotFoundError):
             raise _standard_error(404, "turn_not_found", "Turn not found")
 
     @app.post("/api/v1/turns/{turn_id}/abandon")
@@ -770,9 +770,9 @@ try:
                 reason=req.reason,
             )
             return {"status": "success", "turn": turn.to_dict()}
-        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+        except (RelationshipNotFoundError, TurnNotFoundError):
             raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError as exc:
+        except TurnConflictError:
             raise _standard_error(409, "conflict", str(exc))
         except ValueError as exc:
             raise _standard_error(422, "validation_error", str(exc))
@@ -783,7 +783,7 @@ try:
         try:
             turn = get_engine().get_turn(agent_id, user_id, turn_id)
             return {"status": "success", "turn": turn.to_dict()}
-        except (RelationshipNotFoundError, TurnNotFoundError) as exc:
+        except (RelationshipNotFoundError, TurnNotFoundError):
             raise _standard_error(404, "turn_not_found", "Turn not found")
 
     @app.post("/api/v1/archivals")

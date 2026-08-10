@@ -5,7 +5,6 @@ Provides caching, batching, and query optimization features.
 """
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from functools import lru_cache
 import hashlib
 import json
 import time

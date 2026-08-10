@@ -8,9 +8,9 @@ that wants to use E.R.I.I. for character memory and continuity.
 from erii import (
     ERIIEngine,
     ERIIConfig,
-    SQLiteStorage,
+    
     RecallRequest,
-    RecallOptions,
+    
     TurnStatus,
     DeliveryDisposition,
     SourceProcessingChannel,
@@ -38,7 +38,7 @@ def example_1_basic_two_phase_turn():
 
     # Phase 1: Begin turn (capture user message)
     print("\n1. User sends message...")
-    turn = engine.begin_turn(
+    _turn = engine.begin_turn(
         "agent_lumi",
         "user_chen",
         "今天天气真好！我们可以出去散步吗？",
@@ -65,7 +65,7 @@ def example_1_basic_two_phase_turn():
 
     # Phase 4: Complete turn (seal the reply)
     print("\n4. Complete turn...")
-    receipt = engine.complete_turn(
+    _receipt = engine.complete_turn(
         "agent_lumi",
         "user_chen",
         turn.turn_id,
@@ -105,7 +105,7 @@ def example_2_one_shot_turn():
             persona_source="...",
             source_format="text/markdown",
         )
-    except:
+    except Exception:
         pass  # Already exists
 
     # Record historical conversation (both messages already shown)
@@ -138,7 +138,7 @@ def example_3_error_handling():
 
     try:
         engine.initialize_relationship("agent_lumi", "user_chen", "...", "text/markdown")
-    except:
+    except Exception:
         pass
 
     turn_id = f"turn-{uuid.uuid4()}"
@@ -146,20 +146,20 @@ def example_3_error_handling():
 
     # Open turn
     print("\n1. Open turn...")
-    turn = engine.begin_turn("agent_lumi", "user_chen", user_msg, turn_id=turn_id)
+    _turn = engine.begin_turn("agent_lumi", "user_chen", user_msg, turn_id=turn_id)
     print(f"   ✓ Turn opened: {turn_id}")
 
     # Simulate retry with same content (should be idempotent)
     print("\n2. Retry with same content (idempotent)...")
     try:
-        turn2 = engine.begin_turn("agent_lumi", "user_chen", user_msg, turn_id=turn_id)
+        _turn2 = engine.begin_turn("agent_lumi", "user_chen", user_msg, turn_id=turn_id)
         print(f"   ✓ Retry succeeded (same content)")
     except TurnConflictError as e:
         print(f"   ⚠️  Conflict (expected if different content): {e}")
 
     # Try to complete
     print("\n3. Complete turn...")
-    receipt = engine.complete_turn(
+    _receipt = engine.complete_turn(
         "agent_lumi", "user_chen", turn_id, "测试回复", delivery_disposition=DeliveryDisposition.SHOWN
     )
     print(f"   ✓ Completed")
@@ -188,14 +188,14 @@ def example_4_turn_abandonment():
 
     try:
         engine.initialize_relationship("agent_lumi", "user_chen", "...", "text/markdown")
-    except:
+    except Exception:
         pass
 
     turn_id = f"turn-{uuid.uuid4()}"
 
     # Open turn
     print("\n1. Open turn...")
-    turn = engine.begin_turn(
+    _turn = engine.begin_turn(
         "agent_lumi", "user_chen", "生成一个很难的回复", turn_id=turn_id
     )
     print(f"   ✓ Turn opened: {turn_id}")
@@ -229,7 +229,7 @@ def example_5_listing_and_querying():
 
     try:
         engine.initialize_relationship("agent_lumi", "user_chen", "...", "text/markdown")
-    except:
+    except Exception:
         pass
 
     # Record a few turns
@@ -293,10 +293,10 @@ def example_6_full_integration():
 
     # First conversation
     print("\n2. First conversation...")
-    turn1 = engine.begin_turn(
+    _turn1 = engine.begin_turn(
         "agent_lumi", "user_chen", "我最喜欢的颜色是蓝色", turn_id="turn-color"
     )
-    receipt1 = engine.complete_turn(
+    _receipt1 = engine.complete_turn(
         "agent_lumi",
         "user_chen",
         "turn-color",
@@ -309,7 +309,7 @@ def example_6_full_integration():
 
     # Second conversation (should recall previous)
     print("\n3. Second conversation (with recall)...")
-    turn2 = engine.begin_turn(
+    _turn2 = engine.begin_turn(
         "agent_lumi", "user_chen", "我喜欢什么颜色？", turn_id="turn-recall-color"
     )
 
@@ -325,7 +325,7 @@ def example_6_full_integration():
     # Generate reply using context (simplified)
     reply = "你喜欢蓝色！我记得你之前告诉过我。"
 
-    receipt2 = engine.complete_turn(
+    _receipt2 = engine.complete_turn(
         "agent_lumi",
         "user_chen",
         "turn-recall-color",
