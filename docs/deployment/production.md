@@ -15,8 +15,8 @@
 5. [Configuration](#configuration)
 6. [Security Hardening](#security-hardening)
 7. [Rate Limiting](#rate-limiting)
-8. [Monitoring & Logging](#monitoring--logging)
-9. [Backup & Recovery](#backup--recovery)
+8. [Monitoring and Logging](#monitoring-and-logging)
+9. [Backup and Recovery](#backup-and-recovery)
 10. [Scaling](#scaling)
 11. [Troubleshooting](#troubleshooting)
 
@@ -390,7 +390,7 @@ def api_recall(request: Request, req: RecallRequest):
 
 ---
 
-## Monitoring & Logging
+## Monitoring and Logging
 
 ### Application Logging
 
@@ -453,7 +453,7 @@ logger.addHandler(watchtower.CloudWatchLogHandler(
 
 ---
 
-## Backup & Recovery
+## Backup and Recovery
 
 ### Automated Backups
 
@@ -674,8 +674,8 @@ Before going live:
 ## Additional Resources
 
 - [Rate Limiting Guide](rate-limiting.md)
-- [Security Model](../SECURITY.md)
-- [API Reference](../api-reference.md)
+- [Host Integration Guide](../host-integration.md)
+- [API Documentation](../USAGE.md)
 - [Architecture Decision Records](../adr/)
 
 ---

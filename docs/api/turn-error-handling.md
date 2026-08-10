@@ -615,7 +615,6 @@ When encountering errors in production:
 
 - [Turn Lifecycle API Reference](turn-lifecycle.md)
 - [Host Integration Guide](../host-integration.md)
-- [Troubleshooting Guide](../troubleshooting.md)
 
 ---
 

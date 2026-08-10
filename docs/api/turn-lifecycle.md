@@ -783,9 +783,6 @@ submission = engine.archive_turn(...)
 ## See Also
 
 - [Host Integration Guide](../host-integration.md)
-- [Recall API Reference](recall-api.md)
-- [Relationship API Reference](relationship-api.md)
-- [Memory Pack Format](../memorypack-format.md)
 
 ---
 

@@ -698,7 +698,6 @@ class StatefulTurnRecorder:
 
 - [Turn Lifecycle API Reference](turn-lifecycle.md)
 - [Turn Error Handling Guide](turn-error-handling.md)
-- [Performance Optimization Guide](../performance.md)
 
 ---
 
