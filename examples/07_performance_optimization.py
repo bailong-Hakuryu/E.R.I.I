@@ -161,7 +161,7 @@ def example_4_integrated_caching():
 
     # Statistics
     print(f"\nCache stats: {recall_cache.stats()}")
-    print(f"\nPerformance stats:")
+    print("\nPerformance stats:")
     for op, metrics in monitor.stats().items():
         print(f"  {op}: {metrics['count']} calls, {metrics['mean']*1000:.2f}ms avg")
 

@@ -623,7 +623,7 @@ try:
             return {"status": "success", "turn": turn.to_dict()}
         except RelationshipNotFoundError:
             raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
-        except TurnConflictError:
+        except TurnConflictError as exc:
             raise _standard_error(409, "turn_conflict", str(exc))
         except ValueError as exc:
             raise _standard_error(422, "validation_error", str(exc))
@@ -645,7 +645,7 @@ try:
             return {"status": "success", "receipt": receipt.to_dict()}
         except RelationshipNotFoundError:
             raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
-        except TurnConflictError:
+        except TurnConflictError as exc:
             raise _standard_error(409, "turn_conflict", str(exc))
         except ValueError as exc:
             raise _standard_error(422, "validation_error", str(exc))
@@ -692,7 +692,7 @@ try:
             return {"status": "success", "receipt": receipt.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError):
             raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError:
+        except TurnConflictError as exc:
             raise _standard_error(409, "conflict", str(exc))
         except ValueError as exc:
             raise _standard_error(422, "validation_error", str(exc))
@@ -715,7 +715,7 @@ try:
             return {"status": "success", "result": result.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError):
             raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError:
+        except TurnConflictError as exc:
             raise _standard_error(409, "conflict", str(exc))
         except ContinuityEvaluationCapabilityError as exc:
             raise _standard_error(503, "service_unavailable", str(exc))
@@ -738,7 +738,7 @@ try:
             return {"status": "success", "attempt": attempt.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError):
             raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError:
+        except TurnConflictError as exc:
             raise _standard_error(409, "conflict", str(exc))
         except ValueError as exc:
             raise _standard_error(422, "validation_error", str(exc))
@@ -772,7 +772,7 @@ try:
             return {"status": "success", "turn": turn.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError):
             raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError:
+        except TurnConflictError as exc:
             raise _standard_error(409, "conflict", str(exc))
         except ValueError as exc:
             raise _standard_error(422, "validation_error", str(exc))

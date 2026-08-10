@@ -38,7 +38,7 @@ def example_1_basic_two_phase_turn():
 
     # Phase 1: Begin turn (capture user message)
     print("\n1. User sends message...")
-    _turn = engine.begin_turn(
+    turn = engine.begin_turn(
         "agent_lumi",
         "user_chen",
         "今天天气真好！我们可以出去散步吗？",
@@ -61,11 +61,11 @@ def example_1_basic_two_phase_turn():
     # Phase 3: Generate reply (your LLM here)
     print("\n3. Generate reply...")
     agent_reply = "是啊！天气这么好，散步是个不错的主意。我们可以去公园。"
-    print(f"   ✓ Reply generated")
+    print("   ✓ Reply generated")
 
     # Phase 4: Complete turn (seal the reply)
     print("\n4. Complete turn...")
-    _receipt = engine.complete_turn(
+    receipt = engine.complete_turn(
         "agent_lumi",
         "user_chen",
         turn.turn_id,
@@ -153,7 +153,7 @@ def example_3_error_handling():
     print("\n2. Retry with same content (idempotent)...")
     try:
         _turn2 = engine.begin_turn("agent_lumi", "user_chen", user_msg, turn_id=turn_id)
-        print(f"   ✓ Retry succeeded (same content)")
+        print("   ✓ Retry succeeded (same content)")
     except TurnConflictError as e:
         print(f"   ⚠️  Conflict (expected if different content): {e}")
 
@@ -162,7 +162,7 @@ def example_3_error_handling():
     _receipt = engine.complete_turn(
         "agent_lumi", "user_chen", turn_id, "测试回复", delivery_disposition=DeliveryDisposition.SHOWN
     )
-    print(f"   ✓ Completed")
+    print("   ✓ Completed")
 
     # Try to complete again (should fail - terminal state)
     print("\n4. Try to complete again (should fail)...")
@@ -170,9 +170,9 @@ def example_3_error_handling():
         engine.complete_turn(
             "agent_lumi", "user_chen", turn_id, "另一个回复", delivery_disposition=DeliveryDisposition.SHOWN
         )
-        print(f"   ✗ Should have failed!")
-    except TurnTerminalConflictError as e:
-        print(f"   ✓ Correctly rejected: Turn already in terminal state")
+        print("   ✗ Should have failed!")
+    except TurnTerminalConflictError:
+        print("   ✓ Correctly rejected: Turn already in terminal state")
 
     engine.close()
     print("\n✓ Example 3 completed!\n")
@@ -213,7 +213,7 @@ def example_4_turn_abandonment():
         receipt = engine.abandon_turn("agent_lumi", "user_chen", turn_id)
         print(f"   ✓ Turn abandoned: {receipt.turn_id}")
         print(f"   Status: {receipt.status}")
-        print(f"   Note: User message is kept, but no agent reply recorded")
+        print("   Note: User message is kept, but no agent reply recorded")
 
     engine.close()
     print("\n✓ Example 4 completed!\n")
@@ -243,7 +243,7 @@ def example_5_listing_and_querying():
             turn_id=f"turn-demo-{i+1}",
             delivery_disposition=DeliveryDisposition.SHOWN,
         )
-    print(f"   ✓ Recorded 3 turns")
+    print("   ✓ Recorded 3 turns")
 
     # List all turns
     print("\n2. List all turns...")
@@ -288,7 +288,7 @@ def example_6_full_integration():
             source_name="lumi.md",
         )
         print("   ✓ Relationship initialized")
-    except:
+    except Exception:
         print("   ✓ Relationship already exists")
 
     # First conversation
@@ -332,7 +332,7 @@ def example_6_full_integration():
         reply,
         delivery_disposition=DeliveryDisposition.SHOWN,
     )
-    print(f"   ✓ Second turn completed with recall")
+    print("   ✓ Second turn completed with recall")
 
     engine.close()
     print("\n✓ Example 6 completed!\n")
