@@ -53,8 +53,21 @@ class ChromaVectorStore(BaseVectorStore):
         results: List[Tuple[str, float]] = []
         ids = res.get("ids", [[]])[0]
         distances = res.get("distances", [[]])[0]
+        metadatas = res.get("metadatas", [[]])[0]
 
-        for node_id, dist in zip(ids, distances):
+        for idx, (node_id, dist) in enumerate(zip(ids, distances)):
+            # Verify tenant isolation: if filter was specified, ensure results match
+            if filter_metadata and metadatas and idx < len(metadatas):
+                result_metadata = metadatas[idx]
+                for key, expected_value in filter_metadata.items():
+                    actual_value = result_metadata.get(key)
+                    if actual_value != expected_value:
+                        raise RuntimeError(
+                            f"Vector DB isolation violation: Result {node_id} has "
+                            f"{key}={actual_value!r}, expected {expected_value!r}. "
+                            f"This indicates a critical tenant isolation failure."
+                        )
+
             # Chroma returns L2 or Cosine distance; convert to similarity score
             similarity = 1.0 / (1.0 + float(dist))
             results.append((node_id, similarity))
