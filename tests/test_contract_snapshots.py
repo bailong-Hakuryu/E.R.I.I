@@ -17,7 +17,7 @@ COMMITTED = ROOT / "docs" / "contracts"
 BASELINE_RELEASE = "0.4.0b1"
 RC_RELEASE = "0.4.0rc1"
 STABLE_040_RELEASE = "0.4.0"
-CURRENT_RELEASE = "0.5.0a2"
+CURRENT_RELEASE = "0.5.0a3"
 CONTRACT_KINDS = (
     "data-formats",
     "openapi",
@@ -106,7 +106,7 @@ class ContractSnapshotTests(unittest.TestCase):
         current_format = current["compatibility_catalog"]["formats"]["memory_pack"]
 
         self.assertEqual(legacy_format["current_version"], "0.4.0a8")
-        self.assertEqual(current_format["current_version"], "0.5.0a2")
+        self.assertEqual(current_format["current_version"], "0.5.0a3")
         self.assertIn("0.4.0a8", current_format["readable_versions"])
 
         legacy_fields = set(legacy["memory_pack_envelope"]["root_fields"])

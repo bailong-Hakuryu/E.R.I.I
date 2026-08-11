@@ -1,266 +1,346 @@
-"""Concurrency tests for E.R.I.I. memory system.
+"""Concurrency tests over completed, synchronously archived Source Turns."""
 
-Tests concurrent access, transaction isolation, and race conditions.
-"""
-
+from concurrent.futures import ThreadPoolExecutor
+import os
+import re
 import tempfile
-import shutil
 import threading
-import time
 import unittest
-from typing import List
 
-from erii import ERIIEngine, SQLiteStorage
+from erii import (
+    ArchivalArtifactsDecision,
+    ArchivalStatus,
+    ERIIConfig,
+    ERIIEngine,
+    ExtractorDescriptor,
+    MemoryCandidate,
+    MemoryType,
+    SQLiteStorage,
+)
 
 
-class TestConcurrentWrites(unittest.TestCase):
-    """Test concurrent write operations to the same storage."""
+def _delivery_exception() -> dict[str, object]:
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests.concurrency-host",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-08-01T00:00:00+00:00",
+        "reply_attempt_number": None,
+    }
+
+
+class _EchoMemoryExtractor:
+    descriptor = ExtractorDescriptor(
+        extractor_id="tests.concurrency-echo",
+        extractor_version="1",
+        extraction_schema_version="2",
+    )
+
+    def extract(self, request):
+        message = request.transcript.user_message
+        evidence = (
+            {
+                "citation_version": "archival-evidence-citation/v1",
+                "kind": "message_span",
+                "source_id": message.message_id,
+                "source_revision": request.source_revision,
+                "quote": message.content,
+                "start": 0,
+                "end": len(message.content),
+            },
+        )
+        return ArchivalArtifactsDecision(
+            memories=(
+                MemoryCandidate(
+                    node_type=MemoryType.EVENT,
+                    content=message.content,
+                    tags=("concurrency-fixture",),
+                    evidence=evidence,
+                ),
+            )
+        )
+
+
+class ConcurrentArchivalTests(unittest.TestCase):
+    """Use independent engine/storage objects against one real SQLite file."""
 
     def setUp(self) -> None:
-        self.tmp_dir = tempfile.mkdtemp()
-        self.storage = SQLiteStorage(db_path=f"{self.tmp_dir}/concurrent_test.db")
-        self.errors: List[Exception] = []
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.temp_dir.name, "concurrency.db")
+        self.storage = SQLiteStorage(self.db_path)
+        self.setup_engine = self._new_engine()
 
     def tearDown(self) -> None:
-        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        self.setup_engine.close()
+        self.temp_dir.cleanup()
 
-    def test_concurrent_memory_additions_same_agent(self) -> None:
-        """Verify concurrent writes to the same (agent_id, user_id) are safe."""
+    def _new_engine(self) -> ERIIEngine:
+        return ERIIEngine(
+            storage_driver=SQLiteStorage(self.db_path),
+            memory_extractor=_EchoMemoryExtractor(),
+            config=ERIIConfig(async_archival=False),
+        )
+
+    def _initialize(self, agent_id: str, user_id: str) -> str:
+        return self.setup_engine.initialize_relationship(
+            agent_id,
+            user_id,
+            "A continuity concurrency fixture.",
+        ).relationship_id
+
+    @staticmethod
+    def _record_one(
+        engine: ERIIEngine,
+        agent_id: str,
+        user_id: str,
+        turn_id: str,
+        content: str,
+    ) -> None:
+        engine.record_turn(
+            agent_id,
+            user_id,
+            content,
+            f"Reply for {turn_id}",
+            turn_id=turn_id,
+            delivery_exception=_delivery_exception(),
+        )
+
+    @staticmethod
+    def _archive_recorded(
+        engine: ERIIEngine,
+        agent_id: str,
+        user_id: str,
+        turn_id: str,
+    ) -> str:
+        receipt = engine.archive_turn(
+            agent_id,
+            user_id,
+            turn_id,
+            idempotency_key=f"archive-{turn_id}",
+        )
+        if receipt.status != ArchivalStatus.COMPLETED:
+            raise AssertionError(f"archival did not complete: {receipt.status}")
+        if receipt.memory_node_count != 1:
+            raise AssertionError(
+                f"expected one MemoryNode, got {receipt.memory_node_count}"
+            )
+        return receipt.archival_id
+
+    @classmethod
+    def _archive_one(
+        cls,
+        engine: ERIIEngine,
+        agent_id: str,
+        user_id: str,
+        turn_id: str,
+        content: str,
+    ) -> str:
+        cls._record_one(engine, agent_id, user_id, turn_id, content)
+        return cls._archive_recorded(engine, agent_id, user_id, turn_id)
+
+    def test_concurrent_archives_same_relationship_are_all_persisted(self) -> None:
         agent_id = "concurrent-agent"
         user_id = "concurrent-user"
+        relationship_id = self._initialize(agent_id, user_id)
+        worker_count = 3
+        turns_per_worker = 6
+        start = threading.Barrier(worker_count)
 
-        # Set core memory first
-        engine_setup = ERIIEngine(storage_driver=self.storage)
-        engine_setup.set_core_memory(agent_id, user_id, "Test core")
-        engine_setup.close()
-
-        def add_memories(thread_id: int, count: int) -> None:
+        def record_worker(worker_id: int) -> None:
+            engine = self._new_engine()
             try:
-                engine = ERIIEngine(storage_driver=self.storage)
-                for i in range(count):
-                    engine.remember(
+                start.wait()
+                for index in range(turns_per_worker):
+                    self._record_one(
+                        engine,
                         agent_id,
                         user_id,
-                        f"Thread {thread_id} memory {i}",
-                        f"Response {i}",
+                        f"same-{worker_id}-{index}",
+                        f"same relationship worker {worker_id} memory {index}",
                     )
+            finally:
                 engine.close()
-            except Exception as e:
-                self.errors.append(e)
 
-        # Run 3 threads adding memories concurrently
-        threads = []
-        for thread_id in range(3):
-            thread = threading.Thread(target=add_memories, args=(thread_id, 10))
-            threads.append(thread)
-            thread.start()
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            list(pool.map(record_worker, range(worker_count)))
 
-        # Wait for all threads
-        for thread in threads:
-            thread.join()
+        # The kernel does not promise multiple independent inline archival
+        # consumers.  The host explicitly drains the completed concurrent turns
+        # through one synchronous coordinator and then verifies the durable set.
+        archival_ids = [
+            self._archive_recorded(self.setup_engine, agent_id, user_id, turn_id)
+            for turn_id in sorted(
+                f"same-{worker_id}-{index}"
+                for worker_id in range(worker_count)
+                for index in range(turns_per_worker)
+            )
+        ]
 
-        # Verify no errors occurred
-        self.assertEqual(len(self.errors), 0, f"Concurrent writes should not error: {self.errors}")
+        nodes = self.storage.load_nodes(agent_id, user_id)
+        expected_turn_ids = {
+            f"same-{worker_id}-{index}"
+            for worker_id in range(worker_count)
+            for index in range(turns_per_worker)
+        }
+        turns = self.setup_engine.list_turns(agent_id, user_id)
 
-        # Verify memories were added
-        engine = ERIIEngine(storage_driver=self.storage)
-        results = engine.recall(agent_id, user_id, "Thread")
-        # Should have some memories
-        self.assertGreater(len(results), 0, "Memories should be retrievable")
-        engine.close()
+        self.assertEqual(len(nodes), worker_count * turns_per_worker)
+        self.assertEqual({node.source_turn_id for node in nodes}, expected_turn_ids)
+        self.assertEqual(len({node.node_id for node in nodes}), len(nodes))
+        self.assertEqual({node.relationship_id for node in nodes}, {relationship_id})
+        self.assertEqual(len(set(archival_ids)), len(archival_ids))
+        self.assertEqual(
+            {node.source_archival_id for node in nodes},
+            set(archival_ids),
+        )
+        self.assertEqual({turn.turn_id for turn in turns}, expected_turn_ids)
+        self.assertEqual({turn.status.value for turn in turns}, {"completed"})
 
-    def test_concurrent_writes_different_agents(self) -> None:
-        """Verify concurrent writes by different agents don't interfere."""
+    def test_concurrent_archives_keep_relationships_disjoint(self) -> None:
+        scopes = [
+            ("shared-agent", f"user-{index}", f"scope-{index}")
+            for index in range(3)
+        ]
+        relationships = {
+            (agent_id, user_id): self._initialize(agent_id, user_id)
+            for agent_id, user_id, _prefix in scopes
+        }
+        start = threading.Barrier(len(scopes))
 
-        def add_memories_for_agent(agent_id: str, count: int) -> None:
+        def record_scope(scope: tuple[str, str, str]) -> None:
+            agent_id, user_id, prefix = scope
+            engine = self._new_engine()
             try:
-                engine = ERIIEngine(storage_driver=self.storage)
-                engine.set_core_memory(agent_id, "user", f"{agent_id} core")
-                for i in range(count):
-                    engine.remember(
-                        agent_id,
-                        "user",
-                        f"{agent_id} memory {i}",
-                        f"Response {i}",
-                    )
-                engine.close()
-            except Exception as e:
-                self.errors.append(e)
-
-        # Run threads for different agents
-        threads = []
-        agent_ids = ["agent-1", "agent-2", "agent-3"]
-        for agent_id in agent_ids:
-            thread = threading.Thread(target=add_memories_for_agent, args=(agent_id, 10))
-            threads.append(thread)
-            thread.start()
-
-        for thread in threads:
-            thread.join()
-
-        # Verify no errors
-        self.assertEqual(len(self.errors), 0, "Concurrent writes should not error")
-
-        # Verify isolation: each agent should only see its own memories
-        for agent_id in agent_ids:
-            engine = ERIIEngine(storage_driver=self.storage)
-            results = engine.recall(agent_id, "user", "memory")
-
-            # Verify only this agent's memories are returned
-            self.assertIn(agent_id, results, f"Should see {agent_id} memories")
-            engine.close()
-
-    def test_concurrent_recall_operations(self) -> None:
-        """Verify concurrent recall operations are safe."""
-        engine = ERIIEngine(storage_driver=self.storage)
-        engine.set_core_memory("recall-agent", "recall-user", "Test core")
-
-        # Add initial memories
-        for i in range(20):
-            engine.remember("recall-agent", "recall-user", f"Memory {i}", f"Response {i}")
-
-        engine.close()
-
-        recall_results: List[str] = []
-
-        def perform_recall(query: str) -> None:
-            try:
-                eng = ERIIEngine(storage_driver=self.storage)
-                results = eng.recall("recall-agent", "recall-user", query)
-                recall_results.append(results)
-                eng.close()
-            except Exception as e:
-                self.errors.append(e)
-
-        # Run multiple concurrent recalls
-        threads = []
-        for i in range(5):
-            thread = threading.Thread(target=perform_recall, args=(f"Memory {i}",))
-            threads.append(thread)
-            thread.start()
-
-        for thread in threads:
-            thread.join()
-
-        # Verify no errors
-        self.assertEqual(len(self.errors), 0, "Concurrent recalls should not error")
-        # Verify all recalls completed
-        self.assertEqual(len(recall_results), 5, "All recalls should complete")
-
-
-class TestTransactionIsolation(unittest.TestCase):
-    """Test transaction isolation and consistency."""
-
-    def setUp(self) -> None:
-        self.tmp_dir = tempfile.mkdtemp()
-        self.storage = SQLiteStorage(db_path=f"{self.tmp_dir}/transaction_test.db")
-        self.errors: List[Exception] = []
-
-    def tearDown(self) -> None:
-        shutil.rmtree(self.tmp_dir, ignore_errors=True)
-
-    def test_concurrent_relationship_updates(self) -> None:
-        """Verify concurrent relationship updates maintain consistency."""
-        agent_id = "relationship-agent"
-        user_id = "relationship-user"
-
-        # Pre-populate some memories
-        engine = ERIIEngine(storage_driver=self.storage)
-        engine.set_core_memory(agent_id, user_id, "Test core")
-        for i in range(10):
-            engine.remember(agent_id, user_id, f"Base memory {i}", f"Response {i}")
-        engine.close()
-
-        def update_relationships(thread_id: int) -> None:
-            try:
-                engine = ERIIEngine(storage_driver=self.storage)
-                # Perform operations that might update relationships
-                for i in range(5):
-                    engine.remember(
+                start.wait()
+                for index in range(7):
+                    self._record_one(
+                        engine,
                         agent_id,
                         user_id,
-                        f"Thread {thread_id} update {i}",
-                        f"Response {i}",
+                        f"{prefix}-{index}",
+                        f"{prefix} private memory {index}",
                     )
-                    time.sleep(0.001)  # Small delay to increase contention
+            finally:
                 engine.close()
-            except Exception as e:
-                self.errors.append(e)
 
-        # Run concurrent relationship updates
-        threads = []
-        for thread_id in range(3):
-            thread = threading.Thread(target=update_relationships, args=(thread_id,))
-            threads.append(thread)
-            thread.start()
+        with ThreadPoolExecutor(max_workers=len(scopes)) as pool:
+            list(pool.map(record_scope, scopes))
 
-        for thread in threads:
-            thread.join()
+        for agent_id, user_id, prefix in scopes:
+            for index in range(7):
+                self._archive_recorded(
+                    self.setup_engine,
+                    agent_id,
+                    user_id,
+                    f"{prefix}-{index}",
+                )
 
-        # Verify no errors
-        self.assertEqual(len(self.errors), 0, "Concurrent updates should not error")
+        node_id_sets: list[set[str]] = []
+        for agent_id, user_id, prefix in scopes:
+            nodes = self.storage.load_nodes(agent_id, user_id)
+            self.assertEqual(len(nodes), 7)
+            self.assertEqual(
+                {node.source_turn_id for node in nodes},
+                {f"{prefix}-{index}" for index in range(7)},
+            )
+            self.assertEqual(
+                {node.relationship_id for node in nodes},
+                {relationships[(agent_id, user_id)]},
+            )
+            self.assertTrue(all(node.content.startswith(prefix) for node in nodes))
+            node_id_sets.append({node.node_id for node in nodes})
 
-        # Verify data consistency
-        engine = ERIIEngine(storage_driver=self.storage)
-        results = engine.recall(agent_id, user_id, "memory")
-        # Should have base + updates
-        self.assertGreater(len(results), 0, "Memories should be present")
-        engine.close()
+        for index, node_ids in enumerate(node_id_sets):
+            for other_ids in node_id_sets[index + 1 :]:
+                self.assertTrue(node_ids.isdisjoint(other_ids))
 
+    def test_concurrent_recall_reads_only_prearchived_nodes(self) -> None:
+        agent_id = "recall-agent"
+        user_id = "recall-user"
+        self._initialize(agent_id, user_id)
+        expected_turn_ids = set()
+        for index in range(10):
+            turn_id = f"recall-seed-{index}"
+            expected_turn_ids.add(turn_id)
+            self._archive_one(
+                self.setup_engine,
+                agent_id,
+                user_id,
+                turn_id,
+                f"unique recall marker {index}",
+            )
 
-class TestRaceConditions(unittest.TestCase):
-    """Test for potential race conditions in critical paths."""
+        start = threading.Barrier(5)
 
-    def setUp(self) -> None:
-        self.tmp_dir = tempfile.mkdtemp()
-        self.storage = SQLiteStorage(db_path=f"{self.tmp_dir}/race_test.db")
-        self.errors: List[Exception] = []
-
-    def tearDown(self) -> None:
-        shutil.rmtree(self.tmp_dir, ignore_errors=True)
-
-    def test_no_duplicate_node_ids(self) -> None:
-        """Verify concurrent operations don't create duplicate node IDs."""
-        agent_id = "nodeid-agent"
-        user_id = "nodeid-user"
-
-        # Set core memory first
-        engine_setup = ERIIEngine(storage_driver=self.storage)
-        engine_setup.set_core_memory(agent_id, user_id, "Test core")
-        engine_setup.close()
-
-        def add_memories(count: int) -> None:
+        def recall(index: int) -> str:
+            engine = self._new_engine()
             try:
-                engine = ERIIEngine(storage_driver=self.storage)
-                for i in range(count):
-                    engine.remember(
-                        agent_id,
-                        user_id,
-                        f"Memory for ID test {i}",
-                        f"Response {i}",
-                    )
+                start.wait()
+                return engine.recall(
+                    agent_id,
+                    user_id,
+                    f"unique recall marker {index}",
+                    top_k=10,
+                )
+            finally:
                 engine.close()
-            except Exception as e:
-                self.errors.append(e)
 
-        # Run concurrent adds
-        threads = []
-        for _ in range(3):
-            thread = threading.Thread(target=add_memories, args=(10,))
-            threads.append(thread)
-            thread.start()
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            contexts = list(pool.map(recall, range(5)))
 
-        for thread in threads:
-            thread.join()
+        expected_contents = {f"unique recall marker {index}" for index in range(10)}
+        for context in contexts:
+            recalled = set(re.findall(r"unique recall marker \d+", context))
+            self.assertTrue(recalled)
+            self.assertTrue(recalled.issubset(expected_contents))
+        nodes = self.storage.load_nodes(agent_id, user_id)
+        self.assertEqual(len(nodes), 10)
+        self.assertEqual({node.source_turn_id for node in nodes}, expected_turn_ids)
+        self.assertEqual(len({node.node_id for node in nodes}), 10)
 
-        # Verify no errors
-        self.assertEqual(len(self.errors), 0, "Should not have errors")
+    def test_duplicate_turn_identity_converges_before_one_explicit_archive(self) -> None:
+        agent_id = "idempotent-agent"
+        user_id = "idempotent-user"
+        relationship_id = self._initialize(agent_id, user_id)
+        turn_id = "idempotent-turn"
+        worker_count = 4
+        start = threading.Barrier(worker_count)
 
-        # Verify data was written (node ID uniqueness is enforced at DB level)
-        engine = ERIIEngine(storage_driver=self.storage)
-        results = engine.recall(agent_id, user_id, "Memory")
-        self.assertGreater(len(results), 0, "Should have memories")
-        engine.close()
+        def record_same_turn(_worker_id: int):
+            start.wait()
+            return self.setup_engine.record_turn(
+                agent_id,
+                user_id,
+                "one durable idempotent memory",
+                "Acknowledged",
+                turn_id=turn_id,
+                delivery_exception=_delivery_exception(),
+            )
+
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            source_receipts = list(pool.map(record_same_turn, range(worker_count)))
+
+        receipt = self.setup_engine.archive_turn(
+            agent_id,
+            user_id,
+            turn_id,
+            idempotency_key="archive-idempotent-turn",
+        )
+
+        nodes = self.storage.load_nodes(agent_id, user_id)
+        turns = self.setup_engine.list_turns(agent_id, user_id)
+        self.assertEqual(len(nodes), 1)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(nodes[0].source_turn_id, turn_id)
+        self.assertEqual(nodes[0].relationship_id, relationship_id)
+        self.assertEqual(
+            {source_receipt.source_turn_id for source_receipt in source_receipts},
+            {turn_id},
+        )
+        self.assertEqual(receipt.status, ArchivalStatus.COMPLETED)
+        self.assertEqual(receipt.memory_node_count, 1)
 
 
 if __name__ == "__main__":

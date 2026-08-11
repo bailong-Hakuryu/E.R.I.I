@@ -5,7 +5,7 @@ Follows Google Python Style Guide.
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from erii.vector.base import BaseVectorStore
+from erii.vector.base import BaseVectorStore, VectorIsolationError
 
 
 class ChromaVectorStore(BaseVectorStore):
@@ -51,21 +51,33 @@ class ChromaVectorStore(BaseVectorStore):
             where=where,
         )
         results: List[Tuple[str, float]] = []
-        ids = res.get("ids", [[]])[0]
-        distances = res.get("distances", [[]])[0]
-        metadatas = res.get("metadatas", [[]])[0]
+        ids_batches = res.get("ids") or [[]]
+        distance_batches = res.get("distances") or [[]]
+        ids = ids_batches[0]
+        distances = distance_batches[0]
+        if len(ids) != len(distances):
+            raise RuntimeError("Vector DB returned mismatched ids and distances")
+
+        metadata_batches = res.get("metadatas")
+        metadatas = metadata_batches[0] if metadata_batches else None
+        if filter_metadata and (metadatas is None or len(metadatas) != len(ids)):
+            raise VectorIsolationError(
+                "Vector DB omitted complete metadata for a scoped query"
+            )
 
         for idx, (node_id, dist) in enumerate(zip(ids, distances)):
-            # Verify tenant isolation: if filter was specified, ensure results match
-            if filter_metadata and metadatas and idx < len(metadatas):
+            # A scoped query must carry complete proof for every returned item.
+            if filter_metadata:
                 result_metadata = metadatas[idx]
+                if not isinstance(result_metadata, dict):
+                    raise VectorIsolationError(
+                        "Vector DB returned invalid metadata for a scoped query"
+                    )
                 for key, expected_value in filter_metadata.items():
                     actual_value = result_metadata.get(key)
                     if actual_value != expected_value:
-                        raise RuntimeError(
-                            f"Vector DB isolation violation: Result {node_id} has "
-                            f"{key}={actual_value!r}, expected {expected_value!r}. "
-                            f"This indicates a critical tenant isolation failure."
+                        raise VectorIsolationError(
+                            "Vector DB returned a result outside the requested scope"
                         )
 
             # Chroma returns L2 or Cosine distance; convert to similarity score

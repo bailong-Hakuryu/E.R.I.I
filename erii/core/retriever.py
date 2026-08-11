@@ -11,7 +11,7 @@ import re
 from typing import Dict, List, Optional, Set, Tuple
 
 from erii.models.node import MemoryNode, MemoryType
-from erii.vector.base import BaseEmbeddingProvider, BaseVectorStore
+from erii.vector.base import BaseEmbeddingProvider, BaseVectorStore, VectorIsolationError
 
 
 class MemoryRetriever:
@@ -89,8 +89,21 @@ class MemoryRetriever:
 
         # 2. If vector retrieval is active, compute Vector Ranks
         vec_rank_map: Dict[str, int] = {}
-        if vector_store is not None and embedding_provider is not None and query:
+        if (
+            vector_store is not None
+            and embedding_provider is not None
+            and query
+            and candidates
+        ):
             try:
+                scopes = {(node.agent_id, node.user_id) for node in candidates}
+                if len(scopes) != 1:
+                    raise VectorIsolationError(
+                        "Vector retrieval candidates must share one agent/user scope"
+                    )
+                agent_id, user_id = next(iter(scopes))
+                scope_metadata = {"agent_id": agent_id, "user_id": user_id}
+                candidate_ids = {node.node_id for node in candidates}
                 query_vector = embedding_provider.embed_text(query)
                 if update_index:
                     # Index mutation is an explicit caller policy. Read-only recall
@@ -101,12 +114,25 @@ class MemoryRetriever:
                         vector_store.upsert(
                             node.node_id,
                             node_vec,
-                            {"node_id": node.node_id},
+                            {
+                                "node_id": node.node_id,
+                                **scope_metadata,
+                            },
                         )
 
-                vec_results = vector_store.search(query_vector, top_k=len(candidates))
+                vec_results = vector_store.search(
+                    query_vector,
+                    top_k=len(candidates),
+                    filter_metadata=scope_metadata,
+                )
                 for idx, (node_id, _sim) in enumerate(vec_results):
+                    if node_id not in candidate_ids:
+                        raise VectorIsolationError(
+                            "Vector DB returned an id outside the scoped candidate set"
+                        )
                     vec_rank_map[node_id] = idx + 1
+            except VectorIsolationError:
+                raise
             except Exception:
                 vec_rank_map = {}
 

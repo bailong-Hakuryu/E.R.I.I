@@ -22,11 +22,17 @@ from erii.security.credential_manager import (
 )
 
 
+def _synthetic_key(prefix="sk-", fill="1", length=24):
+    """Build a test credential without committing one literal."""
+
+    return prefix + (fill * length)
+
+
 def test_redaction():
     """Test key redaction."""
     print("Testing key redaction...")
 
-    key = "sk-1234567890abcdefghijklmnop"
+    key = _synthetic_key()
     redacted = CredentialManager.redact_key(key)
 
     assert redacted == "sk-1***", f"Expected 'sk-1***', got '{redacted}'"
@@ -38,9 +44,9 @@ def test_fingerprint():
     """Test key fingerprint."""
     print("\nTesting key fingerprint...")
 
-    key1 = "sk-1234567890abcdef"
-    key2 = "sk-1234567890abcdef"
-    key3 = "sk-different-key-000"
+    key1 = _synthetic_key(fill="1")
+    key2 = _synthetic_key(fill="1")
+    key3 = _synthetic_key(fill="2")
 
     fp1 = CredentialManager.get_key_fingerprint(key1)
     fp2 = CredentialManager.get_key_fingerprint(key2)
@@ -59,10 +65,11 @@ def test_key_detection():
     """Test key leakage detection."""
     print("\nTesting key leakage detection...")
 
+    generic_key = ("a" * 32) + "123456"
     test_cases = [
-        ('api_key="sk-1234567890abcdef"', True),  # sk- prefix
-        ('token="token-1234567890abcdef"', True),  # token- prefix
-        ('api_key="abcdefghijklmnopqrstuvwxyz123456"', True),  # 32+ chars
+        (f'api_key="{_synthetic_key()}"', True),
+        (f'token="{_synthetic_key(prefix="token-", fill="a")}"', True),
+        (f'api_key="{generic_key}"', True),
         ('Just normal text here', False),
     ]
 
@@ -81,7 +88,7 @@ def test_env_loading():
     print("\nTesting environment variable loading...")
 
     # Set a test key
-    test_key = "sk-test-key-1234567890abcdef"
+    test_key = _synthetic_key()
     os.environ["TEST_API_KEY"] = test_key
 
     try:

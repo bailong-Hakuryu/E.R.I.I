@@ -13,7 +13,7 @@ from erii.models.continuity_evidence import (
     ContinuityEvidenceRef,
 )
 server_module = importlib.import_module("erii.server.app")
-TEST_API_KEY = "test-turn-rest-key-12345678901234"
+TEST_API_KEY = "test-turn-rest-" + ("x" * 32)
 
 
 class _AlignedContinuityEvaluator:

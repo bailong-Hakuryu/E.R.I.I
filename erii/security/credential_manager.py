@@ -33,13 +33,23 @@ class CredentialManager:
     # Minimum key length for security validation
     MIN_KEY_LENGTH = 8
 
-    # Pattern to detect potential key leakage in logs/output
-    # Matches common API key patterns with actual key prefixes (sk-, api-, token-, etc.)
-    # More specific to reduce false positives
+    # Detect labelled secrets without assuming that a credential contains only
+    # alphanumeric characters. Passwords and provider tokens commonly contain
+    # punctuation; excluding it creates a predictable redaction bypass.
     KEY_PATTERN = re.compile(
-        r'(?:api[_-]?key|token|secret|password|credential)[\s:="\']+' +
-        r'((?:sk-|api[-_]|token[-_]|key[-_])[a-zA-Z0-9_\-]{12,}|[a-zA-Z0-9_\-]{32,})',
-        re.IGNORECASE
+        r"""
+        (?:api[_-]?key|token|secret|password|credential)
+        \s*(?::|=)\s*["']?
+        (
+            (?:sk-|api[-_]|token[-_]|key[-_])[a-zA-Z0-9_-]{12,}
+            |
+            (?=[^\s"'`]{20,}(?:[\s"']|$))
+            (?=[^\s"'`]*[a-zA-Z])
+            (?=[^\s"'`]*\d)
+            [^\s"'`]{20,}
+        )
+        """,
+        re.IGNORECASE | re.VERBOSE,
     )
 
     @staticmethod
@@ -188,17 +198,6 @@ class CredentialManager:
             ...         f.read(), 'my_adapter.py'
             ...     )
         """
-        # Skip validation for this file itself, test files, and validation scripts
-        skip_patterns = [
-            'credential_manager.py',
-            'test_',
-            'validate_',
-            'check_key_leakage.py',
-        ]
-
-        if any(pattern in file_path for pattern in skip_patterns):
-            return
-
         detected = CredentialManager.detect_key_leakage(code)
         if detected:
             raise CredentialError(

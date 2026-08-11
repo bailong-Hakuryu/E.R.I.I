@@ -14,7 +14,7 @@ from erii.models.consequence import (
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = ROOT / "docs" / "contracts"
 LEGACY_VERSION = "0.4.0a8"
-CURRENT_VERSION = "0.5.0a2"
+CURRENT_VERSION = "0.5.0a3"
 V050A1_EXTENSION_FIELDS = {
     "relationship_consequences",
     "narrative_tension_links",
@@ -61,7 +61,7 @@ class MemoryPackWireVersionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             ValueError,
-            "fields introduced in '0.5.0a2'",
+            "fields introduced in '0.5.0a1'",
         ):
             MemoryPack.from_dict(mislabeled_document)
 

@@ -15,8 +15,22 @@ import sys
 
 SECRET_PATTERNS = (
     re.compile(rb"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}"),
+    re.compile(rb"(?<![A-Za-z0-9_-])sk_live_[A-Za-z0-9]{20,}"),
     re.compile(rb"(?<![A-Za-z0-9_])gh[opusr]_[A-Za-z0-9]{30,}"),
     re.compile(rb"(?<![A-Z0-9])AKIA[A-Z0-9]{16}(?![A-Z0-9])"),
+    re.compile(rb"(?<![A-Za-z0-9_-])AIza[A-Za-z0-9_-]{30,}"),
+    re.compile(rb"(?<![A-Za-z0-9_-])xox[baprs]-[A-Za-z0-9-]{20,}"),
+    re.compile(rb"(?<![A-Za-z0-9_-])npm_[A-Za-z0-9]{30,}"),
+    re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(
+        rb"(?:api[_-]?key|token|secret|password|credential)"
+        rb"\s*(?::|=)\s*[\"']?"
+        rb"(?=[^\s\"'`]{20,}(?:[\s\"']|$))"
+        rb"(?=[^\s\"'`]*[A-Za-z])"
+        rb"(?=[^\s\"'`]*[0-9])"
+        rb"[^\s\"'`]{20,}",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -37,16 +51,18 @@ def _version_control_candidates(root: Path) -> tuple[Path, ...]:
 def find_secret_locations(root: Path) -> tuple[tuple[Path, int], ...]:
     """Return credential-shaped literal locations without returning values."""
 
-    # Files that are allowed to contain example/test keys
-    ALLOWED_EXAMPLE_FILES = {
-        "tests/test_credential_manager.py",
-        "tests/validate_credentials.py",
-        "benchmarks/run_performance.py",
-    }
-
     # Directory patterns to exclude
-    SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", "node_modules",
-                 ".venv", "venv", "build", "dist", ".scratch"}
+    SKIP_DIRS = {
+        ".git",
+        "__pycache__",
+        ".pytest_cache",
+        "node_modules",
+        ".venv",
+        "venv",
+        "build",
+        "dist",
+        ".scratch",
+    }
 
     findings: list[tuple[Path, int]] = []
     for path in _version_control_candidates(root):
@@ -57,17 +73,8 @@ def find_secret_locations(root: Path) -> tuple[tuple[Path, int], ...]:
         if any(skip_dir in path.parts for skip_dir in SKIP_DIRS):
             continue
 
-        # Get relative path for comparison
+        # Get relative path for reporting.
         rel_path = path.relative_to(root)
-        rel_path_str = str(rel_path).replace("\\", "/")
-
-        # Skip documentation files (contain example keys)
-        if path.suffix in {".md", ".rst", ".txt"}:
-            continue
-
-        # Skip test files that need example keys
-        if rel_path_str in ALLOWED_EXAMPLE_FILES:
-            continue
 
         try:
             payload = path.read_bytes()

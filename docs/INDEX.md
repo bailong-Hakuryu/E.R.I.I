@@ -1,284 +1,92 @@
-# E.R.I.I. v0.5.0a2 文档索引
+# E.R.I.I. 文档索引
 
-欢迎使用 E.R.I.I. (Enhanced Relationship Intelligence Infrastructure) v0.5.0a2 文档！
+> 当前源码：`0.5.0a3` Alpha
+> Python：3.11–3.14
+> SQLite：schema 10
+> FileStorage：format 2
+> MemoryPack writer：`0.5.0a3`
 
----
+本索引只列出当前维护的用户、宿主和贡献者入口。历史工作总结不作为 API、发布或
+验证事实来源；机器可读格式身份以 `erii.compatibility.COMPATIBILITY_CATALOG` 和
+`docs/contracts/` 为准。
 
-## 📚 快速导航
+## 第一次使用
 
-### 新用户入门
-1. **[README](../README.md)** - 项目主页
-2. **[API 密钥管理指南](guides/api_key_management.md)** - 安全配置必读
-3. **[日志和错误处理指南](guides/logging_and_error_handling.md)** - 日志和错误使用
+1. [Getting Started](getting-started.md)：离线 Demo、关系隔离、重启与导入证明。
+2. [Host Integration](host-integration.md)：真实聊天宿主的唯一推荐接入路径。
+3. [中文完整使用手册](USAGE_zh-CN.md)。
+4. [English User Guide](USAGE.md)。
 
-### 开发者文档
-4. **[版本路线图](ROADMAP_v0.5.0a2.md)** - 开发计划和任务清单
-5. **[完成总结](development/v0.5.0a2_completion.md)** - 开发成果详细总结
-6. **[验证报告](development/v0.5.0a2_verification.md)** - 测试结果和质量报告
-7. **[性能分析报告](development/v0.5.0a2_performance.md)** - 性能基准和优化建议
+推荐的新宿主主流程：
 
-### 最终交付
-8. **[交付报告](development/v0.5.0a2_delivery.md)** - 完整交付清单
-9. **[最终总结](../FINAL_SUMMARY.md)** - 项目最终总结
-
----
-
-## 📖 按主题浏览
-
-### 🔒 安全和凭据管理
-- [API 密钥管理指南](guides/api_key_management.md)
-  - 快速开始
-  - 安全最佳实践
-  - 多环境配置
-  - CI/CD 集成
-  - 故障排查
-  - API 参考
-
-**关键特性**:
-- 强制环境变量加载
-- 自动密钥脱敏
-- 密钥泄露检测
-- 完整测试覆盖
-
-### 📊 日志和监控
-- [日志和错误处理指南](guides/logging_and_error_handling.md)
-  - 日志系统使用
-  - 审计日志
-  - 性能监控
-  - 错误处理模式
-  - 最佳实践
-  - 集成示例
-
-**关键特性**:
-- 结构化日志 (文本/JSON)
-- 审计追踪
-- 自动性能计时
-- 日志轮转
-
-### 🎯 错误处理
-- [日志和错误处理指南](guides/logging_and_error_handling.md) (错误部分)
-  - 标准化错误码
-  - 错误严重性分级
-  - 丰富的错误上下文
-  - 恢复建议
-  - 异常链追踪
-
-**关键特性**:
-- 错误码体系 (E1xxx-E9xxx)
-- 4 级严重性
-- 自动恢复建议
-- JSON 序列化
-
-### ⚡ 性能和优化
-- [性能分析报告](development/v0.5.0a2_performance.md)
-  - 性能基准测试
-  - 性能影响分析
-  - 优化建议
-  - 监控指标
-
-**性能数据**:
-- 凭据管理: < 0.001 ms
-- 日志系统: < 0.005 ms
-- 错误处理: < 0.001 ms
-- 总体影响: < 0.5%
-
----
-
-## 🎓 按场景浏览
-
-### 场景 1: 首次使用 E.R.I.I.
-1. 阅读 [README](../README.md)
-2. 配置 API 密钥（参考[密钥管理指南](guides/api_key_management.md)）
-3. 运行验证脚本确认配置正确
-4. 查看示例代码
-
-### 场景 2: 生产环境部署
-1. 阅读 [API 密钥管理指南](guides/api_key_management.md) - 安全配置
-2. 配置日志系统（参考[日志指南](guides/logging_and_error_handling.md)）
-3. 设置审计日志
-4. 配置监控和告警
-5. 运行性能基准测试
-
-### 场景 3: 开发新功能
-1. 使用凭据管理器加载 API 密钥
-2. 添加结构化日志
-3. 使用标准化错误处理
-4. 编写单元测试
-5. 运行性能基准测试
-
-### 场景 4: 故障排查
-1. 查看日志输出
-2. 检查错误消息和恢复建议
-3. 参考[故障排查章节](guides/api_key_management.md)
-4. 查看性能监控数据
-
-### 场景 5: 代码审查和质量保证
-1. 运行密钥泄露检测 (`python scripts/check_key_leakage.py`)
-2. 运行所有测试 (`python tests/validate_*.py`)
-3. 查看[验证报告](development/v0.5.0a2_verification.md)
-4. 检查[性能报告](development/v0.5.0a2_performance.md)
-
----
-
-## 🔧 工具和脚本
-
-### 验证脚本
-- `tests/validate_credentials.py` - 凭据管理验证
-- `tests/validate_logging.py` - 日志系统验证
-- `tests/validate_errors.py` - 错误处理验证
-
-### 工具脚本
-- `scripts/check_key_leakage.py` - 密钥泄露检测
-- `benchmarks/run_performance.py` - 性能基准测试
-
-### 运行示例
-```bash
-# 验证所有功能
-python tests/validate_credentials.py
-python tests/validate_logging.py
-python tests/validate_errors.py
-
-# 检查密钥泄露
-python scripts/check_key_leakage.py
-
-# 运行性能测试
-python benchmarks/run_performance.py
+```text
+initialize_relationship
+  → begin_turn / complete_turn，或 record_turn
+  → archive_turn / process_relationship_turn
+  → recall_structured / render_recall
+  → export_memory
 ```
 
----
+`remember()` 和 transient `adjudicate_relationship_candidates()` 仅用于旧集成迁移。
 
-## 📊 项目状态
+## 核心语义
 
-### 完成情况
-- ✅ P0 任务: 100% (3/3)
-- ✅ P1 任务: 50% (1/2) - Gemini 暂停
-- ✅ P2 任务: 100% (2/2)
-- ✅ 总体: 75% (6/8)
+- [领域模型](domain-model.md)
+- [关系前提 ADR](adr/0038-bind-canonical-roles-through-explicit-relationship-premises.md)
+- [Persona Manifest ADR](adr/0040-approve-persona-interpretation-as-a-versioned-manifest.md)
+- [Episode 与 Chapter ADR](adr/0047-derive-episodes-and-relationship-chapters-from-history.md)
+- [上下文声音模式 ADR](adr/0086-model-voice-as-source-backed-contextual-repertoire.md)
+- [0.5 关系后果迁移](migration-0.5.0.md)
 
-### 质量指标
-- ✅ 测试覆盖: 100% (核心模块)
-- ✅ 测试通过率: 100% (26/26)
-- ✅ 文档完整性: 100%
-- ✅ 性能影响: < 0.5%
+## API 与稳定性
 
-### 发布状态
-- ✅ 功能完整
-- ✅ 测试通过
-- ✅ 文档完善
-- ✅ 性能优秀
-- ✅ 可以发布
+- [API Stability](api-stability.md)：Golden、Advanced、Experimental 与 Internal。
+- [Turn Lifecycle](api/turn-lifecycle.md)
+- [Turn 错误处理](api/turn-error-handling.md)
+- [Turn 高级用法](api/turn-advanced-usage.md)
+- [TypeScript 服务端 SDK](../clients/typescript/README.md)：源码分发的 Alpha 客户端，
+  通过 live FastAPI contract 检查；不向浏览器暴露 owner key。
+- [兼容性策略](compatibility.md)
+- [数据生命周期](data-lifecycle.md)
 
----
+Turn 文档中的示例必须与 `ERIIEngine` 的公开签名一起通过测试；文档链接检查本身不
+证明示例可执行。
 
-## 🆕 v0.5.0a2 新增内容
+## 部署与安全
 
-### 核心功能
-1. **API 密钥管理系统**
-   - 统一凭据管理
-   - 环境变量加载
-   - 自动脱敏
-   - 泄露检测
+- [安全策略](../SECURITY.md)
+- [支持政策](../SUPPORT.md)
+- [API Key 管理](guides/api_key_management.md)
+- [速率限制参考](deployment/rate-limiting.md)
+- [部署加固参考](deployment/production.md)
 
-2. **日志系统**
-   - 结构化日志
-   - 审计追踪
-   - 性能监控
-   - 日志轮转
+参考 REST 服务使用单一 owner key，并只接受 `X-API-Key`。它不是每用户身份、对象级
+授权或完整多租户安全边界。部署文档是宿主加固参考，仍需根据实际环境完成 TLS、身份、
+授权、加密、限流、监控、备份和恢复演练。
 
-3. **错误处理系统**
-   - 标准化错误码
-   - 严重性分级
-   - 丰富上下文
-   - 恢复建议
+## 开发与维护
 
-### 文档
-- 8 份完整文档 (2,200+ 行)
-- 从快速开始到 API 参考
-- 包含最佳实践和故障排查
+- [路线图](../ROADMAP.md)
+- [变更记录](../CHANGELOG.md)
+- [贡献指南](../CONTRIBUTING.md)
+- [发展战略（中文）](development-strategy.md)
+- [Development Strategy (English)](development-strategy.en.md)
+- [Engine 重构计划](architecture/engine-refactoring-plan.md)
+- [Lifecycle 重构计划](architecture/lifecycle-refactoring-plan.md)
+- [ADR 索引](adr/README.md)
 
-### 测试和基准
-- 47 个测试用例 (100% 通过)
-- 性能基准测试套件
-- CI/CD 集成工具
+## 实验模块
 
----
+DeepSeek Continuity Review 位于
+`experiments/deepseek-continuity-review/`，是可整体拆卸的离线/Provider 实验。
+实验测试证明解析、证据和错误边界，不证明真实 Provider 的准确率、延迟、价格、SLA
+或生产部署质量。多模型协同与任何单一 Provider 都没有设计绑定。
 
-## 📝 文档贡献
+## 发布与验证事实
 
-### 文档规范
-- 使用 Markdown 格式
-- 包含代码示例
-- 提供故障排查建议
-- 保持与代码同步
-
-### 需要改进的地方
-- [ ] 更多端到端示例
-- [ ] 架构图和流程图
-- [ ] 常见问题 FAQ
-- [ ] 视频教程
-
----
-
-## 🔗 外部资源
-
-### GitHub
-- 仓库: https://github.com/bailong-Hakuryu/E.R.I.I
-- Issues: https://github.com/bailong-Hakuryu/E.R.I.I/issues
-
-### 相关项目
-- E.R.I.I. Core (本项目)
-- E.R.I.I. Extensions (计划中)
-
----
-
-## 📞 获取帮助
-
-### 问题反馈
-- GitHub Issues (推荐)
-- 邮件联系项目维护者
-
-### 常见问题
-请先查看文档的"故障排查"章节：
-- [密钥管理故障排查](guides/api_key_management.md)
-- [日志错误故障排查](guides/logging_and_error_handling.md)
-
----
-
-## 📅 版本历史
-
-### v0.5.0a2 (2026-08-08)
-- ✅ API 密钥管理系统
-- ✅ 日志系统
-- ✅ 错误处理系统
-- ✅ 性能基准测试
-- ✅ 完整文档
-
-### v0.5.0a1 (2026-08-06)
-- Relationship Consequence 系统
-- Narrative Tension 投影
-- 完整的来源追踪
-
-### v0.4.0 (2026-08-04)
-- 稳定版本基线
-
----
-
-## 🎯 下一步
-
-### 推荐阅读顺序
-1. **新用户**: README → 密钥管理指南 → 日志错误指南
-2. **开发者**: 完成总结 → 性能报告 → API 参考
-3. **运维**: 密钥管理指南 → 日志指南 → 性能报告
-
-### 实践步骤
-1. ✅ 运行验证脚本
-2. ✅ 配置环境变量
-3. ✅ 编写第一个示例
-4. ✅ 查看日志输出
-5. ✅ 处理错误场景
-
----
-
-*文档最后更新: 2026-08-08*  
-*版本: v0.5.0a2*  
-*维护者: bailong-Hakuryu*
+- `v0.5.0a2` 是已经存在的历史 alpha tag/PyPI 制品。
+- 当前 `0.5.0a3` 是 tag 之后的源码稳定化里程碑；发布前必须重新构建、安装、验证并
+  冻结对应 commit。
+- GitHub workflow 配置不等于某个 commit 已经执行成功；验证报告必须记录 full SHA、
+  环境、精确命令、原始结果和 exit status。
+- 项目仍是 Alpha，不提供生产 SLA。

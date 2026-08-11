@@ -15,7 +15,7 @@ from erii import (
 )
 
 server_module = importlib.import_module("erii.server.app")
-TEST_API_KEY = "test-archival-rest-key-1234567890"
+TEST_API_KEY = "test-archival-rest-" + ("x" * 32)
 
 
 def _visible_exchange_delivery_exception():

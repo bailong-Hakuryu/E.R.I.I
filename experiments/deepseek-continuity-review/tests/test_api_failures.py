@@ -146,8 +146,9 @@ def test_no_exception_chain_leakage():
             response=httpx.Response(401, json={"error": "Unauthorized"}),
         )
 
+    synthetic_key = "secret-" + ("a" * 24)
     client = DeepSeekClient(
-        api_key="secret-api-key-12345",
+        api_key=synthetic_key,
         thinking_enabled=True,
         transport=leak_attempt_transport,
     )
@@ -158,13 +159,13 @@ def test_no_exception_chain_leakage():
     except DeepSeekAPIError as e:
         # Check that API key is not in exception or its chain
         error_str = str(e)
-        assert "secret-api-key" not in error_str
+        assert synthetic_key not in error_str
 
         # Check __cause__ and __context__
         if e.__cause__:
-            assert "secret-api-key" not in str(e.__cause__)
+            assert synthetic_key not in str(e.__cause__)
         if e.__context__:
-            assert "secret-api-key" not in str(e.__context__)
+            assert synthetic_key not in str(e.__context__)
 
     print("OK")
 

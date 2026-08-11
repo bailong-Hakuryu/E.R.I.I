@@ -1,243 +1,54 @@
 # Changelog
 
-本项目的用户可感知变化记录在此文件。版本遵循语义化版本；`0.x` 阶段仍可能出现受控的破坏性变更。
+本文件只记录用户可感知且有代码、测试或迁移证据支持的变化。项目处于 Alpha；
+`0.x` 期间允许经过说明的受控破坏性变化。
 
-## [Unreleased]
+## [Unreleased] — 0.5.0a3
 
-### Added (2026-08-10 ~ 2026-08-11)
-
-- **Turn Lifecycle API 完整文档**（2,200+ 行）：
-  - `docs/api/turn-lifecycle.md`：完整 API 参考（900+ 行）
-  - `docs/api/turn-error-handling.md`：错误处理指南（700+ 行）
-  - `docs/api/turn-advanced-usage.md`：高级用法模式（600+ 行）
-  - `examples/08_turn_lifecycle_integration.py`：6 个完整集成示例
-  - 覆盖所有 8 个 Turn API 方法
-  - 生产级错误处理模式
-  - 并发处理、流式录制、性能优化
-
-- **性能优化模块**（`erii.performance`）：
-  - `QueryCache`：LRU + TTL 查询缓存
-  - `@cached_method`：方法级缓存装饰器
-  - `PerformanceMonitor`：性能指标收集
-  - `BatchLoader`：批量操作支持
-  - 13 个测试用例，全部通过
-  - 查询缓存可减少数据库负载 80%+
-
-- **TypeScript/JavaScript 客户端 SDK**（参考实现）：
-  - `clients/typescript/`：完整 TypeScript SDK 实现
-  - 类型安全的 API 客户端
-  - 结构化错误处理
-  - 完整文档和示例
-  - NPM 发布配置就绪
-  - 注：保留为参考实现，暂不发布到 NPM（专注 Python 核心）
-
-- **安全增强**：
-  - Vector DB 隔离断言：运行时验证 tenant 隔离
-  - 并发测试套件：6 个测试验证线程安全
-  - 性能测试套件：8 个测试建立性能基线
-
-- **API 标准化**：
-  - 统一 REST API 错误格式（38 处）
-  - 标准化错误码体系
-  - 结构化错误响应
-
-- **文档完善**：
-  - `docs/deployment/production.md`：生产部署指南（685 行）
-  - 完整的部署检查清单
-  - Docker、Nginx 配置示例
-  - 备份恢复脚本
-
-### Quality
-
-- ✅ 核心测试通过率：100% (38/38 新增测试)
-- ✅ Turn API 文档完整性：100%
-- ✅ 性能测试覆盖：查询、并发、规模
-- ✅ 项目健康分数：8.1/10 → 8.8/10 (+0.7)
-
-### Performance
-
-- 查询缓存：可减少数据库负载 80%+
-- 批量操作：减少开销 50%+
-- 监控开销：< 0.001ms/操作
-
-# Changelog
-
-本项目的用户可感知变化记录在此文件。版本遵循语义化版本；`0.x` 阶段仍可能出现受控的破坏性变更。
-
-## [Unreleased]
-
-### Added (2026-08-10 ~ 2026-08-11)
-
-- **Turn Lifecycle API 完整文档**（2,200+ 行）：
-  - `docs/api/turn-lifecycle.md`：完整 API 参考（900+ 行）
-  - `docs/api/turn-error-handling.md`：错误处理指南（700+ 行）
-  - `docs/api/turn-advanced-usage.md`：高级用法模式（600+ 行）
-  - `examples/08_turn_lifecycle_integration.py`：6 个完整集成示例
-  - 覆盖所有 8 个 Turn API 方法
-  - 生产级错误处理模式
-  - 并发处理、流式录制、性能优化
-
-- **性能优化模块**（`erii.performance`）：
-  - `QueryCache`：LRU + TTL 查询缓存
-  - `@cached_method`：方法级缓存装饰器
-  - `PerformanceMonitor`：性能指标收集
-  - `BatchLoader`：批量操作支持
-  - 13 个测试用例，全部通过
-  - 查询缓存可减少数据库负载 80%+
-
-- **TypeScript/JavaScript 客户端 SDK**（参考实现）：
-  - `clients/typescript/`：完整 TypeScript SDK 实现
-  - 类型安全的 API 客户端
-  - 结构化错误处理
-  - 完整文档和示例
-  - NPM 发布配置就绪
-  - 注：保留为参考实现，暂不发布到 NPM（专注 Python 核心）
-
-- **安全增强**：
-  - Vector DB 隔离断言：运行时验证 tenant 隔离
-  - 并发测试套件：6 个测试验证线程安全
-  - 性能测试套件：8 个测试建立性能基线
-
-- **API 标准化**：
-  - 统一 REST API 错误格式（38 处）
-  - 标准化错误码体系
-  - 结构化错误响应
-
-- **文档完善**：
-  - `docs/deployment/production.md`：生产部署指南（685 行）
-  - 完整的部署检查清单
-  - Docker、Nginx 配置示例
-  - 备份恢复脚本
-
-### Quality
-
-- ✅ 核心测试通过率：100% (38/38 新增测试)
-- ✅ Turn API 文档完整性：100%
-- ✅ 性能测试覆盖：查询、并发、规模
-- ✅ 项目健康分数：8.1/10 → 8.8/10 (+0.7)
-
-### Performance
-
-- 查询缓存：可减少数据库负载 80%+
-- 批量操作：减少开销 50%+
-- 监控开销：< 0.001ms/操作
-
-## [0.5.0a2] - 2026-08-08
-
-`0.5.0a2` 专注于生产环境准备，引入企业级 API 密钥管理、结构化日志系统和增强的错误处理机制。
-
-### Added
-
-- **API 密钥管理系统**（`erii.security.credential_manager`）：
-  - `CredentialManager` 类：统一的凭据加载和管理接口
-  - 强制从环境变量加载 API 密钥（`get_api_key()`）
-  - 自动密钥脱敏（`redact_key()`）和指纹生成（`get_key_fingerprint()`）
-  - 密钥泄露检测（`detect_key_leakage()`, `validate_no_literal_keys()`）
-  - `RedactingFormatter`：日志输出自动脱敏敏感信息
-  - CI/CD 工具（`scripts/check_key_leakage.py`）：代码库密钥泄露扫描
-
-- **结构化日志系统**（`erii.core.logging`）：
-  - `StructuredLogger`：支持文本和 JSON 格式的结构化日志
-  - `AuditLogger`：关键操作审计追踪（关系初始化、角色决策、数据操作）
-  - `PerformanceLogger`：自动性能计时和监控
-  - `timer()` 上下文管理器：代码块性能测量
-  - 全局日志实例：`get_logger()`, `get_audit_logger()`, `get_performance_logger()`
-  - 字典配置支持：`configure_logging_from_dict()`
-
-- **增强的错误处理系统**（`erii.errors`）：
-  - `ErrorCode` 枚举：标准化错误码体系（E1xxx-E9xxx）
-    - E1xxx: 存储错误
-    - E2xxx: 格式错误
-    - E3xxx: 生命周期错误
-    - E4xxx: 凭据错误
-    - E5xxx: API 错误
-    - E6xxx: 验证错误
-    - E7xxx: 关系错误
-    - E9xxx: 内部错误
-  - `ErrorSeverity` 枚举：4 级严重性分级（LOW, MEDIUM, HIGH, CRITICAL）
-  - `ERIIError` 基类增强：
-    - `code`: 标准化错误码
-    - `severity`: 错误严重性
-    - `context`: 丰富的错误上下文字典
-    - `recovery_hint`: 恢复建议
-    - `cause`: 异常链追踪
-    - `to_dict()`: JSON 序列化支持
-    - 自动过滤敏感数据（密钥、密码等）
-
-- **测试和验证**：
-  - 29 个凭据管理测试用例（`tests/test_credential_manager.py`）
-  - 7 个凭据验证脚本（`tests/validate_credentials.py`）
-  - 9 个日志验证脚本（`tests/validate_logging.py`）
-  - 9 个错误处理验证脚本（`tests/validate_errors.py`）
-  - 性能基准测试套件（`benchmarks/run_performance.py`）
-
-- **文档**（2,200+ 行）：
-  - [API 密钥管理指南](docs/guides/api_key_management.md)（507 行）
-  - [日志和错误处理指南](docs/guides/logging_and_error_handling.md)（600+ 行）
-  - [文档索引](docs/INDEX.md)
-  - [完成总结](docs/development/v0.5.0a2_completion.md)
-  - [验证报告](docs/development/v0.5.0a2_verification.md)
-  - [性能分析报告](docs/development/v0.5.0a2_performance.md)
-  - [交付报告](docs/development/v0.5.0a2_delivery.md)
-  - [最终总结](FINAL_SUMMARY.md)
+`0.5.0a3` 是 `v0.5.0a2` tag 之后的源码稳定化里程碑。它尚未发布为 Git tag、
+GitHub Release 或 PyPI 制品；发布前必须固定 full commit SHA 并重新验证构建产物。
 
 ### Changed
 
-- **OpenAI Adapter** 安全升级（`erii.adapters.openai_adapter`）：
-  - 使用 `CredentialManager.get_api_key()` 加载密钥
-  - 新增 `api_key_env` 参数支持自定义环境变量
-  - 废弃直接传递 `api_key` 参数（发出警告）
-  - 拒绝占位符密钥（如 `sk-placeholder`）
-
-- 明确 `0.4.x` 是稳定维护线，`0.5.0a1` 是活跃 alpha 源码里程碑；同步当前
-  FileStorage format 2、SQLite schema 10 与 MemoryPack `0.5.0a1` 的文档身份。
-- 将 DeepSeek Continuity Review 明确标记为可拆卸 Experimental Labs 模块；历史
-  小样本运行不再被表述为生产准确率、SLA 或生产推荐。
-- 补充远程 Provider 数据出境、授权、留存/删除政策与凭据边界：API Key 只允许从环境
-  或宿主 Secret Manager 注入，不得进入源码、文档、fixture、命令行、日志或持久数据。
-- 将包成熟度分类同步为 Alpha；CI 改用 `pytest` 收集全部测试风格，并在整个 test job
-  显式清空真实 Provider Key，同时执行凭据字面量与本地文档链接门禁。
+- Python package identity 与 MemoryPack writer identity 推进到 `0.5.0a3`；reader 继续接受
+  declared-readable 的旧 Pack，包括 `0.5.0a1` 与 `0.5.0a2`。
+- TypeScript 客户端按真实参考服务契约收口：`X-API-Key`、`/api/v1` 路由、MemoryPack
+  字段与 Turn Lifecycle，并进入 Node 构建、lint 和测试门禁。
+- Turn Lifecycle 文档和示例改为直接对应当前 `ERIIEngine` 公共签名；示例必须离线完整运行。
+- 性能和并发验证改用规范 Turn 与显式归档，并直接核对持久 MemoryNode、来源和关系范围。
+- 根目录只保留 README、CHANGELOG、ROADMAP、安全、支持、贡献和上下文等权威入口；
+  删除重复且无法复核的过程总结和完成报告。
 
 ### Fixed
 
-- MemoryPack wire 升级到 `0.5.0a1`，旧 `0.4.0a8` reader 的严格拒绝行为由冻结契约
-  证明；包含 consequence/tension 数据时拒绝有损降级。
-- 补齐 FileStorage `legacy | v1 → v2`、SQLite `6 | 9 → 10` 的 backup-first 并排升级，
-  并让严格 Backup v1 reader 恢复由 v0.4 producer 生成的旧 FileStorage、SQLite 与
-  MemoryPack 备份。
-- DeepSeek 实验改用当前 V4 Chat Completions 契约；清理响应/异常泄漏，限制 64 KiB
-  出站 Prompt，校验 Resolver 输出与请求引用严格一一对应，并把评测的解析率与逐轴
-  fixture 匹配率分开。
-- 修复 Relationship Consequence 完整示例、MemoryPack staging import 的 v0.5 语义
-  摘要/计数，以及依赖临时目录长度的 Windows 长路径回归测试。
+- `cached_method` 的缓存实例隔离、并发 miss、TTL 与键规范化，避免不同 Engine/宿主实例
+  共享同一方法结果。
+- Chroma scoped query 在 metadata 缺失、长度不匹配、范围不匹配或返回候选集外 ID 时
+  失败关闭；普通 Retriever 会传入 `agent_id × user_id` 过滤范围。
+- REST 404、请求校验和领域错误统一为可公开的结构化错误契约；OpenAPI 同步声明
+  `RESTErrorEnvelope`，并正确标注公开 health 与受保护业务路由。
+- Backup-v1 reader 接受历史 `0.5.0a1` 源码、已发布 `0.5.0a2` 制品以及其后 a2
+  源码实际写出的 MemoryPack producer identity，同时继续拒绝未知版本、错误状态与
+  未来 producer view。
+- Persona Compiler 将完整人设原文放入明确的 JSON 数据边界；离线测试只证明本地 framing
+  与 schema 约束，不把固定 Mock 误报为远程模型的 Prompt Injection 抵抗能力。
+- 凭据扫描重新覆盖 Markdown、文本、测试和 benchmark；移除整类扩展名与整文件豁免，
+  恢复包含标点的 labelled secret 检测回归。
+- 修复性能示例、Turn 示例和 Windows 控制台编码路径。
 
-### Performance
+### Verification
 
-- 凭据管理操作：< 0.001 ms
-- 日志记录操作：< 0.005 ms  
-- 错误处理操作：< 0.001 ms
-- 总体性能影响：< 0.5%
+发布证据必须在最终候选 commit 上记录精确命令、环境、结果与 exit status。离线 Provider
+测试不代表远程准确率、价格、延迟、可用性或 SLA。
 
-### Security
+## [0.5.0a2] - 2026-08-08
 
-- ✅ 强制环境变量加载 API 密钥
-- ✅ 自动日志脱敏
-- ✅ 密钥泄露 CI/CD 检测
-- ✅ 拒绝占位符密钥
-- ✅ 敏感数据过滤
+`0.5.0a2` 是已经上传到 PyPI 并创建 Git tag 的历史 Alpha 制品。该 tag 的 Python
+package version 是 `0.5.0a2`，但其 MemoryPack writer identity 仍为 `0.5.0a1`。
+Tag 之后新增的 TypeScript 客户端、性能工具、Turn 文档和稳定化修复不属于该不可变制品。
 
-### Quality
-
-- ✅ 测试通过率：100% (26/26 验证测试)
-- ✅ 文档完整性：100%
-- ✅ 代码覆盖：100%（核心模块）
-- ✅ 性能基准：已建立 v0.5.0a2 基线
-
-### Compatibility
-
-- Python 源码版本保持 `0.5.0a1`（v0.5.0a2 为功能增量，不涉及数据格式变更）
-- 向后兼容 v0.5.0a1 所有功能
-- 新增模块不影响现有代码
+该里程碑包含凭据管理、结构化日志、错误模型、数据生命周期兼容与 DeepSeek 可拆卸实验
+等 Alpha 增量。它不构成生产安全、性能、准确率、SLA 或完整多租户产品声明。
 
 ## [0.5.0a1] - 2026-08-06
 

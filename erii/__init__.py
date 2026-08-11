@@ -370,7 +370,7 @@ from erii.data_lifecycle import (
 )
 from erii.storage.file_storage import FileStorage
 from erii.storage.sqlite_storage import SQLiteStorage
-from erii.vector.base import BaseEmbeddingProvider, BaseVectorStore
+from erii.vector.base import BaseEmbeddingProvider, BaseVectorStore, VectorIsolationError
 from erii.vector.in_memory_vector import (
     CallableEmbeddingAdapter,
     DummyEmbeddingProvider,
@@ -631,6 +631,7 @@ __all__ = [
     "PersistentTaskQueue",
     "BaseEmbeddingProvider",
     "BaseVectorStore",
+    "VectorIsolationError",
     "CallableEmbeddingAdapter",
     "DummyEmbeddingProvider",
     "InMemoryVectorStore",

@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Historical release](https://img.shields.io/badge/historical-v0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
-[![Source](https://img.shields.io/badge/source-v0.5.0a1-blue.svg)](CHANGELOG.md)
+[![Source](https://img.shields.io/badge/source-v0.5.0a3-blue.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11--3.14-green.svg)](pyproject.toml)
 
 [English README](README_EN.md)
@@ -38,7 +38,7 @@ E.R.I.I. 是可嵌入 Python 宿主的内核，不是聊天模型、万能 Agent
 
 ## 从源码安装
 
-当前检出的活跃开发源码身份是 `0.5.0a1`（alpha），要求 Python 3.11–3.14。
+当前检出的活跃开发源码身份是 `0.5.0a3`（alpha），要求 Python 3.11–3.14。
 `0.4.x` 是稳定维护线；需要较低变更风险的集成应固定经过审查的 `0.4.x` full commit SHA：
 
 ```bash
@@ -127,9 +127,9 @@ E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，�
 详见 [Host Integration](docs/host-integration.md) 和
 [API Stability](docs/api-stability.md)。
 
-## v0.5.0a1 Alpha：Relationship Consequence
+## 0.5 系列：Relationship Consequence
 
-活跃开发里程碑 `0.5.0a1` 引入 **Relationship Consequence** 和
+`0.5.0a1` 首次引入 **Relationship Consequence** 和
 **Narrative Tension** 最小纵切，用于追踪关系决策的长期影响和叙事张力状态。
 这是 alpha 源码能力，不等于稳定发布或生产就绪声明：
 
@@ -166,26 +166,26 @@ E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，�
 `0.4.0b1` 已在 commit
 `f6dca322379c4ea88320c69d752cab471d035e95` 接受为不可移动的源码基线。
 `0.4.0rc1` 的源码收口证据固定于 commit
-`58ea8e69df28bec8e755e0a0d2a175679c18a694`。当前 `0.5.0a1` 在 `0.4.0` 基础上引入
-Relationship Consequence 和 Narrative Tension 系统；它不是已上传的 GitHub/PyPI 分发包。
+`58ea8e69df28bec8e755e0a0d2a175679c18a694`。`0.5.0a2` 已作为 alpha 包上传；当前
+`0.5.0a3` 是其后的源码稳定化里程碑，尚未对应新的 tag 或 PyPI 制品。
 
 版本轴彼此独立：
 
 | 轴 | 当前值 |
 | --- | --- |
-| Python 源码身份 | `0.5.0a1` |
+| Python 源码身份 | `0.5.0a3` |
 | Python | `3.11`–`3.14` |
 | SQLite | schema `10` |
 | FileStorage | format `2` |
-| MemoryPack | `0.5.0a1` |
+| MemoryPack | `0.5.0a3`（readers：至 `0.5.0a3`） |
 | Lifecycle Backup | `1` |
 | Lifecycle Plan | writer `3`，readers `1`–`3` |
 
-`v0.5.0a1` 引入 Relationship Consequence 和 Narrative Tension 作为新的持久语义，
-SQLite schema 升级至 v10，FileStorage 升级至 format 2，MemoryPack wire 升级至
-`0.5.0a1`。新 reader 可以读取 `0.4.0a8` Pack；旧 `0.4.0a8` reader 会因严格根字段
-校验拒绝 `0.5.0a1` Pack，不能把这种单向可读性写成双向兼容。Character Deliberation
-和伤害后修复决策仍未实现。
+`v0.5.0a1` 引入 Relationship Consequence 和 Narrative Tension 持久字段，并将 SQLite
+升级至 schema 10、FileStorage 升级至 format 2。当前 writer 标记 MemoryPack
+`0.5.0a3`；reader 仍接受 declared-readable 的旧 Pack。严格的 `0.4.0a8` reader 会拒绝
+带 0.5 扩展字段的新 Pack，因此兼容性是新 reader 向旧数据单向可读。Character
+Deliberation 和伤害后修复决策仍未实现。
 
 ## 已有内核能力
 
@@ -233,7 +233,7 @@ Adapter/实验；E.R.I.I. 不强制使用某个 Provider，也不建议为了使
 
 ## 安全、数据与维护
 
-当前项目由单人长期维护，不提供 SLA。`0.4.x` 是稳定维护线，`0.5.0a1` 是活跃 alpha
+当前项目由单人长期维护，不提供 SLA。`0.4.x` 是稳定维护线，`0.5.0a3` 是活跃 alpha
 源码里程碑。FileStorage、SQLite、MemoryPack 和 Lifecycle
 Backup 默认明文；参考 REST 服务只有单一 owner key，不是每用户授权或多租户安全边界。
 正式产品仍需在宿主侧补齐身份、对象授权、TLS、加密、密钥管理、限流、租户隔离和

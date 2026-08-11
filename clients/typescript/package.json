@@ -1,16 +1,16 @@
 {
   "name": "@erii/client",
-  "version": "0.5.0-alpha.2",
-  "description": "TypeScript client library for E.R.I.I. Agent Memory System",
+  "version": "0.5.0-alpha.3",
+  "description": "Server-side TypeScript client for the E.R.I.I. continuity and memory service",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "jest",
+    "test": "jest --runInBand",
     "test:coverage": "jest --coverage",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run lint && npm run build && npm test"
   },
   "keywords": [
     "ai",
@@ -19,7 +19,8 @@
     "llm",
     "rag",
     "typescript",
-    "erii"
+    "erii",
+    "server-side"
   ],
   "author": "bailong-Hakuryu",
   "license": "Apache-2.0",
@@ -38,8 +39,8 @@
   "devDependencies": {
     "@types/jest": "^29.0.0",
     "@types/node": "^20.0.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^8.0.0",
     "jest": "^29.0.0",
     "ts-jest": "^29.0.0",
@@ -48,9 +49,10 @@
   "files": [
     "dist",
     "README.md",
+    "PUBLISHING.md",
     "LICENSE"
   ],
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   }
 }

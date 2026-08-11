@@ -1,685 +1,347 @@
-# E.R.I.I. Production Deployment Guide
+# Reference Server Deployment Guide
 
-**Version:** v0.5.0a2+  
-**Last Updated:** 2026-08-10  
-**Status:** Production-Ready Alpha
+**Status:** alpha deployment guidance, not a production-readiness claim
 
----
+This document describes the reference FastAPI server that is present in the
+repository today. E.R.I.I. is primarily a Python kernel. A product host remains
+responsible for user identity, authorization, TLS, quotas, rate limits,
+observability, and its LLM/extractor capabilities.
 
-## Table of Contents
+## What the reference server provides
 
-1. [Overview](#overview)
-2. [Prerequisites](#prerequisites)
-3. [Deployment Architecture](#deployment-architecture)
-4. [Installation](#installation)
-5. [Configuration](#configuration)
-6. [Security Hardening](#security-hardening)
-7. [Rate Limiting](#rate-limiting)
-8. [Monitoring and Logging](#monitoring-and-logging)
-9. [Backup and Recovery](#backup-and-recovery)
-10. [Scaling](#scaling)
-11. [Troubleshooting](#troubleshooting)
+- one process-local `ERIIEngine`;
+- FileStorage selected through `--storage-dir`;
+- a single owner-level API key for business endpoints;
+- loopback-only unauthenticated development when explicitly enabled;
+- an 8 MiB request-body limit;
+- public health, OpenAPI, and Swagger endpoints;
+- stable safe REST error envelopes;
+- cooperative engine close on CLI shutdown.
 
----
+It does not provide:
 
-## Overview
+- end-user identity or per-user authorization;
+- a multi-tenant security boundary;
+- TLS termination;
+- rate limiting, quotas, or cost controls;
+- CORS policy for browser applications;
+- a CLI switch for SQLite;
+- a configured memory/relationship/continuity model provider;
+- automatic reliable-archival processing;
+- a supported multi-worker or multi-instance deployment topology.
 
-E.R.I.I. (Experiential Recall & Impression Integration) is a single-tenant AI agent memory system designed to be embedded in applications or deployed as a REST API service.
+Both bundled storage implementations store plaintext by default. The owner key
+authorizes every relationship visible to the reference-server process. Do not
+expose it to a browser or mobile application.
 
-### Deployment Models
+## Requirements
 
-- **Embedded Library** - Import directly into Python applications
-- **REST API Service** - FastAPI server for multi-language clients
-- **Docker Container** - Containerized deployment
-- **Cloud Platforms** - AWS, GCP, Azure compatible
-
-### Production Readiness
-
-- ✅ **Security:** Single-owner model, parameterized queries, credential redaction
-- ✅ **Testing:** 671 tests passing (100% pass rate)
-- ✅ **Performance:** Benchmarked with 100+ memories
-- ✅ **Reliability:** Transaction safety, concurrent access tested
-
----
-
-## Prerequisites
-
-### System Requirements
-
-**Minimum:**
-- Python 3.10+
-- 2 GB RAM
-- 10 GB disk space
-- Linux, macOS, or Windows
-
-**Recommended:**
-- Python 3.11+
-- 4+ GB RAM
-- 50+ GB disk space (for large memory stores)
-- Linux (Ubuntu 22.04+ or similar)
-
-### Dependencies
+- Python 3.11 through 3.14
+- a writable persistent directory
+- FastAPI and Uvicorn through the `server` extra
 
 ```bash
-# Core dependencies (automatically installed)
-pip install erii
-
-# Optional: For ChromaDB vector store
-pip install chromadb
-
-# Optional: For development/testing
-pip install pytest black ruff
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install "erii[server]==<VERSION>"
 ```
 
----
+On Windows PowerShell:
 
-## Deployment Architecture
-
-### Single-Server Deployment
-
-```
-┌─────────────────────────────────────┐
-│         Reverse Proxy (Nginx)       │
-│     - Rate Limiting                 │
-│     - SSL/TLS Termination           │
-│     - Static Content (if any)       │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│      E.R.I.I. API Server            │
-│      (FastAPI + Uvicorn)            │
-│      Port: 8000 (internal)          │
-└──────────────┬──────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────┐
-│         Storage Layer               │
-│  - SQLite (default)                 │
-│  - FileStorage (alternative)        │
-│  - ChromaDB (optional vectors)      │
-└─────────────────────────────────────┘
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install "erii[server]==<VERSION>"
 ```
 
-### Multi-Instance Deployment
+Pin an exact package version or source commit. An alpha upgrade can include data
+format and API changes.
 
-```
-                  ┌─────────────┐
-                  │ Load Balancer│
-                  └──────┬───────┘
-                         │
-        ┌────────────────┼────────────────┐
-        ▼                ▼                ▼
-   ┌─────────┐      ┌─────────┐    ┌─────────┐
-   │ Instance│      │ Instance│    │ Instance│
-   │    1    │      │    2    │    │    3    │
-   └────┬────┘      └────┬────┘    └────┬────┘
-        │                │               │
-        └────────────────┼───────────────┘
-                         ▼
-                 ┌──────────────┐
-                 │ Shared Storage│
-                 │   (NFS/EFS)   │
-                 └──────────────┘
-```
+## Owner API key
 
-**Note:** SQLite doesn't support concurrent writes from multiple processes. For multi-instance deployment, consider using:
-- Read replicas (read-only instances)
-- Message queue for write coordination
-- Or migrate to PostgreSQL (future support)
+Generate the key at deployment time and place it in a host secret store. The
+value must contain at least 32 UTF-8 bytes.
 
----
-
-## Installation
-
-### Method 1: pip (Recommended)
+Linux shell example:
 
 ```bash
-# Install E.R.I.I.
-pip install erii
-
-# Verify installation
-python -c "import erii; print(erii.__version__)"
+export ERII_API_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 ```
 
-### Method 2: From Source
+PowerShell example:
+
+```powershell
+$env:ERII_API_KEY = python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+The CLI reads `ERII_API_KEY`. It does not currently read `ERII_STORAGE_DIR`,
+`ERII_LOG_LEVEL`, `ERII_MAX_REQUEST_BODY_BYTES`, or `ERII_ALLOW_LOOPBACK`.
+Storage and network choices are CLI arguments.
+
+Business requests send exactly one header:
+
+```http
+X-API-Key: <ERII_API_KEY>
+```
+
+`Authorization: Bearer ...` is not accepted by the reference server.
+
+## Local verified launch
 
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/erii.git
-cd erii
-
-# Install in development mode
-pip install -e .
-
-# Run tests
-python -m unittest discover tests
+erii serve \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --storage-dir ./data/rest-memory
 ```
 
-### Method 3: Docker
+Health is public and does not initialize storage by itself:
+
+```bash
+curl http://127.0.0.1:8000/api/v1/health
+```
+
+Example business request:
+
+```bash
+curl \
+  -H "X-API-Key: $ERII_API_KEY" \
+  "http://127.0.0.1:8000/api/v1/turns?agent_id=AGENT&user_id=USER"
+```
+
+Swagger UI is available at `/docs`, and the schema is at `/openapi.json`.
+
+For short-lived local development only:
+
+```bash
+erii serve \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --storage-dir ./data/rest-memory \
+  --allow-unauthenticated-loopback
+```
+
+Do not place this unauthenticated mode behind a reverse proxy. A proxy can make
+remote traffic appear to originate from loopback.
+
+## Non-loopback deployment
+
+The CLI rejects a non-loopback bind unless `--allow-unsafe-network` is present.
+This flag acknowledges that the built-in server is plain HTTP with one owner
+key; it does not add TLS or user authorization.
+
+```bash
+erii serve \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --storage-dir /var/lib/erii \
+  --allow-unsafe-network
+```
+
+Before using such a bind:
+
+1. terminate TLS at a trusted reverse proxy;
+2. keep port 8000 inaccessible from untrusted networks;
+3. enforce product user authentication and object-level authorization before
+   forwarding requests;
+4. inject the owner key at the trusted server boundary;
+5. configure rate limits and body limits at the proxy as a second boundary.
+
+See [Rate limiting](rate-limiting.md) for proxy examples. Treat them as starting
+points and measure limits against the host workload.
+
+## Minimal reverse-proxy shape
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name HOST;
+
+    ssl_certificate     /path/to/certificate;
+    ssl_certificate_key /path/to/private-key;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
+
+Authentication and authorization logic is intentionally omitted from this
+fragment because it belongs to the product host. A proxy that only forwards the
+owner key does not create tenant isolation.
+
+## Process supervision
+
+Use one reference-server process per storage directory until a deployment has
+validated its own concurrency model. Do not multiply Uvicorn workers merely for
+throughput: each worker owns an engine and provider instances, while FileStorage
+and the operational queues require deliberate cross-process testing.
+
+Example systemd unit shape:
+
+```ini
+[Unit]
+Description=E.R.I.I. reference server
+After=network.target
+
+[Service]
+Type=simple
+User=erii
+Group=erii
+EnvironmentFile=/etc/erii/server.env
+ExecStart=/opt/erii/.venv/bin/erii serve --host 127.0.0.1 --port 8000 --storage-dir /var/lib/erii
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/erii/server.env` should be readable only by the service account and root.
+It contains the runtime `ERII_API_KEY` assignment; do not commit that file.
+
+## Container shape
 
 ```dockerfile
-# Dockerfile
-FROM python:3.11-slim
+FROM python:3.12-slim
 
+RUN useradd --create-home --uid 10001 erii
 WORKDIR /app
+RUN python -m pip install --no-cache-dir "erii[server]==<VERSION>"
+RUN mkdir -p /data/erii && chown -R erii:erii /data/erii
 
-# Install E.R.I.I.
-RUN pip install --no-cache-dir erii uvicorn[standard]
-
-# Expose API port
+USER erii
 EXPOSE 8000
-
-# Create data directory
-RUN mkdir -p /data/erii_memory
-
-# Start server
-CMD ["python", "-m", "erii.server.app", \
-     "--storage-dir", "/data/erii_memory", \
-     "--host", "0.0.0.0", \
-     "--port", "8000"]
+CMD ["erii", "serve", "--host", "0.0.0.0", "--port", "8000", "--storage-dir", "/data/erii", "--allow-unsafe-network"]
 ```
 
-Build and run:
-```bash
-docker build -t erii-server .
-docker run -d \
-  -p 8000:8000 \
-  -v /path/to/data:/data \
-  -e ERII_API_KEY="your-secret-key-here" \
-  --name erii \
-  erii-server
-```
+At runtime:
 
----
+- mount `/data/erii` on persistent storage;
+- inject `ERII_API_KEY` from the orchestrator secret store;
+- keep the container behind TLS and the product authorization layer;
+- use one replica for this reference topology unless a shared-storage design has
+  been implemented and tested by the host.
 
-## Configuration
+## Storage truth
 
-### Environment Variables
+The CLI uses FileStorage. The resulting directory contains relationship data and
+an operational task database. Protect the entire directory, not only files with
+a `.db` suffix.
 
-```bash
-# Required
-export ERII_API_KEY="your-secret-key-minimum-32-bytes-long"
-
-# Optional
-export ERII_STORAGE_DIR="./erii_memory"          # Data directory
-export ERII_LOG_LEVEL="INFO"                     # DEBUG, INFO, WARNING, ERROR
-export ERII_MAX_REQUEST_BODY_BYTES="8388608"    # 8MB default
-export ERII_ALLOW_LOOPBACK="false"               # Dev mode (insecure)
-```
-
-### API Key Generation
-
-```bash
-# Generate a secure API key (64 characters)
-python -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-**Important:** Store API keys securely:
-- Use environment variables or secrets manager
-- Never commit to version control
-- Rotate periodically (e.g., every 90 days)
-
-### Storage Configuration
-
-#### SQLite (Default)
+SQLite is available to a programmatic Python host:
 
 ```python
 from erii import ERIIEngine, SQLiteStorage
 
-# Production configuration
-storage = SQLiteStorage(
-    db_path="/data/erii_memory/erii.db",
-)
-
+storage = SQLiteStorage(db_path="/var/lib/erii/erii.db")
 engine = ERIIEngine(storage_driver=storage)
 ```
 
-**SQLite Tuning:**
-```sql
--- Set in application initialization
-PRAGMA journal_mode=WAL;        -- Write-Ahead Logging
-PRAGMA synchronous=NORMAL;      -- Balance safety/performance
-PRAGMA cache_size=-64000;       -- 64MB cache
-PRAGMA temp_store=MEMORY;       -- Temp tables in RAM
-```
+This does not make SQLite a multi-tenant authorization boundary, and the
+reference CLI has no SQLite option. A custom ASGI host that selects SQLite must
+also configure server access and engine shutdown explicitly.
 
-#### FileStorage
+## Processing lifecycle
 
-```python
-from erii import ERIIEngine, FileStorage
+The reference CLI creates and closes the engine explicitly, but it does not
+configure a memory extractor, relationship-event extractor, persona interpreter,
+or continuity evaluator.
 
-storage = FileStorage(
-    storage_dir="/data/erii_memory"
-)
+Consequences include:
 
-engine = ERIIEngine(storage_driver=storage)
-```
+- reliable archival routes report `archival_capability_unavailable` unless a
+  custom host injects a memory extractor;
+- continuity evaluation reports `continuity_capability_unavailable` unless a
+  custom host injects an evaluator;
+- constructing the server does not start hidden reliable-archival processing;
+- deferred reliable archival in a custom host needs explicit
+  `process_pending()` or equivalent host scheduling.
 
----
+`ERIIEngine.start()` starts only the legacy `remember()` worker. It is not a
+replacement for explicit reliable-archival lifecycle control.
 
-## Security Hardening
+## Health and monitoring
 
-### 1. API Authentication
+`GET /api/v1/health` returns:
 
-E.R.I.I. uses API key authentication (single-owner model):
-
-```python
-# Server setup
-from erii.server.app import configure_server_access
-
-configure_server_access(
-    api_key="your-secret-key-here",
-    allow_unauthenticated_loopback=False  # Never true in production
-)
-```
-
-**Client Authentication:**
-```bash
-curl -H "Authorization: Bearer your-secret-key-here" \
-     https://your-server.com/api/v1/recall \
-     -d '{"agent_id": "agent1", "user_id": "user1", "query": "hello"}'
-```
-
-### 2. Network Security
-
-**Firewall Rules:**
-```bash
-# Allow only HTTPS (443) and SSH (22)
-sudo ufw allow 443/tcp
-sudo ufw allow 22/tcp
-sudo ufw deny 8000/tcp  # Block direct API access
-sudo ufw enable
-```
-
-**Reverse Proxy (Nginx):**
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com;
-
-    # SSL Configuration
-    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-
-    # Security Headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Strict-Transport-Security "max-age=31536000" always;
-
-    # Proxy to E.R.I.I.
-    location /api/ {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # Timeouts
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
+```json
+{
+  "status": "healthy",
+  "version": "VERSION",
+  "engine_initialized": true,
+  "archiver_running": false
 }
 ```
 
-### 3. File Permissions
-
-```bash
-# Storage directory
-chmod 700 /data/erii_memory
-chown erii:erii /data/erii_memory
-
-# Database files
-chmod 600 /data/erii_memory/*.db
-```
-
-### 4. Secrets Management
-
-**AWS Secrets Manager:**
-```python
-import boto3
-import json
-
-def get_api_key():
-    client = boto3.client('secretsmanager', region_name='us-east-1')
-    response = client.get_secret_value(SecretId='erii/api-key')
-    secret = json.loads(response['SecretString'])
-    return secret['api_key']
-
-configure_server_access(api_key=get_api_key())
-```
-
----
-
-## Rate Limiting
-
-See [`docs/deployment/rate-limiting.md`](rate-limiting.md) for detailed configuration.
-
-### Quick Setup (Nginx)
-
-```nginx
-# Define rate limit zone
-limit_req_zone $binary_remote_addr zone=erii_api:10m rate=100r/m;
-
-location /api/ {
-    # Apply rate limit
-    limit_req zone=erii_api burst=20 nodelay;
-    limit_req_status 429;
-    
-    proxy_pass http://127.0.0.1:8000;
-}
-```
-
-### Application-Level Rate Limiting
-
-```python
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-limiter = Limiter(key_func=get_remote_address)
-
-@app.post("/api/v1/recall")
-@limiter.limit("10/minute")
-def api_recall(request: Request, req: RecallRequest):
-    # ...
-```
-
----
-
-## Monitoring and Logging
-
-### Application Logging
-
-```python
-import logging
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/var/log/erii/app.log'),
-        logging.StreamHandler()
-    ]
-)
-```
-
-### Health Check Endpoint
-
-```python
-@app.get("/health")
-def health_check():
-    return {
-        "status": "healthy",
-        "version": __version__,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-```
-
-**Monitor with:**
-```bash
-# Simple uptime monitor
-*/5 * * * * curl -f https://your-domain.com/health || alert-script.sh
-```
-
-### Metrics Collection
-
-**Prometheus Integration:**
-```python
-from prometheus_client import Counter, Histogram, generate_latest
-
-recall_counter = Counter('erii_recalls_total', 'Total recall requests')
-recall_duration = Histogram('erii_recall_duration_seconds', 'Recall duration')
-
-@app.get("/metrics")
-def metrics():
-    return Response(generate_latest(), media_type="text/plain")
-```
-
-### Log Aggregation
-
-**Example: Send logs to CloudWatch**
-```python
-import watchtower
-
-logger.addHandler(watchtower.CloudWatchLogHandler(
-    log_group='/aws/erii/production'
-))
-```
-
----
-
-## Backup and Recovery
-
-### Automated Backups
-
-**Backup Script:**
-```bash
-#!/bin/bash
-# backup-erii.sh
-
-BACKUP_DIR="/backup/erii"
-STORAGE_DIR="/data/erii_memory"
-DATE=$(date +%Y%m%d_%H%M%S)
-
-# Create backup directory
-mkdir -p $BACKUP_DIR
-
-# Backup SQLite database
-sqlite3 $STORAGE_DIR/erii.db ".backup $BACKUP_DIR/erii_$DATE.db"
-
-# Compress
-tar -czf $BACKUP_DIR/erii_$DATE.tar.gz -C $STORAGE_DIR .
-
-# Upload to S3 (optional)
-aws s3 cp $BACKUP_DIR/erii_$DATE.tar.gz s3://your-bucket/backups/
-
-# Keep only last 30 days
-find $BACKUP_DIR -name "*.tar.gz" -mtime +30 -delete
-
-echo "Backup completed: erii_$DATE.tar.gz"
-```
-
-**Cron Schedule:**
-```cron
-# Daily backup at 2 AM
-0 2 * * * /usr/local/bin/backup-erii.sh
-```
-
-### Recovery
-
-```bash
-# 1. Stop the service
-sudo systemctl stop erii
-
-# 2. Restore from backup
-tar -xzf /backup/erii/erii_20260810.tar.gz -C /data/erii_memory/
-
-# 3. Verify permissions
-chmod 700 /data/erii_memory
-chmod 600 /data/erii_memory/*.db
-
-# 4. Start the service
-sudo systemctl start erii
-```
-
-### Point-in-Time Recovery (SQLite WAL)
-
-```bash
-# SQLite with WAL mode keeps recent transactions
-cp /data/erii_memory/erii.db /restore/erii.db
-cp /data/erii_memory/erii.db-wal /restore/erii.db-wal
-
-# Apply WAL to database
-sqlite3 /restore/erii.db "PRAGMA wal_checkpoint(FULL);"
-```
-
----
-
-## Scaling
-
-### Vertical Scaling
-
-**Increase Resources:**
-- More RAM → Larger cache, better query performance
-- More CPU → Handle more concurrent requests
-- Faster disk → Quicker database operations
-
-**Configuration Tuning:**
-```python
-# Increase worker processes
-uvicorn erii.server.app:app \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --workers 4 \
-    --worker-class uvicorn.workers.UvicornWorker
-```
-
-### Horizontal Scaling (Read Replicas)
-
-```
-┌──────────┐      ┌──────────┐
-│ Writer   │──────▶│ Primary  │
-│ Instance │      │ Database │
-└──────────┘      └────┬─────┘
-                       │
-         ┌─────────────┼─────────────┐
-         ▼             ▼             ▼
-    ┌────────┐    ┌────────┐    ┌────────┐
-    │Reader 1│    │Reader 2│    │Reader 3│
-    └────────┘    └────────┘    └────────┘
-```
-
-**SQLite Replication:**
-```bash
-# Use Litestream for replication
-litestream replicate /data/erii_memory/erii.db s3://bucket/db
-```
-
-### Caching Layer
-
-```python
-from functools import lru_cache
-from datetime import datetime, timedelta
-
-# Cache recall results
-@lru_cache(maxsize=1000)
-def cached_recall(agent_id: str, user_id: str, query: str):
-    return engine.recall(agent_id, user_id, query)
-```
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-#### 1. Database Locked
-
-**Symptom:** `sqlite3.OperationalError: database is locked`
-
-**Solution:**
-```python
-# Enable WAL mode
-connection.execute("PRAGMA journal_mode=WAL")
-
-# Increase timeout
-connection = sqlite3.connect(db_path, timeout=30.0)
-```
-
-#### 2. High Memory Usage
-
-**Symptom:** Process using > 2GB RAM
-
-**Diagnosis:**
-```python
-import tracemalloc
-
-tracemalloc.start()
-# ... run operations ...
-snapshot = tracemalloc.take_snapshot()
-top_stats = snapshot.statistics('lineno')
-```
-
-**Solution:**
-- Reduce cache size
-- Limit concurrent requests
-- Add memory limits (Docker: `--memory=2g`)
-
-#### 3. Slow Queries
-
-**Diagnosis:**
-```sql
-EXPLAIN QUERY PLAN SELECT * FROM nodes WHERE agent_id=? AND user_id=?;
-```
-
-**Solution:**
-- Ensure indexes exist
-- Reduce data volume (archive old memories)
-- Upgrade to SSD storage
-
-#### 4. API Timeouts
-
-**Symptom:** 504 Gateway Timeout
-
-**Solution:**
-```nginx
-# Increase Nginx timeouts
-proxy_connect_timeout 120s;
-proxy_send_timeout 120s;
-proxy_read_timeout 120s;
-```
-
-### Debug Mode
-
-```bash
-# Enable debug logging
-export ERII_LOG_LEVEL=DEBUG
-
-# Run with debugger
-python -m pdb -m erii.server.app
-```
-
-### Getting Help
-
-- **GitHub Issues:** https://github.com/yourusername/erii/issues
-- **Documentation:** https://erii.readthedocs.io
-- **Community:** [Discord/Slack link]
-
----
-
-## Production Checklist
-
-Before going live:
-
-- [ ] API key generated (≥32 bytes) and stored securely
-- [ ] SSL/TLS certificate configured
-- [ ] Rate limiting enabled
-- [ ] Firewall rules configured
-- [ ] Automated backups scheduled
-- [ ] Monitoring/alerting set up
-- [ ] Health check endpoint tested
-- [ ] Load testing completed
-- [ ] Recovery procedure documented and tested
-- [ ] Security audit completed
-- [ ] Logging configured and centralized
-- [ ] Resource limits set (CPU, memory, disk)
-
----
-
-## Additional Resources
-
-- [Rate Limiting Guide](rate-limiting.md)
-- [Host Integration Guide](../host-integration.md)
-- [API Documentation](../USAGE.md)
-- [Architecture Decision Records](../adr/)
-
----
-
-**Document Version:** 1.0  
-**Last Review:** 2026-08-10  
-**Next Review:** 2026-11-10
+This is a process health signal, not proof that an external model provider,
+archival capability, disk capacity, or product authorization service is ready.
+Add host-specific readiness checks outside the reference server.
+
+The project does not expose built-in Prometheus metrics. Instrument the host or
+proxy for request counts, latency, status/error code, storage capacity, queue
+age, archival outcomes, and provider cost. Do not label the full request body,
+transcript, API key, or MemoryPack as telemetry.
+
+## Backup and upgrade
+
+File-level copying while writes are active is not a verified backup protocol.
+Quiesce the host and use the data-lifecycle inspection/backup/restore workflow
+documented in [Usage](../USAGE.md). Verify a restore into a separate destination
+before relying on it.
+
+Before an upgrade:
+
+1. pin and record the current package version and source commit;
+2. inspect the storage identity without mutating it;
+3. create and verify a backup;
+4. read the migration and compatibility documents;
+5. test the upgrade against a copy;
+6. run the host's Turn, recall, MemoryPack, and provider contract tests;
+7. keep a rollback artifact and procedure.
+
+## Performance and scaling
+
+No fixed throughput, latency, memory-count, or worker-count claim is made for the
+reference server. Benchmark the exact combination of:
+
+- FileStorage or a programmatic SQLite host;
+- relationship and Turn count;
+- memory/event volume and recall budget;
+- extractor/evaluator latency;
+- request concurrency;
+- backup and archival scheduling;
+- operating system and storage medium.
+
+Use results from that workload to decide limits and topology. The standalone
+performance helpers and examples are not a production capacity guarantee.
+
+## Deployment checklist
+
+- [ ] Exact package version or source commit pinned
+- [ ] Python version is supported
+- [ ] Persistent storage directory mounted with least-privilege permissions
+- [ ] Storage is encrypted or protected by the deployment environment as needed
+- [ ] Owner key generated at deployment and stored outside the repository
+- [ ] Browser/mobile clients never receive the owner key
+- [ ] TLS terminates before untrusted traffic reaches the server
+- [ ] Product authentication and object-level authorization are enforced
+- [ ] Proxy rate/body/time limits are measured and configured
+- [ ] One-process topology is used or concurrency was independently verified
+- [ ] Provider capabilities and explicit processing lifecycle are configured
+- [ ] Health and dependency readiness are monitored separately
+- [ ] Backup restore was tested on a separate destination
+- [ ] Upgrade and rollback were rehearsed
+- [ ] Logs and metrics exclude transcript and credential material
+
+## Related documents
+
+- [English usage guide](../USAGE.md)
+- [Security policy](../../SECURITY.md)
+- [Rate limiting](rate-limiting.md)
+- [Turn lifecycle](../api/turn-lifecycle.md)
+- [Turn and REST errors](../api/turn-error-handling.md)

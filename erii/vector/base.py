@@ -7,6 +7,10 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 
 
+class VectorIsolationError(RuntimeError):
+    """Raised when a vector backend cannot prove the requested data scope."""
+
+
 class BaseEmbeddingProvider(ABC):
     """Abstract interface for text embedding generation."""
 

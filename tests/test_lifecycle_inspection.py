@@ -37,10 +37,10 @@ class CompatibilityCatalogTests(unittest.TestCase):
     def test_package_and_data_format_versions_are_independent(self) -> None:
         catalog = COMPATIBILITY_CATALOG
 
-        self.assertEqual(catalog.package_version, "0.5.0a2")
+        self.assertEqual(catalog.package_version, "0.5.0a3")
         self.assertEqual(catalog.sqlite.current_version, "10")
         self.assertEqual(catalog.file_storage.current_version, "2")
-        self.assertEqual(catalog.memory_pack.current_version, "0.5.0a2")
+        self.assertEqual(catalog.memory_pack.current_version, "0.5.0a3")
         self.assertEqual(catalog.lifecycle_backup.current_version, "1")
         self.assertEqual(catalog.lifecycle_plan.current_version, "3")
         self.assertEqual(catalog.lifecycle_plan.readable_versions, ("1", "2", "3"))
@@ -170,7 +170,7 @@ class LifecycleInspectorTests(unittest.TestCase):
             )
 
             self.assertEqual(assessment.status, LifecycleStatus.CURRENT)
-            self.assertEqual(assessment.detected_version, "0.5.0a2")
+            self.assertEqual(assessment.detected_version, "0.5.0a3")
             self.assertEqual(file_snapshot(Path(root_dir)), before)
 
             missing_metadata = copy.deepcopy(payload)

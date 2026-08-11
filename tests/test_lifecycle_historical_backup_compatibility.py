@@ -132,6 +132,18 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
                 encoding="utf-8",
             )
             return _target(LifecycleTargetKind.MEMORY_PACK, path), path
+        if case in {"memory-pack-a1", "memory-pack-a2"}:
+            version = "0.5.0a1" if case.endswith("a1") else "0.5.0a2"
+            path = root / f"pack-{version}.erii"
+            document = json.loads(MEMORY_PACK_A7_SOURCE.read_text("utf-8"))
+            document["metadata"]["version"] = version
+            document["relationship_consequences"] = []
+            document["narrative_tension_links"] = []
+            path.write_text(
+                json.dumps(document, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            return _target(LifecycleTargetKind.MEMORY_PACK, path), path
         raise AssertionError(f"unknown historical source case {case!r}")
 
     @staticmethod
@@ -276,7 +288,7 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
                 "0.4.0a7",
                 "0.4.0a8",
                 "migration_required",
-                "0.5.0a2",
+                "0.5.0a3",
                 LifecycleStatus.MIGRATION_REQUIRED,
             ),
             (
@@ -285,7 +297,25 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
                 "0.4.0a8",
                 "0.4.0a8",
                 "current",
+                "0.5.0a3",
+                LifecycleStatus.MIGRATION_REQUIRED,
+            ),
+            (
+                "memory-pack-a1",
+                LifecycleTargetKind.MEMORY_PACK,
+                "0.5.0a1",
+                "0.5.0a1",
+                "current",
+                "0.5.0a3",
+                LifecycleStatus.MIGRATION_REQUIRED,
+            ),
+            (
+                "memory-pack-a2",
+                LifecycleTargetKind.MEMORY_PACK,
                 "0.5.0a2",
+                "0.5.0a2",
+                "current",
+                "0.5.0a3",
                 LifecycleStatus.MIGRATION_REQUIRED,
             ),
         )
@@ -420,6 +450,14 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
                 "migration_required",
                 "0.5.0a2",
                 True,
+            ),
+            (
+                "memory-pack-nontext-producer-current",
+                "memory-pack-a1",
+                [],
+                "current",
+                "0.5.0a1",
+                False,
             ),
         )
         for name, source_case, current, status, detected, unsupported in variants:

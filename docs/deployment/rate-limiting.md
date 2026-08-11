@@ -1,345 +1,164 @@
-# Rate Limiting for E.R.I.I. Reference Server
+# Rate Limiting the E.R.I.I. Reference Server
 
-E.R.I.I.'s reference FastAPI server does not include built-in rate limiting. Per [SECURITY.md](../../SECURITY.md), rate limiting should be implemented at the "trusted proxy/host layer."
+**Status:** deployment starting point, not a production-readiness or capacity
+claim.
 
-This guide provides production-ready examples.
+The reference FastAPI server has no built-in rate limiter. A trusted product
+host or reverse proxy must enforce request rates, concurrency, quotas, and user
+authorization before traffic reaches E.R.I.I. Limits must be measured against
+the actual storage, Turn volume, extractors/evaluators, and provider latency.
 
----
+## Security boundary first
 
-## Why Rate Limiting?
+The reference server uses one owner-level `ERII_API_KEY`; it is not an end-user
+identity. Consequently:
 
-Without rate limiting, the E.R.I.I. API is vulnerable to:
-- **DoS attacks**: Overwhelming the service with requests
-- **LLM cost explosion**: Excessive recall/generation operations
-- **Resource exhaustion**: Database and memory overload
+- never expose the owner key to a browser or mobile client;
+- do not treat arbitrary inbound `X-API-Key` values as rate-limit identities;
+  an attacker can rotate fake values before authentication;
+- apply end-user quotas at the authenticated product-host boundary;
+- use source-IP limiting only as a coarse perimeter control;
+- keep the reference server reachable only from the trusted host/proxy.
 
----
+Recommended topology:
 
-## Recommended Approach
-
-Place a reverse proxy (nginx, Caddy, or Traefik) in front of the E.R.I.I. server:
-
+```text
+User client
+  -> product authentication + object authorization + user quota
+  -> trusted gateway/reverse proxy + perimeter rate/concurrency limit
+  -> single-owner E.R.I.I. reference server
 ```
-Client → Reverse Proxy (rate limit) → E.R.I.I. FastAPI Server
-```
 
----
+## Nginx starting point
 
-## Nginx Configuration
-
-### Basic Rate Limiting
+The following fragment applies a coarse per-source-IP request rate to business
+routes and deliberately leaves the public health route separate. `[RATE]` and
+`[BURST]` are deployment values to choose from measurements, not project
+defaults.
 
 ```nginx
-# Define rate limit zone (10MB memory, ~160K IP addresses)
-limit_req_zone $binary_remote_addr zone=erii_api:10m rate=100r/m;
+limit_req_zone $binary_remote_addr zone=erii_perimeter:10m rate=[RATE];
 
-# Rate limit for burst traffic
-limit_req_zone $binary_remote_addr zone=erii_burst:10m rate=20r/s;
+upstream erii_reference {
+    server 127.0.0.1:8000;
+    keepalive 16;
+}
 
 server {
-    listen 443 ssl http2;
-    server_name erii-api.example.com;
+    listen 443 ssl;
+    server_name HOST;
 
-    # SSL configuration
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
+    ssl_certificate     /path/to/certificate;
+    ssl_certificate_key /path/to/private-key;
 
-    # General API endpoints - 100 requests/minute
+    location = /api/v1/health {
+        proxy_pass http://erii_reference;
+    }
+
     location /api/v1/ {
-        limit_req zone=erii_api burst=20 nodelay;
+        limit_req zone=erii_perimeter burst=[BURST] nodelay;
         limit_req_status 429;
 
-        # Custom error response for rate limit
-        error_page 429 = @rate_limit_error;
-
-        proxy_pass http://localhost:8000;
+        proxy_pass http://erii_reference;
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
-
-    # Health check - no rate limit
-    location /api/v1/health {
-        proxy_pass http://localhost:8000;
-    }
-
-    # Custom rate limit error response
-    location @rate_limit_error {
-        default_type application/json;
-        return 429 '{"detail":{"code":"rate_limit_exceeded","retryable":true,"safe_summary":"Too many requests. Please try again later."}}\n';
-    }
 }
 ```
 
-### Per-API-Key Rate Limiting
+This fragment does not implement product authentication or inject the owner
+key. Those operations depend on the trusted host architecture and must happen
+before forwarding. If clients can connect around the proxy, the limit is not a
+boundary.
 
-If using API keys, rate limit per key instead of per IP:
+When returning a proxy-generated 429, a host may use the same public shape as
+the reference server:
 
-```nginx
-# Extract API key from header
-map $http_x_api_key $api_key_for_limit {
-    default $binary_remote_addr;
-    "~^(.+)$" $1;
-}
-
-limit_req_zone $api_key_for_limit zone=erii_per_key:10m rate=1000r/m;
-
-server {
-    location /api/v1/ {
-        limit_req zone=erii_per_key burst=50 nodelay;
-        proxy_pass http://localhost:8000;
-    }
-}
-```
-
----
-
-## Caddy Configuration
-
-Caddy with `caddy-rate-limit` plugin:
-
-```caddy
+```json
 {
-    order rate_limit before basicauth
-}
-
-erii-api.example.com {
-    # Rate limit by remote IP
-    rate_limit {
-        zone dynamic_erii {
-            key {remote_host}
-            events 100
-            window 1m
-        }
-    }
-
-    # Route to E.R.I.I. server
-    reverse_proxy localhost:8000 {
-        # Forward real IP
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-    }
+  "detail": {
+    "code": "rate_limit_exceeded",
+    "retryable": true,
+    "safe_summary": "Too many requests. Try again later."
+  }
 }
 ```
 
-**Install rate limit plugin:**
-```bash
-xcaddy build --with github.com/mholt/caddy-ratelimit
-```
+The proxy should add an appropriate `Retry-After` value when it can calculate
+one. Do not include user messages, relationship data, or the owner key in the
+response.
 
----
+## Other gateways
 
-## Traefik Configuration
+Caddy, Traefik, cloud API gateways, service meshes, and application gateways can
+enforce the same boundary. Their configuration syntax and available algorithms
+change independently of E.R.I.I.; use the documentation for the exact deployed
+version and verify behavior in staging. Required properties are:
 
-Using Traefik's rate limit middleware:
+1. a stable authenticated identity for product-user quotas;
+2. a coarse source/network limit before expensive parsing or provider work;
+3. bounded concurrent upstream requests;
+4. a bounded request body and upstream timeout;
+5. a 429 response that contains no private input;
+6. metrics that do not use transcript text, API keys, or relationship IDs as
+   labels.
 
-```yaml
-# docker-compose.yml
-services:
-  traefik:
-    image: traefik:v2.10
-    command:
-      - "--providers.docker=true"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-    ports:
-      - "443:443"
-    volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock"
-      - "./traefik:/etc/traefik"
+An in-process Python limiter is useful only when the host deliberately owns
+that lifecycle and topology. It consumes application resources before
+rejection, and process-local counters do not become distributed quotas merely
+because multiple workers are started.
 
-  erii-api:
-    image: erii:latest
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.erii.rule=Host(`erii-api.example.com`)"
-      - "traefik.http.routers.erii.entrypoints=websecure"
-      
-      # Rate limit middleware
-      - "traefik.http.middlewares.erii-ratelimit.ratelimit.average=100"
-      - "traefik.http.middlewares.erii-ratelimit.ratelimit.period=1m"
-      - "traefik.http.middlewares.erii-ratelimit.ratelimit.burst=20"
-      
-      - "traefik.http.routers.erii.middlewares=erii-ratelimit"
-```
+## Choosing limits
 
----
+Do not copy a fixed requests-per-minute table. Measure at least:
 
-## Cloud Provider Solutions
+- p50/p95/p99 latency for each business operation;
+- storage write and lock contention;
+- reliable-archival queue age and completion rate;
+- extractor/evaluator/provider concurrency and cost;
+- request-body size distribution;
+- failure and retry amplification;
+- one-process memory and file-descriptor usage.
 
-### AWS API Gateway
+Set separate host policies for inexpensive reads, Turn writes, archival, export,
+and import. A provider quota is an upstream ceiling, not an appropriate product
+limit by itself.
 
-If deploying behind AWS API Gateway:
+## Verification
 
-```yaml
-# serverless.yml
-functions:
-  erii:
-    handler: erii_lambda.handler
-    events:
-      - http:
-          path: /api/v1/{proxy+}
-          method: ANY
-          throttling:
-            maxRequestsPerSecond: 100
-            maxConcurrentRequests: 50
-```
-
-### Google Cloud Armor
-
-For GKE deployments:
-
-```yaml
-apiVersion: cloud.google.com/v1
-kind: BackendConfig
-metadata:
-  name: erii-backend-config
-spec:
-  securityPolicy:
-    name: "erii-rate-limit-policy"
-```
-
-Create rate limit policy:
-```bash
-gcloud compute security-policies create erii-rate-limit-policy \
-    --description "Rate limit for E.R.I.I. API"
-
-gcloud compute security-policies rules create 1000 \
-    --security-policy erii-rate-limit-policy \
-    --expression "true" \
-    --action "rate-based-ban" \
-    --rate-limit-threshold-count 1000 \
-    --rate-limit-threshold-interval-sec 60
-```
-
----
-
-## Application-Level Rate Limiting (Alternative)
-
-If you cannot use a reverse proxy, add rate limiting directly to FastAPI using `slowapi`:
+Test a protected business route, because `/api/v1/health` is intentionally
+outside the example limiter. Use only synthetic IDs and a temporary deployment
+key.
 
 ```bash
-pip install slowapi
+for i in $(seq 1 [REQUEST_COUNT]); do
+  curl --silent --output /dev/null --write-out "%{http_code}\n" \
+    -H "X-API-Key: <OWNER_KEY>" \
+    "https://HOST/api/v1/turns?agent_id=AGENT&user_id=USER"
+done | sort | uniq -c
 ```
 
-```python
-# erii/server/app.py
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+Verify all of the following instead of checking only that some 429 responses
+appear:
 
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+- requests within the measured limit reach the upstream successfully;
+- excess requests receive 429 and an expected `Retry-After` policy;
+- the health route follows its separately chosen policy;
+- invalid owner keys do not create unlimited independent buckets;
+- product users cannot consume each other's quota;
+- proxy restarts and multiple replicas have the intended counter semantics;
+- logs and metrics contain no owner key or transcript content.
 
-@app.post("/api/v1/recall")
-@limiter.limit("100/minute")  # 100 requests per minute per IP
-def api_recall(req: RecallRequest):
-    ...
-```
+## Monitoring and rollback
 
-**⚠️ Warning:** Application-level rate limiting consumes server resources for rejected requests. Reverse proxy is preferred.
+Monitor accepted/rejected request counts, upstream latency, 4xx/5xx rates,
+concurrency, queue age, storage capacity, and provider cost. Alert on sustained
+rejection or queue growth rather than a single burst. Keep a tested proxy
+configuration rollback and validate it without bypassing authentication.
 
----
+See also:
 
-## Monitoring
-
-### Nginx Logs
-
-Monitor rate limit hits:
-```bash
-tail -f /var/log/nginx/access.log | grep "429"
-```
-
-### Prometheus Metrics
-
-If using `nginx-prometheus-exporter`:
-```yaml
-- job_name: 'nginx'
-  static_configs:
-    - targets: ['localhost:9113']
-```
-
-Query rate limit hits:
-```promql
-rate(nginx_http_requests_total{status="429"}[5m])
-```
-
-### Alert Example
-
-```yaml
-# Prometheus alert
-groups:
-  - name: erii_rate_limit
-    rules:
-      - alert: HighRateLimitHits
-        expr: rate(nginx_http_requests_total{status="429"}[5m]) > 10
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High rate limit hits on E.R.I.I. API"
-          description: "{{ $value }} requests/sec being rate limited"
-```
-
----
-
-## Testing Rate Limits
-
-### Simple Test
-
-```bash
-# Send 150 requests (should hit 100/min limit)
-for i in {1..150}; do
-    curl -H "X-API-Key: your-key" \
-         https://erii-api.example.com/api/v1/health
-done
-```
-
-### Load Testing with `hey`
-
-```bash
-hey -n 1000 -c 10 -H "X-API-Key: your-key" \
-    https://erii-api.example.com/api/v1/recall
-```
-
-Expected: ~900 requests get HTTP 429.
-
----
-
-## Recommended Limits
-
-Based on E.R.I.I. use cases:
-
-| Endpoint | Recommended Limit | Reasoning |
-|----------|------------------|-----------|
-| `/api/v1/health` | No limit | Health checks |
-| `/api/v1/recall` | 100/minute | LLM-backed, expensive |
-| `/api/v1/remember` | 200/minute | Simple write operation |
-| `/api/v1/turns/*` | 500/minute | Core workflow |
-| `/api/v1/archivals/*` | 50/minute | Heavy database operation |
-
-**Adjust based on your hardware and LLM provider limits.**
-
----
-
-## LLM Provider Rate Limits
-
-Don't forget your LLM provider also has limits:
-
-| Provider | Default Limit | Notes |
-|----------|---------------|-------|
-| OpenAI | 3,500 RPM (GPT-4) | Per organization |
-| Anthropic | 50 RPM (Claude) | Per API key |
-| Azure OpenAI | Custom | Set in Azure Portal |
-
-**Your E.R.I.I. rate limit should be ≤ LLM provider limit.**
-
----
-
-## See Also
-
-- [SECURITY.md](../../SECURITY.md) - E.R.I.I. security model
-- [nginx rate limiting docs](https://www.nginx.com/blog/rate-limiting-nginx/)
-- [Caddy rate limit plugin](https://github.com/mholt/caddy-ratelimit)
-- [slowapi docs](https://github.com/laurentS/slowapi)
+- [Reference-server deployment guide](production.md)
+- [Security policy](../../SECURITY.md)
+- [Turn and REST errors](../api/turn-error-handling.md)

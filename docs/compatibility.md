@@ -2,18 +2,19 @@
 
 ## Python 与源码版本
 
-截至 2026-08-04，`0.4.0` 稳定源码里程碑要求 Python 3.11–3.14；`requires-python`
+截至 2026-08-11，`0.4.0` 稳定源码里程碑要求 Python 3.11–3.14；`requires-python`
 的下限是 3.11。当前工作流在 Linux 上覆盖 3.11–3.14，并在 Windows 上运行明确列出的
 存储、生命周期、构建产物和 Demo smoke；这不代表未列出的操作系统/解释器组合已经
 验证。`0.4.0b1` 已在
 `f6dca322379c4ea88320c69d752cab471d035e95` 接受为源码基线。历史 `0.4.0a8`
 仍是最后一个承诺 Python 3.9 的发布；不会回写它的 wheel、sdist、标签或文档来伪造
-新的兼容范围。后续 `0.x` 复现应固定 full commit SHA，正式包发布留到 `1.0`。
+新的兼容范围。`0.5.0a2` 已作为 alpha 包发布；后续源码复现仍应固定 full commit SHA，
+稳定包支持承诺留到 `1.0`。
 
 项目仍处于 `0.x`：补丁版本优先保持兼容，次版本可以有经过说明和迁移支持的受控
 变化。已弃用 API 原则上至少真实警告一个次版本。`remember()` 与接收 transient
 Source Turn 的 `adjudicate_relationship_candidates()` 在 b1 发出
-`DeprecationWarning`，计划于 v0.5 删除；应分别迁移到 Turn Recording +
+`DeprecationWarning`；删除延后到未来明确的不兼容里程碑。新集成应分别使用 Turn Recording +
 `archive_turn()`，以及 `adjudicate_turn_candidates()` /
 `process_relationship_turn()`。持久历史不会因 Python 入口弃用而删除。
 
@@ -26,11 +27,11 @@ Source Turn 的 `adjudicate_relationship_candidates()` 在 b1 发出
 
 | 格式/运行时 | 当前值 | 当前 Reader 接受 |
 | --- | --- | --- |
-| Package metadata | `0.5.0a1` source identity | 活跃 alpha 源码线；v0.4 仍是稳定维护线，最后一个历史发布是 `0.4.0a8` |
+| Package metadata | `0.5.0a3` source identity | 活跃 alpha 源码线；最新上传的 alpha 包是 `0.5.0a2` |
 | Python | `>=3.11`，测试至 `3.14` | 3.11–3.14 |
 | SQLite | schema `10` | `0`–`10` 可识别；旧 schema 不由 Storage 自动升级 |
 | FileStorage | format `2` | `legacy`, `1`, `2` |
-| MemoryPack | `0.5.0a1` | `0.1.0`, `0.2.0`, `0.4.0`, `0.4.0a2`–`0.4.0a8`, `0.5.0a1` |
+| MemoryPack | `0.5.0a3` | `0.1.0`, `0.2.0`, `0.4.0`, `0.4.0a2`–`0.4.0a8`, `0.5.0a1`–`0.5.0a3` |
 | Lifecycle Backup | `1` | `1` |
 | Lifecycle Plan | writer `3` | readers `1`, `2`, `3` |
 
@@ -59,12 +60,13 @@ schema、提取器 schema、评估器或关系策略版本。
   不含正文的内容指纹。
 - FileStorage、SQLite 与 MemoryPack 都可以创建 Lifecycle Backup v1，并恢复到同种
   live target 的缺失路径。
-- v0.4 Backup v1 中 producer-relative 的 FileStorage v1、SQLite v9、MemoryPack
-  `0.4.0a8` current/version/status 身份会先按冻结的旧版本目录校验，再按当前目录
-  重新分类并验证 payload；这也覆盖当时的 migration-required 来源以及 FileStorage/
-  SQLite empty 来源。未知 producer 目录或不匹配的 status/version 仍会失败关闭。
+- Backup v1 中 producer-relative 的 FileStorage v1、SQLite v9、MemoryPack
+  `0.4.0a8`、`0.5.0a1` 与 `0.5.0a2` current/version/status 身份会先按冻结的旧版本
+  目录校验，再按当前目录重新分类并验证 payload；这也覆盖当时的 migration-required
+  来源以及 FileStorage/SQLite empty 来源。这里的 `0.5.0a1` 身份也覆盖已发布
+  `0.5.0a2` 制品的实际 writer。未知 producer 目录或不匹配的 status/version 仍会失败关闭。
 - FileStorage `legacy → 2` 与 `1 → 2`、SQLite `6 → 10` 与 `9 → 10`，以及所有已声明
-  的旧可读 MemoryPack → `0.5.0a1` 有显式 `UpgradeRequest` 路线。
+  的旧可读 MemoryPack → `0.5.0a3` 有显式 `UpgradeRequest` 路线。
 - SQLite schema `0`–`5`、`7`、`8` 虽可由 inspector 识别，但当前版本没有为它们声明经过
   fixture 验证的 lifecycle upgrade 路线；不得把“可识别”写成“可升级”。
 - 当前 Storage 构造不会把旧 SQLite 作为隐式迁移入口；需要升级的 schema 失败关闭并
@@ -83,7 +85,7 @@ selector。严格 reader 仍按原字段和摘要规则读取/执行 v1 backup/r
 
 ## MemoryPack 权威兼容
 
-MemoryPack `0.5.0a1` 携带规范 Source Turn、Review/Delivery Record、归档 Artifact
+当前 MemoryPack `0.5.0a3` 携带规范 Source Turn、Review/Delivery Record、归档 Artifact
 Evidence 与 tombstone commitments、Relationship Event、Persona Reflection 和持久
 Relationship Processing Run；当前 reader 继续读取 `0.4.0a8`。现代 schema `"2"`
 产物在首次写入前必须闭合到精确

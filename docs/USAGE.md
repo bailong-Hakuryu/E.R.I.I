@@ -3,13 +3,13 @@
 **English** · [简体中文](USAGE_zh-CN.md)
 
 > The stable maintenance line is `0.4.x`; the current checkout is the active
-> `0.5.0a1` alpha source milestone. Durable v0.4 behavior starts from the
+> `0.5.0a3` alpha source milestone. Durable v0.4 behavior starts from the
 > accepted b1 baseline at
 > `f6dca322379c4ea88320c69d752cab471d035e95`. The project does not distribute a
 > package for every `0.x` source milestone. The last historical GitHub release
 > remains `v0.4.0a8`; use the documentation inside that tag for its Python 3.9
 > contract. Current durable identities are FileStorage format 2, SQLite schema
-> 10, and MemoryPack wire `0.5.0a1`. Pin a reviewed full commit SHA. Neither the
+> 10, and MemoryPack wire `0.5.0a3`. Pin a reviewed full commit SHA. Neither the
 > maintenance line nor the alpha checkout is a complete public-production
 > security boundary.
 
@@ -26,7 +26,7 @@ If you only want to get something running, complete the “Installation” and �
 
 [Start here](#four-rules-to-understand-first) · [Installation](#installation) · [Ten-minute example](#run-it-in-ten-minutes) · [Real chat loop](#next-step-integrate-one-real-conversation-turn) · [Turn Recording](#turn-recording-the-canonical-source-ledger) · [Reliable archival](#reliable-archival-derive-long-term-memory-from-a-source-turn) · [Automatic relationship processing](#automatic-relationship-processing-from-source-turn-to-event-reflection-and-consolidation) · [Core objects](#core-objects)
 
-[Model providers](#model-provider-selection) · [Consequences and tensions](#relationship-consequences-and-narrative-tension-050a1-alpha) · [Import a persona](#import-your-own-persona-markdown) · [Relationship premise](#choose-where-the-relationship-begins) · [Persona compilation](#advanced-compile-and-approve-a-structured-persona) · [Conversation memory](#save-ordinary-conversation-memories)
+[Model providers](#model-provider-selection) · [Consequences and tensions](#relationship-consequences-and-narrative-tension-050a3-alpha) · [Import a persona](#import-your-own-persona-markdown) · [Relationship premise](#choose-where-the-relationship-begins) · [Persona compilation](#advanced-compile-and-approve-a-structured-persona) · [Conversation memory](#save-ordinary-conversation-memories)
 
 [Relationship adjudication](#advanced-write-relationship-changes-separate-trusted-and-model-generated-input) · [Persona growth](#advanced-persona-growth-is-not-an-ordinary-relationship-event) · [Recall](#recall-memories) · [Promises and Open Loops](#promises-and-unfinished-matters)
 
@@ -65,14 +65,14 @@ If you only want to get something running, complete the “Installation” and �
 Real products normally combine canonical Turn Recording, reliable archival, and
 relationship processing. The deprecated `remember()` and transient
 `adjudicate_relationship_candidates()` compatibility entries emit
-`DeprecationWarning`. They remain present in `0.5.0a1`; removal is deferred to a
+`DeprecationWarning`. They remain present in `0.5.0a3`; removal is deferred to a
 later incompatible milestone, with no promised date.
 
 ## Installation
 
 ### Requirements
 
-- The active `0.5.0a1` source and stable `0.4.0` milestone require Python
+- The active `0.5.0a3` source and stable `0.4.0` milestone require Python
   3.11–3.14. The current workflow runs the
   declared matrix on Linux and named storage/build/Demo smoke paths on Windows;
   this is not a claim about unlisted platform combinations. The immutable
@@ -82,7 +82,7 @@ later incompatible milestone, with no promised date.
 
 ### Install the Current Version from GitHub
 
-Cloning `main` currently installs the active `0.5.0a1` alpha source milestone.
+Cloning `main` currently installs the active `0.5.0a3` alpha source milestone.
 Pin a reviewed full commit SHA in every long-lived deployment; select a reviewed
 `0.4.x` commit when the stable maintenance line is required. Publishing an
 `0.x` distribution is not a prerequisite for the next development stage:
@@ -148,7 +148,7 @@ Confirm that installation succeeded:
 python -c "import erii; print(erii.__version__)"
 ```
 
-The current source should print `0.5.0a1`.
+The current source should print `0.5.0a3`.
 
 For long-lived deployments, pin a verified commit or immutable release instead
 of allowing deployment scripts to follow `main` unconditionally.
@@ -357,7 +357,7 @@ This example passes `processing_channels=()` because it demonstrates only canoni
 
 The older `remember()` archival path and raw-Source-Turn relationship
 adjudication API remain compatibility interfaces. In b1 both emit
-`DeprecationWarning`; they are still present in `0.5.0a1`, with removal deferred
+`DeprecationWarning`; they are still present in `0.5.0a3`, with removal deferred
 to a later incompatible milestone. They do not let the
 kernel safely infer that two independent legacy calls describe the same
 interaction. New hosts must preserve the canonical Turn first.
@@ -370,7 +370,7 @@ If generation or continuity evaluation fails in a retryable way, leave the Turn 
 
 ## Model Provider Selection
 
-The active `0.5.0a1` core does not define durable Character Deliberation. A
+The active `0.5.0a3` core does not define durable Character Deliberation. A
 removable DeepSeek Continuity Review experiment exists under
 `../experiments/deepseek-continuity-review/`,
 but it is Experimental: it is not installed by the base package, does not
@@ -396,9 +396,10 @@ write persona, relationship, memory, or Turn state directly. See
 [ADR-0117](adr/0117-keep-character-deliberation-provider-neutral.md) and the
 [Roadmap](../ROADMAP.md) for the accepted direction and version order.
 
-## Relationship Consequences and Narrative Tension (`0.5.0a1` Alpha)
+## Relationship Consequences and Narrative Tension (`0.5.0a3` Alpha)
 
-`0.5.0a1` adds an explicit consequence journal; it does not infer “harm” from
+The active `0.5.0a3` source includes the explicit consequence journal introduced
+in `0.5.0a1`; it does not infer “harm” from
 sentiment or equate continuity with harmlessness. The source gate requires the
 exact final Agent message from a completed, reviewed, `shown` Turn whose verdict
 is `aligned` or `supported_new_choice`, plus its accepted Relationship Event.
@@ -831,7 +832,7 @@ It does not export pending/processing work, the raw idempotency key, detailed at
 
 `remember()` still supports existing `llm=` / `BaseLLMAdapter` integrations and
 the old persistent task queue. It emits `DeprecationWarning` and remains in
-`0.5.0a1`; removal is deferred to a later incompatible milestone. It does not
+`0.5.0a3`; removal is deferred to a later incompatible milestone. It does not
 create a canonical Turn Record,
 reliable receipt, structured provenance, or atomic archival batch. New
 integrations should use:
@@ -1503,7 +1504,7 @@ For a more complete runnable example, see [`examples/07_structured_persona_recal
 ## Save Ordinary Conversation Memories
 
 This section documents migration of an old integration. `remember()` emits
-`DeprecationWarning` and remains present in `0.5.0a1`; removal is deferred to a
+`DeprecationWarning` and remains present in `0.5.0a3`; removal is deferred to a
 later incompatible milestone. New integrations
 must use canonical Turn Recording plus the `MemoryExtractorV1` /
 `archive_turn()` flow described in
@@ -1948,7 +1949,7 @@ In `0.4.0a7`, relationship processing runs, explicit zero-result decisions, form
 
 On `0.4.0b1`, the legacy `nodes.json`, `core_memory.json`, and `timeline.json` paths also use flush, fsync, and atomic replacement. A missing file retains its documented empty/default meaning, but malformed JSON, an invalid record, or an I/O failure raises `StorageIntegrityError` instead of pretending that the data is empty. A failed publication raises `StorageWriteError` and leaves the previous valid document in place. Do not catch either error and immediately write an empty replacement; preserve the affected files for inspection or the explicit v0.4 lifecycle migration/recovery tooling.
 
-The current `0.5.0a1` FileStorage identity is format 2. It adds the durable
+The current `0.5.0a3` FileStorage identity is format 2. It adds the durable
 Relationship Consequence and Narrative Tension Link collections. Format 1 is a
 readable historical/upgrade source, not the current write identity.
 
@@ -1986,7 +1987,7 @@ upgrade route.
 
 On `0.4.0b1`, malformed or identity-inconsistent SQLite MemoryNode and structured Timeline rows raise `StorageIntegrityError`. A collection read never skips a damaged row and returns a misleading partial result.
 
-The current `0.5.0a1` SQLite identity is schema 10. It adds
+The current `0.5.0a3` SQLite identity is schema 10. It adds
 `relationship_consequences` and `narrative_tension_links`; schema 9 is a
 supported upgrade source, not the current write identity.
 
@@ -1996,7 +1997,7 @@ FileStorage remains the default in the current alpha source milestone. To select
 
 `0.4.0b1` introduced zero-write inspection. The current catalog retains that
 contract and recognizes current FileStorage v2, SQLite v10, and MemoryPack
-`0.5.0a1` before migration code is allowed to touch them:
+`0.5.0a3` before migration code is allowed to touch them:
 
 ```python
 from erii.data_lifecycle import (
@@ -2138,11 +2139,11 @@ operations.
 
 For historical reference, the accepted b1 baseline supported FileStorage
 `legacy → 1`, SQLite `6 → 9`, and declared-readable older MemoryPacks to
-`0.4.0a8`. The current `0.5.0a1` lifecycle targets exactly:
+`0.4.0a8`. The current `0.5.0a3` lifecycle targets exactly:
 
 - FileStorage `legacy | 1 → 2`;
 - SQLite schema `6 | 9 → 10`;
-- every declared-readable older MemoryPack → `0.5.0a1`.
+- every declared-readable older MemoryPack → `0.5.0a3`.
 
 Each upgrade requires a missing side-by-side destination and a separate missing
 backup destination. Source and backup are preserved. “Readable” does not imply a
@@ -2244,7 +2245,7 @@ engine.import_memory(
 )
 ```
 
-Current MemoryPack wire `0.5.0a1` carries all of the v0.4 portable history plus:
+Current MemoryPack wire `0.5.0a3` carries all of the v0.4 portable history plus:
 
 - Core Memory, MemoryNodes, and the legacy Experiential Timeline;
 - provenance-complete structured `timeline_entries`;
@@ -2260,9 +2261,9 @@ Current MemoryPack wire `0.5.0a1` carries all of the v0.4 portable history plus:
 - root `relationship_consequences` and `narrative_tension_links`, preserving the
   source-bound consequence journal and deterministic tension projection inputs.
 
-The `0.5.0a1` reader accepts declared-readable old packs, including
+The `0.5.0a3` reader accepts declared-readable old packs, including
 `0.4.0a8`; missing consequence/tension collections are interpreted as empty.
-Compatibility is one-way: the strict `0.4.0a8` reader rejects a `0.5.0a1` Pack's
+Compatibility is one-way: the strict `0.4.0a8` reader rejects a `0.5.0a3` Pack's
 new root fields. Do not describe this as bidirectional wire compatibility, and
 do not relabel a new Pack as an old version.
 

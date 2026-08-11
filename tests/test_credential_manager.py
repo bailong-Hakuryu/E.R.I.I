@@ -6,7 +6,7 @@ Validates that the credential manager properly:
 - Redacts keys in logs and output
 - Detects potential key leakage
 
-Updated: 2026-08-08 for v0.5.0a2
+Updated: 2026-08-11 for v0.5.0a3
 """
 
 import logging
@@ -20,12 +20,18 @@ from erii.security.credential_manager import (
 )
 
 
+def _synthetic_key(prefix: str = "sk-", fill: str = "1", length: int = 24) -> str:
+    """Build a credential-shaped fixture without committing one literal."""
+
+    return prefix + (fill * length)
+
+
 class TestCredentialManager:
     """Test suite for CredentialManager."""
 
     def test_get_api_key_success(self, monkeypatch):
         """Test successful API key retrieval from environment."""
-        test_key = "sk-test1234567890abcdef"
+        test_key = _synthetic_key()
         monkeypatch.setenv("OPENAI_API_KEY", test_key)
 
         key = CredentialManager.get_api_key("openai")
@@ -66,7 +72,7 @@ class TestCredentialManager:
 
     def test_get_api_key_whitespace_stripped(self, monkeypatch):
         """Test that whitespace is stripped from keys."""
-        test_key = "  sk-test1234567890  "
+        test_key = f"  {_synthetic_key(length=16)}  "
         monkeypatch.setenv("WHITESPACE_KEY", test_key)
 
         key = CredentialManager.get_api_key("whitespace", env_var="WHITESPACE_KEY")
@@ -76,7 +82,7 @@ class TestCredentialManager:
 
     def test_redact_key(self):
         """Test key redaction for safe logging."""
-        key = "sk-1234567890abcdefghijklmnop"
+        key = _synthetic_key()
         redacted = CredentialManager.redact_key(key)
         assert redacted == "sk-1***"
         assert "567890" not in redacted
@@ -84,7 +90,7 @@ class TestCredentialManager:
 
     def test_redact_key_custom_visible_chars(self):
         """Test key redaction with custom visible character count."""
-        key = "api-key-1234567890"
+        key = _synthetic_key(prefix="api-key-", length=10)
         redacted = CredentialManager.redact_key(key, visible_chars=8)
         assert redacted == "api-key-***"
 
@@ -99,9 +105,9 @@ class TestCredentialManager:
 
     def test_get_key_fingerprint(self):
         """Test stable fingerprint generation."""
-        key1 = "sk-1234567890abcdef"
-        key2 = "sk-1234567890abcdef"
-        key3 = "sk-different-key-000"
+        key1 = _synthetic_key(fill="1")
+        key2 = _synthetic_key(fill="1")
+        key3 = _synthetic_key(fill="2")
 
         fp1 = CredentialManager.get_key_fingerprint(key1)
         fp2 = CredentialManager.get_key_fingerprint(key2)
@@ -118,7 +124,6 @@ class TestCredentialManager:
         """Test fingerprint of empty key."""
         assert CredentialManager.get_key_fingerprint("") == "<no-key>"
 
-    @pytest.mark.skip(reason="CI infrastructure issue: phantom test case appears despite correct source code")
     def test_key_leakage_detection_with_valid_patterns(self):
         """Test detection of keys matching KEY_PATTERN requirements.
 
@@ -126,18 +131,21 @@ class TestCredentialManager:
         - A recognized prefix (sk-, token-, key-, api-) followed by alphanumeric
         - Or a string of 32+ characters
 
-        NOTE: This test passes locally but consistently fails in CI with a phantom
-        test case assert('***') that does not exist in the source. The issue persists
-        despite: cache clearing, checkout forcing, pip cache disabling, test renaming,
-        and verification that GitHub repository has correct code. Likely a GitHub Actions
-        runner-level caching bug. Test logic is verified correct through other test cases.
         """
         # Should detect - recognized prefixes
-        assert len(CredentialManager.detect_key_leakage('api_key="sk-1234567890abcdef"')) > 0
-        assert len(CredentialManager.detect_key_leakage('token: token-abc1234567890def')) > 0
-        assert len(CredentialManager.detect_key_leakage('SECRET=key-xyz9876543210fed')) > 0
-        assert len(CredentialManager.detect_key_leakage('password="p@ssw0rd12345678901234567890123"')) > 0
-        assert len(CredentialManager.detect_key_leakage('credential: "api-123456789012"')) > 0
+        provider_key = _synthetic_key()
+        token = _synthetic_key(prefix="token-", fill="a")
+        secret = _synthetic_key(prefix="key-", fill="b")
+        password = "p@ssw0rd" + ("1" * 24)
+        credential = _synthetic_key(prefix="api-", fill="c")
+        samples = (
+            f'api_key="{provider_key}"',
+            f"token: {token}",
+            f"SECRET={secret}",
+            f'password="{password}"',
+            f'credential: "{credential}"',
+        )
+        assert all(CredentialManager.detect_key_leakage(sample) for sample in samples)
 
         # Should not detect - too short or no prefix
         assert len(CredentialManager.detect_key_leakage('Just normal text here')) == 0
@@ -157,22 +165,18 @@ class TestCredentialManager:
 
     def test_validate_no_literal_keys_detects_violation(self):
         """Test validation fails for code with literal keys."""
-        dirty_code = """
-        api_key = "sk-1234567890abcdefghijklmnop"
-        """
+        dirty_code = f'api_key = "{_synthetic_key()}"'
         with pytest.raises(CredentialError, match="Potential API key leakage"):
             CredentialManager.validate_no_literal_keys(dirty_code, "bad_file.py")
 
-    def test_validate_no_literal_keys_skips_test_files(self):
-        """Test that validation skips test files."""
-        code_with_test_key = """
-        test_api_key = "sk-test1234567890"
-        """
-        # Should not raise for test files
-        CredentialManager.validate_no_literal_keys(
-            code_with_test_key,
-            "test_something.py"
-        )
+    def test_validate_no_literal_keys_checks_test_files(self):
+        """Test fixtures follow the same literal-secret rule as source files."""
+        code_with_test_key = f'test_api_key = "{_synthetic_key()}"'
+        with pytest.raises(CredentialError, match="Potential API key leakage"):
+            CredentialManager.validate_no_literal_keys(
+                code_with_test_key,
+                "test_something.py",
+            )
 
 
 class TestRedactingFormatter:
@@ -181,36 +185,39 @@ class TestRedactingFormatter:
     def test_redacting_formatter_basic(self):
         """Test that formatter redacts keys in log messages."""
         formatter = RedactingFormatter('%(message)s')
+        key = _synthetic_key()
         record = logging.LogRecord(
             name="test",
             level=logging.INFO,
             pathname="",
             lineno=0,
-            msg='Using api_key="sk-1234567890abcdef"',
+            msg=f'Using api_key="{key}"',
             args=(),
             exc_info=None
         )
 
         formatted = formatter.format(record)
-        assert "sk-1234567890abcdef" not in formatted
+        assert key not in formatted
         assert "sk-1***" in formatted or "***" in formatted
 
     def test_redacting_formatter_multiple_keys(self):
         """Test redaction of multiple keys in one message."""
         formatter = RedactingFormatter('%(message)s')
+        provider_key = _synthetic_key()
+        token = _synthetic_key(prefix="token-", fill="a")
         record = logging.LogRecord(
             name="test",
             level=logging.INFO,
             pathname="",
             lineno=0,
-            msg='Keys: api_key="sk-abc123456789" token="token-xyz987654321"',
+            msg=f'Keys: api_key="{provider_key}" token="{token}"',
             args=(),
             exc_info=None
         )
 
         formatted = formatter.format(record)
-        assert "sk-abc123456789" not in formatted
-        assert "token-xyz987654321" not in formatted
+        assert provider_key not in formatted
+        assert token not in formatted
         assert "***" in formatted
 
     def test_redacting_formatter_preserves_normal_text(self):
@@ -270,7 +277,7 @@ class TestIntegrationScenarios:
     def test_full_workflow_openai_key(self, monkeypatch):
         """Test complete workflow: load, use, log, redact."""
         # Setup
-        test_key = "sk-proj-1234567890abcdefghijklmnopqrstuvwxyz"
+        test_key = _synthetic_key(prefix="sk-proj-", fill="a", length=32)
         monkeypatch.setenv("OPENAI_API_KEY", test_key)
 
         # Load key
@@ -290,9 +297,9 @@ class TestIntegrationScenarios:
     def test_multi_provider_keys(self, monkeypatch):
         """Test loading keys for multiple providers."""
         providers = {
-            "openai": "sk-openai-key-1234567890",
-            "deepseek": "sk-deepseek-key-0987654321",
-            "gemini": "AIza-gemini-key-abcdef123456",
+            "openai": _synthetic_key(fill="a"),
+            "deepseek": _synthetic_key(fill="b"),
+            "gemini": _synthetic_key(prefix="AIza", fill="c"),
         }
 
         for provider, key in providers.items():

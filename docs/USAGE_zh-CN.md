@@ -2,12 +2,12 @@
 
 **简体中文** · [English](USAGE.md)
 
-> `0.4.x` 是稳定维护线；当前检出源码是活跃的 `0.5.0a1` alpha 里程碑。v0.4
+> `0.4.x` 是稳定维护线；当前检出源码是活跃的 `0.5.0a3` alpha 里程碑。v0.4
 > 持久语义来自已接受 b1 基线
 > `f6dca322379c4ea88320c69d752cab471d035e95`。项目不计划为每个 `0.x` 源码里程碑
 > 单独发布包。GitHub 上最后一个历史发布仍是 `v0.4.0a8`，其 Python 3.9 和兼容契约
 > 以标签内文档为准。当前持久格式是 FileStorage v2、SQLite schema v10 和 MemoryPack
-> wire `0.5.0a1`。复现源码请固定经过验证的 full commit SHA；维护线与 alpha 源码都不是
+> wire `0.5.0a3`。复现源码请固定经过验证的 full commit SHA；维护线与 alpha 源码都不是
 > 可直接公开部署的完整产品安全边界。
 
 E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的角色连续性与长期记忆
@@ -20,7 +20,7 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的角�
 
 [开始路径](#你应该从哪条路径开始) · [安装](#安装) ·
 [模型 Provider](#模型-provider-选择) · [数据生命周期](#数据生命周期v04-基线与当前-alpha) ·
-[关系后果与张力](#relationship-consequence-与-narrative-tension050a1-alpha) ·
+[关系后果与张力](#relationship-consequence-与-narrative-tension050a3-alpha) ·
 [当前限制](#当前限制)
 
 ## 先理解四条规则
@@ -55,14 +55,14 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的角�
 
 实际产品通常组合使用 Turn Recording、可靠归档和关系处理。已弃用的
 `remember()` 与 transient `adjudicate_relationship_candidates()` 在 b1 会发出
-`DeprecationWarning`。它们在 `0.5.0a1` 仍然存在；删除延后到未来不兼容里程碑，
+`DeprecationWarning`。它们在 `0.5.0a3` 仍然存在；删除延后到未来不兼容里程碑，
 尚无承诺日期。
 
 ## 安装
 
 ### 环境要求
 
-- 活跃 `0.5.0a1` 源码和稳定 `0.4.0` 里程碑都要求 Python 3.11–3.14。当前工作流在
+- 活跃 `0.5.0a3` 源码和稳定 `0.4.0` 里程碑都要求 Python 3.11–3.14。当前工作流在
   Linux 上运行声明矩阵，并在
   Windows 上运行明确列出的存储、构建与 Demo smoke；这不代表未列出的平台组合已经
   验证。不可移动的 `v0.4.0a8` 是最后一个承诺支持 Python 3.9 的版本；
@@ -71,7 +71,7 @@ E.R.I.I. 是一个给情感型 Agent、虚拟角色和叙事应用使用的角�
 
 ### 从 GitHub 安装当前版本
 
-克隆 `main` 当前得到活跃的 `0.5.0a1` alpha 源码。长期部署必须固定经过验证的 full
+克隆 `main` 当前得到活跃的 `0.5.0a3` alpha 源码。长期部署必须固定经过验证的 full
 commit SHA；需要稳定维护线时应选择经过审查的 `0.4.x` commit。项目不会把创建 `0.x`
 分发包作为下一阶段前提：
 
@@ -120,7 +120,7 @@ python -m pip install -e ".[dev]"
 python -c "import erii; print(erii.__version__)"
 ```
 
-当前源码应输出 `0.5.0a1`。
+当前源码应输出 `0.5.0a3`。
 
 长期环境应固定经过验证的 commit 或不可移动 release，不要让部署脚本无条件跟随
 `main`。
@@ -337,7 +337,7 @@ def run_turn(engine, chat_model, conversation_messages, user_text):
 
 ## 模型 Provider 选择
 
-活跃 `0.5.0a1` 内核没有冻结持久 Character Deliberation。
+活跃 `0.5.0a3` 内核没有冻结持久 Character Deliberation。
 `../experiments/deepseek-continuity-review/` 中存在可整体拆卸的 DeepSeek Continuity
 Review 实验，但它属于 Experimental：基础安装不会安装它，
 现有小样本记录也不证明生产准确率、成本、延迟、SLA 或部署就绪。删除该实验不影响核心
@@ -357,9 +357,10 @@ DeepSeek、其他远程模型和本地模型。Provider 选择由宿主负责，
 [ADR-0117](adr/0117-keep-character-deliberation-provider-neutral.md)与
 [Roadmap](../ROADMAP.md)。
 
-## Relationship Consequence 与 Narrative Tension（`0.5.0a1` Alpha）
+## Relationship Consequence 与 Narrative Tension（`0.5.0a3` Alpha）
 
-`0.5.0a1` 增加显式后果账本；它不会从情绪正负自动推断“伤害”，也不会把“符合角色”
+活跃的 `0.5.0a3` 源码包含由 `0.5.0a1` 引入的显式后果账本；它不会从情绪正负自动推断
+“伤害”，也不会把“符合角色”
 等同于“没有伤害”。来源门槛要求同一关系中 completed、reviewed、以 `shown` 交付的
 精确最终 Agent 消息，连续性结论必须是 `aligned | supported_new_choice`，并且已有对应
 accepted Relationship Event。
@@ -787,7 +788,7 @@ MemoryPack `0.4.0a8` 携带的可靠归档部分包括：
 ### 旧 `remember()` 继续兼容
 
 `remember()` 仍支持既有 `llm=` / `BaseLLMAdapter` 集成和旧持久任务队列，但 b1
-会发出 `DeprecationWarning`；该入口在 `0.5.0a1` 仍然存在，删除延后到未来不兼容
+会发出 `DeprecationWarning`；该入口在 `0.5.0a3` 仍然存在，删除延后到未来不兼容
 里程碑。它不会创建规范
 Turn Record、可靠回执、结构化来源或现代原子归档批次。新集成应采用：
 
@@ -1457,7 +1458,7 @@ result = engine.recall_structured(
 
 ## 保存普通对话记忆
 
-本节只用于迁移旧集成。`remember()` 会发出 `DeprecationWarning`，在 `0.5.0a1` 仍然
+本节只用于迁移旧集成。`remember()` 会发出 `DeprecationWarning`，在 `0.5.0a3` 仍然
 存在，删除延后到未来不兼容里程碑。新接入必须使用规范 Turn Recording 和
 [可靠归档](#可靠归档从-source-turn-生成长期记忆)中的
 `MemoryExtractorV1` / `archive_turn()` 流程。旧调用会创建持久归档任务：
@@ -1896,7 +1897,7 @@ with ERIIEngine(storage_dir="./data/erii-memory") as engine:
 
 从 `0.4.0b1` 开始，旧式 `nodes.json`、`core_memory.json` 与 `timeline.json` 也通过 flush、fsync 和原子替换写入。文件不存在仍保留原有的空值/默认语义；但 JSON 损坏、记录非法或读取失败会抛出 `StorageIntegrityError`，不再伪装成“没有数据”。发布失败会抛出 `StorageWriteError`，此前有效文件保持不变。不要捕获这些错误后立即写入空集合；应保留现场，交给检查或后续显式迁移/恢复工具处理。
 
-当前 `0.5.0a1` 的 FileStorage 身份是 format 2，新增持久
+当前 `0.5.0a3` 的 FileStorage 身份是 format 2，新增持久
 Relationship Consequence 与 Narrative Tension Link 集合。format 1 是可读的历史/升级
 来源，不是当前写入身份。
 
@@ -1932,7 +1933,7 @@ with ERIIEngine(storage_driver=storage) as engine:
 
 从 `0.4.0b1` 开始，损坏或身份字段不一致的 SQLite MemoryNode 与结构化 Timeline 行会抛出 `StorageIntegrityError`；集合读取不会再跳过损坏行后返回具有误导性的部分结果。
 
-当前 `0.5.0a1` 的 SQLite 身份是 schema 10，新增 `relationship_consequences` 与
+当前 `0.5.0a3` 的 SQLite 身份是 schema 10，新增 `relationship_consequences` 与
 `narrative_tension_links`；schema 9 是支持的升级来源，不是当前写入身份。
 
 当前 alpha 源码仍以 FileStorage 为默认；选择 SQLite 必须显式传入 `SQLiteStorage`。两者都不是多租户授权边界，也都默认以明文保存数据。
@@ -1940,7 +1941,7 @@ with ERIIEngine(storage_driver=storage) as engine:
 ## 数据生命周期：v0.4 基线与当前 Alpha
 
 `0.4.0b1` 首次建立零写入检查。当前目录继续遵守该契约，并能在迁移代码接触数据前
-识别 current FileStorage v2、SQLite v10 与 MemoryPack `0.5.0a1`：
+识别 current FileStorage v2、SQLite v10 与 MemoryPack `0.5.0a3`：
 
 ```python
 from erii.data_lifecycle import (
@@ -2066,11 +2067,11 @@ restore_report = lifecycle.execute(restore_plan)
 ### 升级、fresh import、删除与重建
 
 作为明确的历史记录，b1 基线当时支持 FileStorage `legacy → 1`、SQLite `6 → 9`，以及
-declared-readable 旧 MemoryPack → `0.4.0a8`。当前 `0.5.0a1` lifecycle 的最终目标是：
+declared-readable 旧 MemoryPack → `0.4.0a8`。当前 `0.5.0a3` lifecycle 的最终目标是：
 
 - FileStorage `legacy | 1 → 2`；
 - SQLite schema `6 | 9 → 10`；
-- 所有 declared-readable 旧 MemoryPack → `0.5.0a1`。
+- 所有 declared-readable 旧 MemoryPack → `0.5.0a3`。
 
 升级要求缺失的并排目标和独立的缺失备份目标，并保留来源与备份。“可识别/可读”不
 代表已经有 SQLite 升级策略；schema `0–5`、`7`、`8` 仍不是当前升级来源。
@@ -2154,7 +2155,7 @@ engine.import_memory(
 )
 ```
 
-当前 MemoryPack wire `0.5.0a1` 携带全部 v0.4 可携带历史，并新增：
+当前 MemoryPack wire `0.5.0a3` 携带全部 v0.4 可携带历史，并新增：
 
 - Core Memory、MemoryNode 和旧式体验时间线；
 - 来源完整的结构化 `timeline_entries`；
@@ -2170,9 +2171,9 @@ engine.import_memory(
 - 根级 `relationship_consequences` 与 `narrative_tension_links`，用于携带有来源的后果
   账本和确定性张力投影输入。
 
-`0.5.0a1` reader 可以读取所有 declared-readable 旧 Pack，包括 `0.4.0a8`；缺少后果/
+`0.5.0a3` reader 可以读取所有 declared-readable 旧 Pack，包括 `0.4.0a8`；缺少后果/
 张力集合时按空集合解释。兼容是单向的：严格的 `0.4.0a8` reader 会因新根字段拒绝
-`0.5.0a1` Pack。不能把它表述成双向 wire 兼容，也不能把新 Pack 重新标成旧版本。
+`0.5.0a3` Pack。不能把它表述成双向 wire 兼容，也不能把新 Pack 重新标成旧版本。
 
 处理账本不会复制完整 Prompt、人设原文、Source Transcript 或模型推理。规范原文仍只在 `turn_records` 中；run 保存有界冻结决定、direct-event/adjudication journal 的两个高水位、完整基线指纹和迁移后续跑所需身份。导出与精确身份导入在读取或写入 Event、裁决、run 与反思时会持有与协调器相同的关系处理 guard，因此既不会捕获半完成阶段，也不会让迁移日志前缀与在线处理交错。导入不会用 `recorded_at` 猜测裁决前史，而是按冻结 journal prefix 使用生产裁决器重放 `relationship-processing-v1` frozen candidate；因果导入只比较两本 journal 的队首，保持各自 FIFO。在写入普通记忆字段前，它会精确预检完整不可变 Relationship/Blueprint 身份、Source Turn、Timeline 稳定 ID、规范 run 身份与版本、目标已有裁决、目标与 incoming 合并后的时间生命周期、可重放的四种处理回执/Event，以及每条正式反思的唯一 accepted 来源与其 Evidence、baseline、关系绑定 Manifest、已批准成长和真正先前历史。对于每项现代归档产物，导入先重算规范不可变提交载荷指纹并匹配墓碑 commitment，再从 Pack 中的 Source Turn 重算消息角色、消息哈希、Unicode 范围与 Evidence ID。每个 run 的基线元数据为常量大小，不会复制不断增长的完整关系历史。
 

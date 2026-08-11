@@ -25,7 +25,7 @@ server_module = importlib.import_module("erii.server.app")
 AGENT_ID = "agent-a8-portable"
 USER_ID = "user-a8-portable"
 TURN_ID = "turn-a8-portable"
-TEST_API_KEY = "test-a8-portable-key-1234567890-abcd"
+TEST_API_KEY = "test-a8-portable-" + ("x" * 32)
 
 
 def _visible_exchange_delivery_exception():

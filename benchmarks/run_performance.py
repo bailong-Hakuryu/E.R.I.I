@@ -1,26 +1,20 @@
-"""Performance benchmark suite for E.R.I.I. v0.5.0a2+
+"""Local micro-benchmark suite for the active E.R.I.I. source checkout.
 
 Measures performance metrics for key operations:
 - Credential management
 - Logging operations
 - Error handling
 - Storage operations
-- Recall operations
 """
 
-import sys
-import os
-import time
-import tempfile
-from pathlib import Path
-from typing import Dict, Any
+import argparse
 import json
-
-# Set UTF-8 encoding for Windows console
-if sys.platform == 'win32':
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+import os
+from pathlib import Path
+import sys
+import tempfile
+import time
+from typing import Any, Dict
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -33,8 +27,10 @@ def benchmark_credential_management() -> Dict[str, Any]:
     results = {}
     iterations = 1000
 
-    # Setup test key
-    os.environ['BENCHMARK_API_KEY'] = 'sk-test-key-1234567890abcdef'
+    # Build a credential-shaped fixture without committing one literal.
+    test_key = "sk-" + ("a" * 32)
+    original_value = os.environ.get("BENCHMARK_API_KEY")
+    os.environ['BENCHMARK_API_KEY'] = test_key
 
     try:
         # Test 1: Key loading
@@ -45,7 +41,6 @@ def benchmark_credential_management() -> Dict[str, Any]:
         results['key_loading_ms'] = (duration / iterations) * 1000
 
         # Test 2: Key redaction
-        test_key = 'sk-1234567890abcdefghijklmnop'
         start = time.perf_counter()
         for _ in range(iterations):
             CredentialManager.redact_key(test_key)
@@ -60,7 +55,7 @@ def benchmark_credential_management() -> Dict[str, Any]:
         results['key_fingerprint_ms'] = (duration / iterations) * 1000
 
         # Test 4: Leakage detection
-        test_text = 'api_key="sk-1234567890abcdef" token="xyz123"'
+        test_text = f'api_key="{test_key}" token="xyz123"'
         start = time.perf_counter()
         for _ in range(iterations):
             CredentialManager.detect_key_leakage(test_text)
@@ -68,7 +63,10 @@ def benchmark_credential_management() -> Dict[str, Any]:
         results['leakage_detection_ms'] = (duration / iterations) * 1000
 
     finally:
-        del os.environ['BENCHMARK_API_KEY']
+        if original_value is None:
+            os.environ.pop("BENCHMARK_API_KEY", None)
+        else:
+            os.environ["BENCHMARK_API_KEY"] = original_value
 
     return results
 
@@ -174,35 +172,31 @@ def benchmark_error_handling() -> Dict[str, Any]:
 
 
 def benchmark_storage_operations() -> Dict[str, Any]:
-    """Benchmark basic storage operations."""
+    """Benchmark verified core-memory write/read cycles."""
     from erii.storage import FileStorage, SQLiteStorage
 
     results = {}
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # FileStorage benchmark
-        _ = FileStorage(root_dir=Path(tmpdir) / 'file_storage')
-
-        # Test: Simple write/read cycle (using memory nodes as proxy)
         iterations = 100
-        _ = {'test': 'data' * 100}  # ~400 bytes
-
-        start = time.perf_counter()
-        for i in range(iterations):
-            # Simulate storage operation
-            pass
-        duration = time.perf_counter() - start
-        results['file_storage_cycle_ms'] = (duration / iterations) * 1000 if iterations > 0 else 0
-
-        # SQLiteStorage benchmark
-        _ = SQLiteStorage(db_path=Path(tmpdir) / 'test.db')
-
-        start = time.perf_counter()
-        for i in range(iterations):
-            # Simulate storage operation
-            pass
-        duration = time.perf_counter() - start
-        results['sqlite_storage_cycle_ms'] = (duration / iterations) * 1000 if iterations > 0 else 0
+        stores = {
+            'file_storage_cycle_ms': FileStorage(
+                root_dir=Path(tmpdir) / 'file_storage'
+            ),
+            'sqlite_storage_cycle_ms': SQLiteStorage(
+                db_path=Path(tmpdir) / 'test.db'
+            ),
+        }
+        for metric, storage in stores.items():
+            start = time.perf_counter()
+            for index in range(iterations):
+                expected = f"benchmark-payload-{index}-" + ("x" * 256)
+                storage.save_core_memory("benchmark-agent", "benchmark-user", expected)
+                actual = storage.get_core_memory("benchmark-agent", "benchmark-user")
+                if actual != expected:
+                    raise RuntimeError(f"{metric} read-after-write verification failed")
+            duration = time.perf_counter() - start
+            results[metric] = (duration / iterations) * 1000
 
     return results
 
@@ -213,8 +207,10 @@ def run_all_benchmarks() -> Dict[str, Any]:
     print("E.R.I.I. Performance Benchmark Suite")
     print("=" * 60)
 
+    from erii import __version__
+
     results = {
-        'version': 'v0.5.0a2',
+        'version': __version__,
         'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
         'benchmarks': {}
     }
@@ -222,22 +218,22 @@ def run_all_benchmarks() -> Dict[str, Any]:
     # Credential management
     print("\n[1/4] Running credential management benchmarks...")
     results['benchmarks']['credential_management'] = benchmark_credential_management()
-    print("  ✓ Completed")
+    print("  PASS")
 
     # Logging
     print("\n[2/4] Running logging benchmarks...")
     results['benchmarks']['logging'] = benchmark_logging()
-    print("  ✓ Completed")
+    print("  PASS")
 
     # Error handling
     print("\n[3/4] Running error handling benchmarks...")
     results['benchmarks']['error_handling'] = benchmark_error_handling()
-    print("  ✓ Completed")
+    print("  PASS")
 
     # Storage operations
     print("\n[4/4] Running storage operation benchmarks...")
     results['benchmarks']['storage'] = benchmark_storage_operations()
-    print("  ✓ Completed")
+    print("  PASS")
 
     return results
 
@@ -264,22 +260,27 @@ def save_results(results: Dict[str, Any], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
-    print(f"\n✓ Results saved to {output_path}")
+    print(f"\nResults saved to {output_path}")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="optional JSON output path; omitted by default to avoid modifying the tree",
+    )
+    args = parser.parse_args(argv)
     try:
         results = run_all_benchmarks()
         print_results(results)
-
-        # Save to baselines directory
-        baseline_path = Path(__file__).parent / 'baselines' / 'v0.5.0a2-performance.json'
-        save_results(results, baseline_path)
+        if args.output is not None:
+            save_results(results, args.output)
 
         return 0
     except Exception as e:
-        print(f"\n✗ Benchmark failed: {e}")
+        print(f"\nBenchmark failed: {e}")
         import traceback
         traceback.print_exc()
         return 1

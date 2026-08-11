@@ -2,7 +2,7 @@
 
 ## 概述
 
-E.R.I.I. v0.5.0a2+ 实现了安全的 API 密钥管理系统，遵循安全最佳实践：
+E.R.I.I. v0.5.0a3 使用显式的凭据加载与日志脱敏边界：
 
 - ✅ **仅从环境变量加载密钥**
 - ✅ **日志中自动脱敏密钥**
@@ -17,19 +17,19 @@ E.R.I.I. v0.5.0a2+ 实现了安全的 API 密钥管理系统，遵循安全最�
 
 ```bash
 # Linux/macOS
-export OPENAI_API_KEY="sk-your-actual-key-here"
-export DEEPSEEK_API_KEY="sk-your-deepseek-key"
-export GEMINI_API_KEY="your-gemini-key"
+export OPENAI_API_KEY="<OPENAI_API_KEY>"
+export DEEPSEEK_API_KEY="<DEEPSEEK_API_KEY>"
+export GEMINI_API_KEY="<GEMINI_API_KEY>"
 
 # Windows (PowerShell)
-$env:OPENAI_API_KEY="sk-your-actual-key-here"
-$env:DEEPSEEK_API_KEY="sk-your-deepseek-key"
-$env:GEMINI_API_KEY="your-gemini-key"
+$env:OPENAI_API_KEY="<OPENAI_API_KEY>"
+$env:DEEPSEEK_API_KEY="<DEEPSEEK_API_KEY>"
+$env:GEMINI_API_KEY="<GEMINI_API_KEY>"
 
 # Windows (CMD)
-set OPENAI_API_KEY=sk-your-actual-key-here
-set DEEPSEEK_API_KEY=sk-your-deepseek-key
-set GEMINI_API_KEY=your-gemini-key
+set OPENAI_API_KEY=<OPENAI_API_KEY>
+set DEEPSEEK_API_KEY=<DEEPSEEK_API_KEY>
+set GEMINI_API_KEY=<GEMINI_API_KEY>
 ```
 
 ### 2. 使用 CredentialManager 加载密钥
@@ -65,7 +65,7 @@ adapter = OpenAIAdapter()  # 从 OPENAI_API_KEY 加载
 adapter = OpenAIAdapter(api_key_env="MY_OPENAI_KEY")
 
 # 已弃用：直接传递密钥（会发出警告）
-adapter = OpenAIAdapter(api_key="sk-...")  # 不推荐！
+adapter = OpenAIAdapter(api_key="<PROVIDER_API_KEY>")  # 避免硬编码
 ```
 
 ---
@@ -84,8 +84,8 @@ adapter = OpenAIAdapter()
 2. **使用 .env 文件（开发环境）**
 ```bash
 # .env
-OPENAI_API_KEY=sk-your-key-here
-DEEPSEEK_API_KEY=sk-another-key
+OPENAI_API_KEY=<OPENAI_API_KEY>
+DEEPSEEK_API_KEY=<DEEPSEEK_API_KEY>
 ```
 
 ```python
@@ -117,15 +117,15 @@ key = CredentialManager.get_api_key("openai")
 1. **❌ 在代码中硬编码密钥**
 ```python
 # ❌ 错误！
-api_key = "sk-1234567890abcdef"
-adapter = OpenAIAdapter(api_key="sk-1234567890abcdef")
+api_key = "<PROVIDER_API_KEY>"
+adapter = OpenAIAdapter(api_key="<PROVIDER_API_KEY>")
 ```
 
 2. **❌ 在配置文件中存储密钥**
 ```yaml
 # ❌ 错误！config.yaml
 openai:
-  api_key: sk-1234567890abcdef
+  api_key: <PROVIDER_API_KEY>
 ```
 
 3. **❌ 在日志中打印密钥**
@@ -148,8 +148,8 @@ logger = logging.getLogger('erii')
 setup_secure_logging(logger)
 
 # 现在日志会自动脱敏密钥
-logger.info(f"API key: sk-1234567890abcdef")
-# 输出: API key: sk-1***
+logger.info("API key: <PROVIDER_API_KEY>")
+# 输出会永久复制凭据，禁止这样做
 ```
 
 ### 手动脱敏
@@ -157,11 +157,11 @@ logger.info(f"API key: sk-1234567890abcdef")
 ```python
 from erii.security import CredentialManager
 
-api_key = "sk-1234567890abcdefghijklmnop"
+api_key = CredentialManager.get_api_key("openai")
 
 # 脱敏显示
 redacted = CredentialManager.redact_key(api_key)
-print(f"Using key: {redacted}")  # 输出: Using key: sk-1***
+print(f"Using key: {redacted}")  # 输出只保留短前缀与 ***
 
 # 生成指纹用于调试
 fingerprint = CredentialManager.get_key_fingerprint(api_key)
@@ -235,8 +235,8 @@ echo "✅ No API key leakage detected"
 
 ```bash
 # .env.development
-OPENAI_API_KEY=sk-dev-test-key-1234567890
-DEEPSEEK_API_KEY=sk-dev-deepseek-key
+OPENAI_API_KEY=<LOCAL_TEST_OPENAI_API_KEY>
+DEEPSEEK_API_KEY=<LOCAL_TEST_DEEPSEEK_API_KEY>
 LOG_LEVEL=DEBUG
 ```
 
@@ -258,7 +258,7 @@ COPY . .
 RUN pip install -e .
 
 # 密钥通过环境变量传入，不写入镜像
-# docker run -e OPENAI_API_KEY=sk-... myimage
+# docker run -e OPENAI_API_KEY=<OPENAI_API_KEY> myimage
 ```
 
 ```yaml
@@ -319,7 +319,7 @@ CredentialError: API key for 'openai' is too short (minimum 8 characters).
 ### 问题：占位符密钥错误
 
 ```python
-ValueError: Placeholder API key 'sk-placeholder' is not valid.
+ValueError: Placeholder API key '<PROVIDER_API_KEY>' is not valid.
 ```
 
 **解决方案**：
@@ -357,7 +357,7 @@ ValueError: Placeholder API key 'sk-placeholder' is not valid.
 - `visible_chars` (int): 显示的前缀字符数（默认 4）
 
 **返回**：
-- 脱敏后的字符串（如 "sk-1234***"）
+- 脱敏后的字符串（如 "prefix***"）
 
 #### `get_key_fingerprint(key)`
 
@@ -428,11 +428,11 @@ setup_secure_logging(logger)
 
 ```python
 # 旧代码（v0.5.0a1）
-adapter = OpenAIAdapter(api_key="sk-your-key-here")
+adapter = OpenAIAdapter(api_key="<PROVIDER_API_KEY>")
 
 # 新代码（v0.5.0a2+）
 # 步骤 1: 设置环境变量
-# export OPENAI_API_KEY="sk-your-key-here"
+# export OPENAI_API_KEY="<OPENAI_API_KEY>"
 
 # 步骤 2: 移除硬编码密钥
 adapter = OpenAIAdapter()

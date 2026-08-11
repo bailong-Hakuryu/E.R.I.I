@@ -6,8 +6,9 @@ create a package-distribution promise. Reproducible deployments must pin a
 reviewed full commit SHA.
 
 `0.4.x` is the stable maintenance line. The current checkout identifies as
-`0.5.0a1`, an active alpha source milestone with FileStorage format 2, SQLite
-schema 10, and MemoryPack wire `0.5.0a1`. Its reader accepts `0.4.0a8` packs;
+`0.5.0a3`, an active alpha source milestone with FileStorage format 2, SQLite
+schema 10, and MemoryPack wire `0.5.0a3`. Its reader accepts declared-readable
+older packs, including `0.4.0a8`;
 the strict `0.4.0a8` reader rejects the new root fields, so compatibility is
 one-way. The classifications below describe adoption intent in this checkout;
 they do not promote alpha additions to SemVer-stable APIs.
@@ -122,9 +123,9 @@ making storage internals public.
 `remember()` and transient
 `adjudicate_relationship_candidates()` remain readable compatibility paths in
 the current source line, emit `DeprecationWarning`, and are planned for removal
-in a later incompatible milestone; `0.5.0a1` still carries them and no removal
-date is promised. New integrations should not treat them as Experimental alternatives;
-they have explicit replacements:
+in a later incompatible milestone. `0.5.0a3` still carries them and no removal
+date is promised. New integrations should not treat them as Experimental
+alternatives; they have explicit replacements:
 
 - `remember()` → Turn Recording + `archive_turn()`;
 - transient adjudication → persisted Turn +
@@ -138,7 +139,7 @@ the corresponding legacy readers.
 - A public field, authority rule, SQLite schema, MemoryPack wire, Backup, Plan,
   or OpenAPI change must update its own version and compatibility evidence.
 - Documentation-only edits cannot silently promote planned later-v0.5 semantics
-  into the `0.5.0a1` runtime or alpha semantics into the `0.4.x` maintenance line.
+  into the `0.5.0a3` runtime or alpha semantics into the `0.4.x` maintenance line.
 - Golden Path changes require tests through public interfaces and an upgrade or
   migration statement when durable data is affected.
 - Advanced-to-Golden promotion requires a shorter adoption path and real host

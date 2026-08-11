@@ -242,8 +242,8 @@ assert public_result.narrative_tensions == ()
 
 ### wire 版本与新增字段
 
-`0.5.0a1` writer 会把 MemoryPack `metadata.version` 写为 `0.5.0a1`，并在
-根对象中写入两个字段（没有记录时写为空数组）：
+`0.5.0a1` 首次在根对象中引入以下两个字段（没有记录时写为空数组）。当前
+`0.5.0a3` writer 会把 MemoryPack `metadata.version` 写为 `0.5.0a3`：
 
 ```python
 pack = MemoryPack(
@@ -257,13 +257,14 @@ pack = MemoryPack(
 
 ### 单向兼容边界
 
-- `0.5.0a1` reader 可以读取既有 `0.4.0a8` MemoryPack；缺失的
+- 当前 `0.5.0a3` reader 可以读取 declared-readable 的旧 MemoryPack，包括
+  `0.4.0a8`、`0.5.0a1` 和 `0.5.0a2`；缺失的
   `relationship_consequences` 与 `narrative_tension_links` 会解释为空列表。
-- `0.4.0a8` reader 不能读取 `0.5.0a1` MemoryPack。旧 reader 对根字段采用严格校验，
+- `0.4.0a8` reader 不能读取带 0.5 扩展字段的 MemoryPack。旧 reader 对根字段采用严格校验，
   因此会把上述两个新字段识别为未知字段，而不是静默忽略。
-- 不提供把包含 consequence 数据的 `0.5.0a1` pack 降级为 `0.4.0a8` 的有损写出。
+- 不提供把包含 consequence 数据的新 pack 降级为 `0.4.0a8` 的有损写出。
   若要把旧 pack 固化为新格式，请通过 Data Lifecycle upgrade 生成并校验
-  `0.5.0a1` 副本；原文件与备份保持不变。
+  `0.5.0a3` 副本；原文件与备份保持不变。
 
 **导出示例**：
 
@@ -433,10 +434,10 @@ restore_report = lifecycle.execute(restore_plan)
 
 ## 兼容性承诺
 
-- `0.5.x` 系列不会破坏 `0.5.0a1` 的 consequence 数据格式
+- `0.5.x` reader 保留 `0.5.0a1` consequence/tension 字段的读取语义
 - SQLite schema v10 在 `0.5.x` 期间保持稳定
-- MemoryPack wire `0.5.0a1` 在 `0.5.x` 期间保持稳定；兼容承诺是新 reader
-  读取 `0.4.0a8`，不是旧 reader 读取新 pack
+- 当前 MemoryPack writer 标记 `0.5.0a3`；兼容承诺是新 reader 读取 declared-readable
+  旧 Pack，不是旧 reader 读取新 Pack
 
 ## 相关文档
 

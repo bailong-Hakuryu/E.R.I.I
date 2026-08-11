@@ -5,6 +5,7 @@ Follows Google Python Style Guide.
 """
 
 import argparse
+from contextlib import asynccontextmanager
 import hashlib
 import ipaddress
 import logging
@@ -114,10 +115,172 @@ def close_engine() -> None:
         _engine = None
 
 try:
-    from fastapi import FastAPI, HTTPException, Query
+    from fastapi import FastAPI, HTTPException, Query, Request
+    from fastapi.exceptions import RequestValidationError
     from fastapi.openapi.utils import get_openapi
     from fastapi.responses import JSONResponse
     from pydantic import BaseModel, ConfigDict, Field, model_validator
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    _ERROR_CONTRACTS = {
+        "archival_capability_unavailable": (
+            503,
+            False,
+            "Reliable archival is not configured.",
+        ),
+        "archival_conflict": (
+            409,
+            False,
+            "The archival request conflicts with an existing binding.",
+        ),
+        "archival_not_found": (
+            404,
+            False,
+            "Archival was not found in this relationship scope.",
+        ),
+        "authentication_required": (
+            401,
+            False,
+            "A valid service API key is required.",
+        ),
+        "continuity_capability_unavailable": (
+            503,
+            False,
+            "Continuity evaluation is not configured.",
+        ),
+        "internal_error": (
+            500,
+            False,
+            "The server could not complete the request.",
+        ),
+        "invalid_memory_pack": (
+            422,
+            False,
+            "MemoryPack failed validation.",
+        ),
+        "invalid_request": (
+            400,
+            False,
+            "The request could not be accepted.",
+        ),
+        "invalid_source_turn": (
+            422,
+            False,
+            "Archival requires an existing completed Source Turn.",
+        ),
+        "loopback_access_required": (
+            403,
+            False,
+            "Unauthenticated development access is restricted to loopback.",
+        ),
+        "persona_manifest_required": (
+            409,
+            False,
+            "An approved Persona Manifest is required for this operation.",
+        ),
+        "recall_budget_unsatisfied": (
+            422,
+            False,
+            "The recall request cannot be satisfied within its declared budget.",
+        ),
+        "relationship_conflict": (
+            409,
+            False,
+            "Relationship state conflicts with the requested operation.",
+        ),
+        "relationship_not_found": (
+            404,
+            False,
+            "Relationship is not initialized.",
+        ),
+        "request_too_large": (
+            413,
+            False,
+            "Request body exceeds the server limit.",
+        ),
+        "route_not_found": (404, False, "Route not found."),
+        "server_access_unconfigured": (
+            503,
+            False,
+            "Reference-server access has not been configured.",
+        ),
+        "thought_not_found": (404, False, "Thought node was not found."),
+        "turn_conflict": (
+            409,
+            False,
+            "Turn state conflicts with the requested operation.",
+        ),
+        "turn_not_found": (
+            404,
+            False,
+            "Turn was not found in this relationship scope.",
+        ),
+        "validation_error": (
+            422,
+            False,
+            "Request validation failed.",
+        ),
+    }
+
+    def _error_detail(
+        code: str,
+        *,
+        safe_summary: Optional[str] = None,
+        retryable: Optional[bool] = None,
+        extra: Optional[dict] = None,
+    ) -> dict:
+        """Builds the single public REST error representation."""
+        contract = _ERROR_CONTRACTS.get(code)
+        if contract is None:
+            default_retryable = False
+            default_summary = "The request could not be completed."
+        else:
+            _, default_retryable, default_summary = contract
+        detail = {
+            "code": code,
+            "retryable": (
+                default_retryable if retryable is None else bool(retryable)
+            ),
+            "safe_summary": safe_summary or default_summary,
+        }
+        if extra:
+            detail.update(
+                {
+                    key: value
+                    for key, value in extra.items()
+                    if key not in detail
+                }
+            )
+        return detail
+
+    def _error_response(
+        code: str,
+        *,
+        safe_summary: Optional[str] = None,
+        retryable: Optional[bool] = None,
+        extra: Optional[dict] = None,
+        headers: Optional[dict[str, str]] = None,
+        status_code: Optional[int] = None,
+    ) -> JSONResponse:
+        """Returns the canonical error envelope for middleware and handlers."""
+        contract = _ERROR_CONTRACTS.get(code)
+        resolved_status = (
+            status_code
+            if status_code is not None
+            else (contract[0] if contract is not None else 500)
+        )
+        return JSONResponse(
+            status_code=resolved_status,
+            content={
+                "detail": _error_detail(
+                    code,
+                    safe_summary=safe_summary,
+                    retryable=retryable,
+                    extra=extra,
+                )
+            },
+            headers=headers,
+        )
 
     class _RequestBodyTooLarge(Exception):
         """Internal signal raised before FastAPI parses an oversized body."""
@@ -130,16 +293,7 @@ try:
             self.max_bytes = max_bytes
 
         async def _reject(self, scope, receive, send) -> None:
-            response = JSONResponse(
-                status_code=413,
-                content={
-                    "detail": {
-                        "code": "request_too_large",
-                        "retryable": False,
-                        "safe_summary": "Request body exceeds the server limit.",
-                    }
-                },
-            )
+            response = _error_response("request_too_large")
             await response(scope, receive, send)
 
         async def __call__(self, scope, receive, send) -> None:
@@ -184,28 +338,12 @@ try:
             self.app = asgi_app
 
         @staticmethod
-        async def _reject(scope, receive, send, status_code: int, code: str) -> None:
-            summaries = {
-                "server_access_unconfigured": (
-                    "Reference-server access has not been configured."
-                ),
-                "authentication_required": "A valid service API key is required.",
-                "loopback_access_required": (
-                    "Unauthenticated development access is restricted to loopback."
-                ),
-            }
-            response = JSONResponse(
-                status_code=status_code,
-                content={
-                    "detail": {
-                        "code": code,
-                        "retryable": False,
-                        "safe_summary": summaries[code],
-                    }
-                },
+        async def _reject(scope, receive, send, code: str) -> None:
+            response = _error_response(
+                code,
                 headers=(
                     {"WWW-Authenticate": "APIKey"}
-                    if status_code == 401
+                    if code == "authentication_required"
                     else None
                 ),
             )
@@ -232,7 +370,6 @@ try:
                         scope,
                         receive,
                         send,
-                        503,
                         "server_access_unconfigured",
                     )
                     return
@@ -243,7 +380,6 @@ try:
                         scope,
                         receive,
                         send,
-                        403,
                         "loopback_access_required",
                     )
                     return
@@ -262,16 +398,24 @@ try:
                     scope,
                     receive,
                     send,
-                    401,
                     "authentication_required",
                 )
                 return
             await self.app(scope, receive, send)
 
+    @asynccontextmanager
+    async def _reference_lifespan(_app: FastAPI):
+        """Closes lazily created engine resources at ASGI shutdown."""
+        try:
+            yield
+        finally:
+            close_engine()
+
     app = FastAPI(
         title="E.R.I.I. Memory Engine REST API",
         description="Experiential Recall & Impression Integration Engine",
         version=__version__,
+        lifespan=_reference_lifespan,
     )
     app.add_middleware(
         _RequestBodyLimitMiddleware,
@@ -289,10 +433,8 @@ try:
             description=app.description,
             routes=app.routes,
         )
-        schema.setdefault("components", {}).setdefault(
-            "securitySchemes",
-            {},
-        )["OwnerApiKey"] = {
+        components = schema.setdefault("components", {})
+        components.setdefault("securitySchemes", {})["OwnerApiKey"] = {
             "type": "apiKey",
             "in": "header",
             "name": "X-API-Key",
@@ -300,11 +442,245 @@ try:
                 "Single-owner reference-server key; not a tenant identity."
             ),
         }
+        components.setdefault("schemas", {})["RESTErrorDetail"] = {
+            "type": "object",
+            "additionalProperties": True,
+            "required": ["code", "retryable", "safe_summary"],
+            "properties": {
+                "code": {"type": "string"},
+                "retryable": {"type": "boolean"},
+                "safe_summary": {"type": "string"},
+            },
+        }
+        components["schemas"]["RESTErrorEnvelope"] = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["detail"],
+            "properties": {
+                "detail": {
+                    "$ref": "#/components/schemas/RESTErrorDetail",
+                }
+            },
+        }
+
+        error_content = {
+            "application/json": {
+                "schema": {
+                    "$ref": "#/components/schemas/RESTErrorEnvelope",
+                }
+            }
+        }
+        public_operation_paths = {"/", "/api/v1/health"}
+        for path, path_item in schema.get("paths", {}).items():
+            if not isinstance(path_item, dict):
+                continue
+            for method, operation in path_item.items():
+                if method.lower() not in {
+                    "get",
+                    "post",
+                    "put",
+                    "patch",
+                    "delete",
+                    "options",
+                    "head",
+                    "trace",
+                } or not isinstance(operation, dict):
+                    continue
+                if path in public_operation_paths:
+                    # An empty operation-level requirement overrides the global
+                    # owner-key requirement for the two middleware-public routes.
+                    operation["security"] = []
+                responses = operation.setdefault("responses", {})
+                validation_response = responses.get("422")
+                if isinstance(validation_response, dict):
+                    validation_response["content"] = error_content
+                    validation_response["description"] = (
+                        "Canonical request validation error."
+                    )
+                responses.setdefault(
+                    "default",
+                    {
+                        "description": "Canonical REST error response.",
+                        "content": error_content,
+                    },
+                )
         schema["security"] = [{"OwnerApiKey": []}]
         app.openapi_schema = schema
         return schema
 
     app.openapi = _reference_openapi
+
+    @app.exception_handler(RequestValidationError)
+    async def _request_validation_error_handler(
+        _request: Request,
+        _exc: RequestValidationError,
+    ) -> JSONResponse:
+        """Hides parser internals behind the stable validation contract."""
+        return _error_response("validation_error")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error_handler(
+        _request: Request,
+        exc: StarletteHTTPException,
+    ) -> JSONResponse:
+        """Normalizes framework 404s and endpoint-raised HTTP errors."""
+        if isinstance(exc.detail, dict):
+            code = exc.detail.get("code")
+            summary = exc.detail.get("safe_summary")
+            if isinstance(code, str) and code:
+                known = _ERROR_CONTRACTS.get(code)
+                extra = {
+                    key: value
+                    for key, value in exc.detail.items()
+                    if key not in {"code", "retryable", "safe_summary"}
+                }
+                return _error_response(
+                    code,
+                    safe_summary=(
+                        summary
+                        if (
+                            known is None
+                            and isinstance(summary, str)
+                            and summary.strip()
+                        )
+                        else None
+                    ),
+                    retryable=(
+                        None
+                        if known is not None
+                        else bool(exc.detail.get("retryable", False))
+                    ),
+                    extra=extra,
+                    headers=exc.headers,
+                    status_code=(None if known is not None else exc.status_code),
+                )
+        if exc.status_code == 404:
+            return _error_response("route_not_found", headers=exc.headers)
+        if exc.status_code == 422:
+            return _error_response("validation_error", headers=exc.headers)
+        return _error_response(
+            "http_error",
+            headers=exc.headers,
+            status_code=exc.status_code,
+        )
+
+    @app.exception_handler(RelationshipNotFoundError)
+    async def _relationship_not_found_handler(
+        _request: Request,
+        _exc: RelationshipNotFoundError,
+    ) -> JSONResponse:
+        return _error_response("relationship_not_found")
+
+    @app.exception_handler(TurnNotFoundError)
+    async def _turn_not_found_handler(
+        _request: Request,
+        _exc: TurnNotFoundError,
+    ) -> JSONResponse:
+        return _error_response("turn_not_found")
+
+    @app.exception_handler(TurnConflictError)
+    async def _turn_conflict_handler(
+        _request: Request,
+        _exc: TurnConflictError,
+    ) -> JSONResponse:
+        return _error_response("turn_conflict")
+
+    @app.exception_handler(ContinuityEvaluationCapabilityError)
+    async def _continuity_capability_handler(
+        _request: Request,
+        _exc: ContinuityEvaluationCapabilityError,
+    ) -> JSONResponse:
+        return _error_response("continuity_capability_unavailable")
+
+    @app.exception_handler(PersonaManifestRequiredError)
+    async def _persona_manifest_required_handler(
+        _request: Request,
+        _exc: PersonaManifestRequiredError,
+    ) -> JSONResponse:
+        return _error_response("persona_manifest_required")
+
+    @app.exception_handler(RecallBudgetUnsatisfiedError)
+    async def _recall_budget_handler(
+        _request: Request,
+        _exc: RecallBudgetUnsatisfiedError,
+    ) -> JSONResponse:
+        return _error_response("recall_budget_unsatisfied")
+
+    @app.exception_handler(ArchivalCapabilityError)
+    async def _archival_capability_handler(
+        _request: Request,
+        _exc: ArchivalCapabilityError,
+    ) -> JSONResponse:
+        return _error_response("archival_capability_unavailable")
+
+    @app.exception_handler(ArchivalConflictError)
+    async def _archival_conflict_handler(
+        _request: Request,
+        _exc: ArchivalConflictError,
+    ) -> JSONResponse:
+        return _error_response("archival_conflict")
+
+    @app.exception_handler(ArchivalNotFoundError)
+    async def _archival_not_found_handler(
+        _request: Request,
+        _exc: ArchivalNotFoundError,
+    ) -> JSONResponse:
+        return _error_response("archival_not_found")
+
+    @app.exception_handler(ArchivalSubmissionError)
+    async def _archival_submission_handler(
+        _request: Request,
+        _exc: ArchivalSubmissionError,
+    ) -> JSONResponse:
+        return _error_response("invalid_source_turn")
+
+    @app.exception_handler(ArchivalProcessingError)
+    async def _archival_processing_handler(
+        _request: Request,
+        exc: ArchivalProcessingError,
+    ) -> JSONResponse:
+        receipt = exc.receipt
+        retryable = bool(receipt.retryable)
+        return _error_response(
+            (
+                receipt.outcome_code.value
+                if receipt.outcome_code is not None
+                else "archival_processing_failed"
+            ),
+            safe_summary=receipt.safe_summary,
+            retryable=retryable,
+            extra={"receipt": receipt.to_dict()},
+            status_code=503 if retryable else 500,
+        )
+
+    @app.exception_handler(CandidateConflictError)
+    @app.exception_handler(TemporalHistoryConflictError)
+    async def _relationship_conflict_handler(
+        _request: Request,
+        _exc: Exception,
+    ) -> JSONResponse:
+        return _error_response("relationship_conflict")
+
+    @app.exception_handler(ValueError)
+    async def _domain_validation_error_handler(
+        _request: Request,
+        _exc: ValueError,
+    ) -> JSONResponse:
+        return _error_response("validation_error")
+
+    @app.exception_handler(Exception)
+    async def _unexpected_error_handler(
+        request: Request,
+        exc: Exception,
+    ) -> JSONResponse:
+        logger.error(
+            "Unhandled REST error during %s %s (%s)",
+            request.method,
+            request.url.path,
+            type(exc).__name__,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        return _error_response("internal_error")
 
     def _internal_server_error(
         operation: str,
@@ -317,29 +693,22 @@ try:
             type(exc).__name__,
             exc_info=(type(exc), exc, exc.__traceback__),
         )
+        contract = _ERROR_CONTRACTS["internal_error"]
         return HTTPException(
-            status_code=500,
-            detail={
-                "code": "internal_error",
-                "retryable": False,
-                "safe_summary": "The server could not complete the request.",
-            },
+            status_code=contract[0],
+            detail=_error_detail("internal_error"),
         )
 
     def _standard_error(
-        status_code: int,
         code: str,
-        message: str,
-        retryable: bool = False,
     ) -> HTTPException:
-        """Creates a standardized error response."""
+        """Creates an endpoint error from the canonical contract registry."""
+        contract = _ERROR_CONTRACTS.get(code)
+        if contract is None:
+            raise ValueError(f"unknown REST error code: {code}")
         return HTTPException(
-            status_code=status_code,
-            detail={
-                "code": code,
-                "retryable": retryable,
-                "safe_summary": message,
-            },
+            status_code=contract[0],
+            detail=_error_detail(code),
         )
 
     class RememberRequest(BaseModel):
@@ -588,8 +957,8 @@ try:
                 bot_reply=req.bot_reply,
             )
             return {"status": "success", "message": "Turn logged for archival."}
-        except ValueError as e:
-            raise _standard_error(400, "invalid_request", str(e))
+        except ValueError:
+            raise _standard_error("invalid_request")
         except Exception as e:
             raise _internal_server_error("remember", e) from e
 
@@ -604,8 +973,8 @@ try:
                 top_k=req.top_k,
             )
             return {"status": "success", "context": context}
-        except ValueError as e:
-            raise _standard_error(400, "invalid_request", str(e))
+        except ValueError:
+            raise _standard_error("invalid_request")
         except Exception as e:
             raise _internal_server_error("recall", e) from e
 
@@ -622,11 +991,11 @@ try:
             )
             return {"status": "success", "turn": turn.to_dict()}
         except RelationshipNotFoundError:
-            raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
-        except TurnConflictError as exc:
-            raise _standard_error(409, "turn_conflict", str(exc))
-        except ValueError as exc:
-            raise _standard_error(422, "validation_error", str(exc))
+            raise _standard_error("relationship_not_found")
+        except TurnConflictError:
+            raise _standard_error("turn_conflict")
+        except ValueError:
+            raise _standard_error("validation_error")
 
     @app.post("/api/v1/turns")
     def api_record_turn(req: TurnRecordBody):
@@ -644,11 +1013,11 @@ try:
             )
             return {"status": "success", "receipt": receipt.to_dict()}
         except RelationshipNotFoundError:
-            raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
-        except TurnConflictError as exc:
-            raise _standard_error(409, "turn_conflict", str(exc))
-        except ValueError as exc:
-            raise _standard_error(422, "validation_error", str(exc))
+            raise _standard_error("relationship_not_found")
+        except TurnConflictError:
+            raise _standard_error("turn_conflict")
+        except ValueError:
+            raise _standard_error("validation_error")
 
     @app.get("/api/v1/turns")
     def api_list_turns(
@@ -668,7 +1037,7 @@ try:
                 "turns": [turn.to_dict() for turn in turns],
             }
         except RelationshipNotFoundError:
-            raise _standard_error(404, "relationship_not_found", "Relationship not initialized")
+            raise _standard_error("relationship_not_found")
 
     @app.post("/api/v1/turns/{turn_id}/complete")
     def api_complete_turn(turn_id: str, req: TurnCompletionBody):
@@ -691,11 +1060,11 @@ try:
             )
             return {"status": "success", "receipt": receipt.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError):
-            raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError as exc:
-            raise _standard_error(409, "conflict", str(exc))
-        except ValueError as exc:
-            raise _standard_error(422, "validation_error", str(exc))
+            raise _standard_error("turn_not_found")
+        except TurnConflictError:
+            raise _standard_error("turn_conflict")
+        except ValueError:
+            raise _standard_error("validation_error")
 
     @app.post("/api/v1/turns/{turn_id}/continuity/evaluate")
     def api_evaluate_turn_continuity(
@@ -714,13 +1083,15 @@ try:
             )
             return {"status": "success", "result": result.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError):
-            raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError as exc:
-            raise _standard_error(409, "conflict", str(exc))
-        except ContinuityEvaluationCapabilityError as exc:
-            raise _standard_error(503, "service_unavailable", str(exc))
-        except ValueError as exc:
-            raise _standard_error(422, "validation_error", str(exc))
+            raise _standard_error("turn_not_found")
+        except TurnConflictError:
+            raise _standard_error("turn_conflict")
+        except ContinuityEvaluationCapabilityError:
+            raise _standard_error("continuity_capability_unavailable")
+        except PersonaManifestRequiredError:
+            raise _standard_error("persona_manifest_required")
+        except ValueError:
+            raise _standard_error("validation_error")
 
     @app.post("/api/v1/turns/{turn_id}/reply-attempts", status_code=201)
     def api_record_reply_attempt(turn_id: str, req: ReplyAttemptFailureBody):
@@ -737,11 +1108,11 @@ try:
             )
             return {"status": "success", "attempt": attempt.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError):
-            raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError as exc:
-            raise _standard_error(409, "conflict", str(exc))
-        except ValueError as exc:
-            raise _standard_error(422, "validation_error", str(exc))
+            raise _standard_error("turn_not_found")
+        except TurnConflictError:
+            raise _standard_error("turn_conflict")
+        except ValueError:
+            raise _standard_error("validation_error")
 
     @app.get("/api/v1/turns/{turn_id}/reply-attempts")
     def api_list_reply_attempts(turn_id: str, agent_id: str, user_id: str):
@@ -757,7 +1128,7 @@ try:
                 "attempts": [attempt.to_dict() for attempt in attempts],
             }
         except (RelationshipNotFoundError, TurnNotFoundError):
-            raise _standard_error(404, "turn_not_found", "Turn not found")
+            raise _standard_error("turn_not_found")
 
     @app.post("/api/v1/turns/{turn_id}/abandon")
     def api_abandon_turn(turn_id: str, req: TurnAbandonmentBody):
@@ -771,11 +1142,11 @@ try:
             )
             return {"status": "success", "turn": turn.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError):
-            raise _standard_error(404, "turn_not_found", "Turn not found")
-        except TurnConflictError as exc:
-            raise _standard_error(409, "conflict", str(exc))
-        except ValueError as exc:
-            raise _standard_error(422, "validation_error", str(exc))
+            raise _standard_error("turn_not_found")
+        except TurnConflictError:
+            raise _standard_error("turn_conflict")
+        except ValueError:
+            raise _standard_error("validation_error")
 
     @app.get("/api/v1/turns/{turn_id}")
     def api_get_turn(turn_id: str, agent_id: str, user_id: str):
@@ -784,7 +1155,7 @@ try:
             turn = get_engine().get_turn(agent_id, user_id, turn_id)
             return {"status": "success", "turn": turn.to_dict()}
         except (RelationshipNotFoundError, TurnNotFoundError):
-            raise _standard_error(404, "turn_not_found", "Turn not found")
+            raise _standard_error("turn_not_found")
 
     @app.post("/api/v1/archivals")
     def api_submit_archival(req: ArchivalSubmissionBody):
@@ -797,52 +1168,11 @@ try:
                 idempotency_key=req.idempotency_key,
             )
         except ArchivalCapabilityError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "archival_capability_unavailable",
-                    "retryable": False,
-                    "safe_summary": "reliable archival is not configured",
-                },
-            ) from exc
+            raise _standard_error("archival_capability_unavailable") from exc
         except ArchivalConflictError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "archival_conflict",
-                    "retryable": False,
-                    "safe_summary": (
-                        "the archival intent conflicts with an existing binding"
-                    ),
-                },
-            ) from exc
+            raise _standard_error("archival_conflict") from exc
         except (ArchivalSubmissionError, RelationshipNotFoundError) as exc:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "invalid_source_turn",
-                    "retryable": False,
-                    "safe_summary": (
-                        "archival requires an existing completed Source Turn"
-                    ),
-                },
-            ) from exc
-        except ArchivalProcessingError as exc:
-            receipt = exc.receipt
-            retryable = bool(receipt.retryable)
-            raise HTTPException(
-                status_code=503 if retryable else 500,
-                detail={
-                    "code": (
-                        receipt.outcome_code.value
-                        if receipt.outcome_code is not None
-                        else "archival_processing_failed"
-                    ),
-                    "retryable": retryable,
-                    "safe_summary": receipt.safe_summary,
-                    "receipt": receipt.to_dict(),
-                },
-            ) from exc
+            raise _standard_error("invalid_source_turn") from exc
         status_code = (
             202
             if receipt.status
@@ -878,23 +1208,9 @@ try:
             )
             return {"receipt": receipt.to_dict()}
         except ArchivalCapabilityError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "code": "archival_capability_unavailable",
-                    "retryable": False,
-                    "safe_summary": "reliable archival is not configured",
-                },
-            ) from exc
+            raise _standard_error("archival_capability_unavailable") from exc
         except (ArchivalNotFoundError, RelationshipNotFoundError) as exc:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "code": "archival_not_found",
-                    "retryable": False,
-                    "safe_summary": "archival was not found in this scope",
-                },
-            ) from exc
+            raise _standard_error("archival_not_found") from exc
 
     @app.post("/api/v1/recall/structured")
     def api_recall_structured(req: StructuredRecallBody):
@@ -902,12 +1218,12 @@ try:
         try:
             result = get_engine().recall_structured(req)
             return {"status": "success", "result": result.model_dump(mode="json")}
-        except PersonaManifestRequiredError as e:
-            raise _standard_error(409, "conflict", str(e))
-        except RecallBudgetUnsatisfiedError as e:
-            raise _standard_error(422, "validation_error", str(e))
-        except ValueError as e:
-            raise _standard_error(400, "invalid_request", str(e))
+        except PersonaManifestRequiredError:
+            raise _standard_error("persona_manifest_required")
+        except RecallBudgetUnsatisfiedError:
+            raise _standard_error("recall_budget_unsatisfied")
+        except ValueError:
+            raise _standard_error("invalid_request")
         except Exception as e:
             raise _internal_server_error("structured_recall", e) from e
 
@@ -926,12 +1242,14 @@ try:
                 "status": "success",
                 "records": [record.to_dict() for record in result.records],
             }
-        except (CandidateConflictError, TemporalHistoryConflictError) as e:
-            raise _standard_error(409, "conflict", str(e))
-        except (RelationshipNotFoundError, TurnNotFoundError) as e:
-            raise _standard_error(404, "not_found", str(e))
-        except ValueError as e:
-            raise _standard_error(400, "invalid_request", str(e))
+        except (CandidateConflictError, TemporalHistoryConflictError):
+            raise _standard_error("relationship_conflict")
+        except RelationshipNotFoundError:
+            raise _standard_error("relationship_not_found")
+        except TurnNotFoundError:
+            raise _standard_error("turn_not_found")
+        except ValueError:
+            raise _standard_error("invalid_request")
         except Exception as e:
             raise _internal_server_error("relationship_adjudication", e) from e
 
@@ -953,10 +1271,12 @@ try:
                 "status": "success",
                 "consequence": consequence.to_dict(),
             }
-        except (RelationshipNotFoundError, TurnNotFoundError) as e:
-            raise _standard_error(404, "not_found", str(e))
-        except ValueError as e:
-            raise _standard_error(400, "invalid_request", str(e))
+        except RelationshipNotFoundError:
+            raise _standard_error("relationship_not_found")
+        except TurnNotFoundError:
+            raise _standard_error("turn_not_found")
+        except ValueError:
+            raise _standard_error("invalid_request")
         except Exception as e:
             raise _internal_server_error("record_relationship_consequence", e) from e
 
@@ -979,8 +1299,8 @@ try:
                 "status": "success",
                 "consequences": [item.to_dict() for item in consequences],
             }
-        except RelationshipNotFoundError as e:
-            raise _standard_error(404, "not_found", str(e))
+        except RelationshipNotFoundError:
+            raise _standard_error("relationship_not_found")
         except Exception as e:
             raise _internal_server_error("list_relationship_consequences", e) from e
 
@@ -1003,10 +1323,12 @@ try:
                 "status": "success",
                 "link": link.to_dict(),
             }
-        except (RelationshipNotFoundError, TurnNotFoundError) as e:
-            raise _standard_error(404, "not_found", str(e))
-        except ValueError as e:
-            raise _standard_error(400, "invalid_request", str(e))
+        except RelationshipNotFoundError:
+            raise _standard_error("relationship_not_found")
+        except TurnNotFoundError:
+            raise _standard_error("turn_not_found")
+        except ValueError:
+            raise _standard_error("invalid_request")
         except Exception as e:
             raise _internal_server_error("record_narrative_tension_link", e) from e
 
@@ -1029,8 +1351,8 @@ try:
                 "status": "success",
                 "links": [item.to_dict() for item in links],
             }
-        except RelationshipNotFoundError as e:
-            raise _standard_error(404, "not_found", str(e))
+        except RelationshipNotFoundError:
+            raise _standard_error("relationship_not_found")
         except Exception as e:
             raise _internal_server_error("list_narrative_tension_links", e) from e
 
@@ -1107,7 +1429,7 @@ try:
                 node_id=node_id,
             )
             if not success:
-                raise _standard_error(404, "thought_not_found", "Thought node not found")
+                raise _standard_error("thought_not_found")
             return {"status": "success", "message": "Thought resolved successfully."}
         except HTTPException:
             raise
@@ -1134,15 +1456,8 @@ try:
                 overwrite=req.overwrite,
             )
             return {"status": "success", "message": "Memory imported successfully.", "pack": pack.to_dict()}
-        except ValueError as e:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "invalid_memory_pack",
-                    "retryable": False,
-                    "safe_summary": "MemoryPack failed validation.",
-                },
-            ) from e
+        except ValueError as exc:
+            raise _standard_error("invalid_memory_pack") from exc
         except Exception as e:
             raise _internal_server_error("import_memory", e) from e
 
@@ -1163,11 +1478,6 @@ try:
             return {"status": "success", "reset_count": count}
         except Exception as e:
             raise _internal_server_error("retry_failed_tasks", e) from e
-
-    @app.on_event("shutdown")
-    def api_shutdown() -> None:
-        """Releases the lazily initialized engine on server shutdown."""
-        close_engine()
 
 except ImportError:
     app = None  # FastAPI not installed

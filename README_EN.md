@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Historical release](https://img.shields.io/badge/historical-v0.4.0a8-orange.svg)](https://github.com/bailong-Hakuryu/E.R.I.I/releases/tag/v0.4.0a8)
-[![Source](https://img.shields.io/badge/source-v0.5.0a1-blue.svg)](CHANGELOG.md)
+[![Source](https://img.shields.io/badge/source-v0.5.0a3-blue.svg)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.11--3.14-green.svg)](pyproject.toml)
 
 [简体中文](README.md)
@@ -47,7 +47,7 @@ framework, or turnkey multi-tenant chat product.
 
 ## Install from source
 
-The active development checkout identifies as `0.5.0a1` (alpha) and requires
+The active development checkout identifies as `0.5.0a3` (alpha) and requires
 Python 3.11–3.14. The `0.4.x` line is the stable maintenance line; integrations
 that prioritize lower change risk should pin a reviewed full `0.4.x` commit SHA:
 
@@ -148,9 +148,9 @@ starting points for new integrations.
 Read [Host Integration](docs/host-integration.md) and
 [API Stability](docs/api-stability.md).
 
-## v0.5.0a1 Alpha: Relationship Consequence
+## The 0.5 line: Relationship Consequence
 
-The active `0.5.0a1` source milestone introduces the minimum vertical slice for
+`0.5.0a1` introduced the minimum vertical slice for
 **Relationship Consequence** and **Narrative Tension**. It records durable
 effects from supported, delivered relationship events; projects their current
 tension state (`unaddressed`, `addressed_unresolved`, `mutually_reconciled`,
@@ -185,27 +185,29 @@ claim. See the
 `f6dca322379c4ea88320c69d752cab471d035e95`.
 The `0.4.0rc1` source-closure evidence is fixed at commit
 `58ea8e69df28bec8e755e0a0d2a175679c18a694`. That work remains the stable
-`0.4.x` maintenance line. The active checkout is the `0.5.0a1` alpha source
-milestone; it is not an uploaded GitHub or package-registry distribution.
+`0.4.x` maintenance line. `0.5.0a2` was uploaded as an alpha package; the active
+`0.5.0a3` checkout is the subsequent source-stabilization milestone and does not
+yet have a corresponding tag or package-registry artifact.
 
 The version axes remain independent:
 
 | Axis | Current value |
 | --- | --- |
-| Python source identity | `0.5.0a1` |
+| Python source identity | `0.5.0a3` |
 | Python | `3.11`–`3.14` |
 | SQLite | schema `10` |
 | FileStorage | format `2` |
-| MemoryPack | `0.5.0a1` |
+| MemoryPack | `0.5.0a3` (reader through `0.5.0a3`) |
 | Lifecycle Backup | `1` |
 | Lifecycle Plan | writer `3`, readers `1`–`3` |
 
-`v0.5.0a1` adds Relationship Consequence and Narrative Tension as durable alpha
-semantics. It advances SQLite to schema 10, FileStorage to format 2, and the
-MemoryPack wire to `0.5.0a1`. The new reader accepts `0.4.0a8` packs; the strict
-`0.4.0a8` reader rejects `0.5.0a1` packs with their new root fields, so this is
-one-way readability rather than bidirectional compatibility. Post-harm repair
-decisions and durable Character Deliberation remain unimplemented.
+`v0.5.0a1` introduced the durable Relationship Consequence and Narrative Tension
+fields and advanced SQLite to schema 10 and FileStorage to format 2. The current
+writer labels MemoryPack `0.5.0a3`; its reader still accepts declared-readable
+older packs. A strict `0.4.0a8` reader rejects packs containing the 0.5 extension
+fields, so compatibility is new-reader-to-old-data readability rather than a
+bidirectional wire promise. Post-harm repair decisions and durable Character
+Deliberation remain unimplemented.
 
 ## Existing kernel capabilities
 
@@ -267,7 +269,7 @@ of kernel quality.
 ## Security, data, and maintenance
 
 E.R.I.I. is maintained seriously by one person and provides no SLA. `0.4.x` is
-the stable maintenance line; `0.5.0a1` is the active alpha source milestone.
+the stable maintenance line; `0.5.0a3` is the active alpha source milestone.
 FileStorage, SQLite, MemoryPack, and Lifecycle Backup are plaintext by default.
 The reference REST service has one owner key, not per-user authorization or a
 multi-tenant security boundary. A product host must add identity,

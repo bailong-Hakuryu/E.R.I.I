@@ -1,369 +1,218 @@
-"""
-Complete Turn Lifecycle Integration Example
+"""Offline, executable integration example for the durable Turn lifecycle.
 
-This example demonstrates the canonical integration path for a chat host
-that wants to use E.R.I.I. for character memory and continuity.
+The example uses a temporary storage directory and a deterministic local
+extractor. It performs no network calls and leaves no ``./erii_memory`` or
+``./temp_demo`` directory behind.
 """
+
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from erii import (
-    ERIIEngine,
-    ERIIConfig,
-    
-    RecallRequest,
-    
-    TurnStatus,
+    ArchivalNoMemoryDecision,
     DeliveryDisposition,
+    ERIIConfig,
+    ERIIEngine,
+    ExtractorDescriptor,
+    RecallAudience,
+    RecallRequest,
+    ReplyAttemptStage,
     SourceProcessingChannel,
+    TurnStatus,
 )
-import uuid
+
+AGENT_ID = "agent_lumi"
+USER_ID = "user_chen"
 
 
-def example_1_basic_two_phase_turn():
-    """Example 1: Basic two-phase turn recording (recommended)."""
-    print("=" * 60)
-    print("Example 1: Two-Phase Turn Recording")
-    print("=" * 60)
+class NoMemoryExtractor:
+    """Deterministic offline extractor used only by this example."""
 
-    # Initialize engine
-    engine = ERIIEngine(storage_dir="./temp_demo")
-
-    # Initialize relationship
-    engine.initialize_relationship(
-        "agent_lumi",
-        "user_chen",
-        persona_source="A thoughtful AI assistant who values meaningful conversation.",
-        source_format="text/markdown",
-        source_name="lumi_persona.md",
+    descriptor = ExtractorDescriptor(
+        extractor_id="examples.no-memory",
+        extractor_version="1.0",
+        extraction_schema_version="2",
     )
 
-    # Phase 1: Begin turn (capture user message)
-    print("\n1. User sends message...")
-    turn = engine.begin_turn(
-        "agent_lumi",
-        "user_chen",
-        "今天天气真好！我们可以出去散步吗？",
-        turn_id=f"turn-{uuid.uuid4()}",
-    )
-    print(f"   ✓ Turn opened: {turn.turn_id}")
-    print(f"   Status: {turn.status}")
-
-    # Phase 2: Recall prior context (before reply exists)
-    print("\n2. Recall prior context...")
-    context = engine.recall_structured(
-        RecallRequest(
-            agent_id="agent_lumi",
-            user_id="user_chen",
-            query="今天天气真好！我们可以出去散步吗？",
-        )
-    )
-    print(f"   ✓ Context retrieved ({len(context.memory_blocks)} blocks)")
-
-    # Phase 3: Generate reply (your LLM here)
-    print("\n3. Generate reply...")
-    agent_reply = "是啊！天气这么好，散步是个不错的主意。我们可以去公园。"
-    print("   ✓ Reply generated")
-
-    # Phase 4: Complete turn (seal the reply)
-    print("\n4. Complete turn...")
-    receipt = engine.complete_turn(
-        "agent_lumi",
-        "user_chen",
-        turn.turn_id,
-        agent_reply,
-        delivery_disposition=DeliveryDisposition.SHOWN,
-        processing_channels=[
-            SourceProcessingChannel.MEMORY_EXTRACTION,
-            SourceProcessingChannel.RELATIONSHIP_EVENT_EXTRACTION,
-        ],
-    )
-    print(f"   ✓ Turn completed: {receipt.turn_id}")
-    print(f"   User fingerprint: {receipt.user_message_fingerprint[:8]}...")
-    print(f"   Agent fingerprint: {receipt.agent_message_fingerprint[:8]}...")
-
-    # Phase 5: Archive (extract memories)
-    print("\n5. Archive turn...")
-    submission = engine.archive_turn("agent_lumi", "user_chen", turn.turn_id)
-    print(f"   ✓ Archival submitted: {submission.task_id}")
-
-    engine.close()
-    print("\n✓ Example 1 completed!\n")
+    def extract(self, _request):
+        return ArchivalNoMemoryDecision(reason_code="nothing_durable")
 
 
-def example_2_one_shot_turn():
-    """Example 2: One-shot turn recording (for historical data)."""
-    print("=" * 60)
-    print("Example 2: One-Shot Turn Recording")
-    print("=" * 60)
+def _delivery_exception(reason_code: str) -> dict[str, object]:
+    """Declares why a visible reply was not continuity-reviewed."""
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "examples.turn-host/v1",
+        "reason_code": reason_code,
+        "decided_at": "2026-08-11T00:00:00+00:00",
+        "reply_attempt_number": None,
+    }
 
-    engine = ERIIEngine(storage_dir="./temp_demo")
 
-    # Ensure relationship exists
-    try:
+def run_demo(storage_dir: Path) -> dict[str, object]:
+    """Runs the complete example and returns values used for verification."""
+    with ERIIEngine(
+        storage_dir=str(storage_dir),
+        memory_extractor=NoMemoryExtractor(),
+        config=ERIIConfig(
+            storage_dir=str(storage_dir),
+            async_archival=False,
+        ),
+    ) as engine:
         engine.initialize_relationship(
-            "agent_lumi",
-            "user_chen",
-            persona_source="...",
+            AGENT_ID,
+            USER_ID,
+            persona_source=(
+                "Lumi is thoughtful and values meaningful conversation."
+            ),
             source_format="text/markdown",
+            source_name="lumi_persona.md",
         )
-    except Exception:
-        pass  # Already exists
+        print("[ok] relationship initialized")
 
-    # Record historical conversation (both messages already shown)
-    print("\n1. Recording historical turn...")
-    receipt = engine.record_turn(
-        "agent_lumi",
-        "user_chen",
-        user_message="你叫什么名字？",
-        agent_message="我是 Lumi，很高兴认识你！",
-        turn_id=f"historical-{uuid.uuid4()}",
-        delivery_disposition=DeliveryDisposition.SHOWN,
-    )
-
-    print(f"   ✓ Turn recorded: {receipt.turn_id}")
-    print(f"   Status: {receipt.status}")
-
-    engine.close()
-    print("\n✓ Example 2 completed!\n")
-
-
-def example_3_error_handling():
-    """Example 3: Error handling and retry logic."""
-    print("=" * 60)
-    print("Example 3: Error Handling")
-    print("=" * 60)
-
-    from erii import TurnConflictError, TurnTerminalConflictError
-
-    engine = ERIIEngine(storage_dir="./temp_demo")
-
-    try:
-        engine.initialize_relationship("agent_lumi", "user_chen", "...", "text/markdown")
-    except Exception:
-        pass
-
-    turn_id = f"turn-{uuid.uuid4()}"
-    user_msg = "测试消息"
-
-    # Open turn
-    print("\n1. Open turn...")
-    _turn = engine.begin_turn("agent_lumi", "user_chen", user_msg, turn_id=turn_id)
-    print(f"   ✓ Turn opened: {turn_id}")
-
-    # Simulate retry with same content (should be idempotent)
-    print("\n2. Retry with same content (idempotent)...")
-    try:
-        _turn2 = engine.begin_turn("agent_lumi", "user_chen", user_msg, turn_id=turn_id)
-        print("   ✓ Retry succeeded (same content)")
-    except TurnConflictError as e:
-        print(f"   ⚠️  Conflict (expected if different content): {e}")
-
-    # Try to complete
-    print("\n3. Complete turn...")
-    _receipt = engine.complete_turn(
-        "agent_lumi", "user_chen", turn_id, "测试回复", delivery_disposition=DeliveryDisposition.SHOWN
-    )
-    print("   ✓ Completed")
-
-    # Try to complete again (should fail - terminal state)
-    print("\n4. Try to complete again (should fail)...")
-    try:
-        engine.complete_turn(
-            "agent_lumi", "user_chen", turn_id, "另一个回复", delivery_disposition=DeliveryDisposition.SHOWN
+        # 1. Persist the exact user-visible input before generating a reply.
+        turn = engine.begin_turn(
+            AGENT_ID,
+            USER_ID,
+            "The weather is nice. Shall we take a walk?",
+            turn_id="turn-live-001",
         )
-        print("   ✗ Should have failed!")
-    except TurnTerminalConflictError:
-        print("   ✓ Correctly rejected: Turn already in terminal state")
+        assert turn.status == TurnStatus.OPEN
+        print(f"[ok] opened {turn.turn_id}")
 
-    engine.close()
-    print("\n✓ Example 3 completed!\n")
-
-
-def example_4_turn_abandonment():
-    """Example 4: Abandoning a turn when generation fails."""
-    print("=" * 60)
-    print("Example 4: Turn Abandonment")
-    print("=" * 60)
-
-    engine = ERIIEngine(storage_dir="./temp_demo")
-
-    try:
-        engine.initialize_relationship("agent_lumi", "user_chen", "...", "text/markdown")
-    except Exception:
-        pass
-
-    turn_id = f"turn-{uuid.uuid4()}"
-
-    # Open turn
-    print("\n1. Open turn...")
-    _turn = engine.begin_turn(
-        "agent_lumi", "user_chen", "生成一个很难的回复", turn_id=turn_id
-    )
-    print(f"   ✓ Turn opened: {turn_id}")
-
-    # Simulate generation failure
-    print("\n2. Try to generate reply...")
-    try:
-        # Simulate failure
-        raise RuntimeError("LLM API timeout")
-    except RuntimeError as e:
-        print(f"   ✗ Generation failed: {e}")
-
-        # Abandon the turn
-        print("\n3. Abandon turn...")
-        receipt = engine.abandon_turn("agent_lumi", "user_chen", turn_id)
-        print(f"   ✓ Turn abandoned: {receipt.turn_id}")
-        print(f"   Status: {receipt.status}")
-        print("   Note: User message is kept, but no agent reply recorded")
-
-    engine.close()
-    print("\n✓ Example 4 completed!\n")
-
-
-def example_5_listing_and_querying():
-    """Example 5: Listing and querying turns."""
-    print("=" * 60)
-    print("Example 5: Listing and Querying Turns")
-    print("=" * 60)
-
-    engine = ERIIEngine(storage_dir="./temp_demo")
-
-    try:
-        engine.initialize_relationship("agent_lumi", "user_chen", "...", "text/markdown")
-    except Exception:
-        pass
-
-    # Record a few turns
-    print("\n1. Recording multiple turns...")
-    for i in range(3):
-        engine.record_turn(
-            "agent_lumi",
-            "user_chen",
-            f"用户消息 {i+1}",
-            f"AI 回复 {i+1}",
-            turn_id=f"turn-demo-{i+1}",
-            delivery_disposition=DeliveryDisposition.SHOWN,
+        # 2. Recall is side-effect free. The audience is always explicit.
+        recall = engine.recall_structured(
+            RecallRequest(
+                agent_id=AGENT_ID,
+                user_id=USER_ID,
+                query="walk together",
+                audience=RecallAudience.PUBLIC,
+            )
         )
-    print("   ✓ Recorded 3 turns")
+        print(f"[ok] recall returned {len(recall.memories)} memory projections")
 
-    # List all turns
-    print("\n2. List all turns...")
-    all_turns = engine.list_turns("agent_lumi", "user_chen")
-    print(f"   Total turns: {len(all_turns)}")
-
-    # List by status
-    print("\n3. List completed turns...")
-    completed = engine.list_turns("agent_lumi", "user_chen", status=TurnStatus.COMPLETED)
-    print(f"   Completed turns: {len(completed)}")
-
-    # Get specific turn
-    print("\n4. Get specific turn...")
-    turn = engine.get_turn("agent_lumi", "user_chen", "turn-demo-1")
-    print(f"   Turn ID: {turn.turn_id}")
-    print(f"   User: {turn.transcript.user_message.content}")
-    print(f"   Agent: {turn.transcript.agent_message.content}")
-
-    engine.close()
-    print("\n✓ Example 5 completed!\n")
-
-
-def example_6_full_integration():
-    """Example 6: Complete integration with recall."""
-    print("=" * 60)
-    print("Example 6: Full Integration Flow")
-    print("=" * 60)
-
-    engine = ERIIEngine(
-        storage_dir="./temp_demo",
-        config=ERIIConfig(async_archival=False),  # Synchronous for demo
-    )
-
-    # Setup
-    print("\n1. Initialize relationship...")
-    try:
-        engine.initialize_relationship(
-            "agent_lumi",
-            "user_chen",
-            persona_source="Lumi is a thoughtful AI who remembers past conversations.",
-            source_format="text/markdown",
-            source_name="lumi.md",
+        # 3. Failed drafts are never persisted; only sanitized failure metadata is.
+        attempt = engine.record_reply_attempt_failure(
+            AGENT_ID,
+            USER_ID,
+            turn.turn_id,
+            attempt_number=1,
+            stage=ReplyAttemptStage.GENERATION,
+            capability_descriptor="example-provider/model-v1",
+            failure_classification="temporary_provider_error",
         )
-        print("   ✓ Relationship initialized")
-    except Exception:
-        print("   ✓ Relationship already exists")
+        assert attempt.turn_id == turn.turn_id
 
-    # First conversation
-    print("\n2. First conversation...")
-    _turn1 = engine.begin_turn(
-        "agent_lumi", "user_chen", "我最喜欢的颜色是蓝色", turn_id="turn-color"
+        # 4. Persist only the reply that the host actually displayed. This demo
+        # has no continuity evaluator, so the unreviewed branch is explicit.
+        delivery_exception = _delivery_exception("availability_fallback")
+        receipt = engine.complete_turn(
+            AGENT_ID,
+            USER_ID,
+            turn.turn_id,
+            "Yes. A walk in the park sounds good.",
+            delivery_disposition=DeliveryDisposition.SHOWN_UNREVIEWED,
+            delivery_exception=delivery_exception,
+            processing_channels=[SourceProcessingChannel.MEMORY_ARCHIVAL],
+        )
+        assert receipt.source_turn_id == turn.turn_id
+        print(f"[ok] completed {receipt.source_turn_id}")
+
+        # Identical retries return the same durable completion receipt.
+        retried_receipt = engine.complete_turn(
+            AGENT_ID,
+            USER_ID,
+            turn.turn_id,
+            "Yes. A walk in the park sounds good.",
+            delivery_disposition=DeliveryDisposition.SHOWN_UNREVIEWED,
+            delivery_exception=delivery_exception,
+            processing_channels=[SourceProcessingChannel.MEMORY_ARCHIVAL],
+        )
+        assert retried_receipt == receipt
+
+        # 5. Archival has its own required idempotency key and receipt identity.
+        archival = engine.archive_turn(
+            AGENT_ID,
+            USER_ID,
+            turn.turn_id,
+            idempotency_key="archive-turn-live-001",
+        )
+        archival_retry = engine.archive_turn(
+            AGENT_ID,
+            USER_ID,
+            turn.turn_id,
+            idempotency_key="archive-turn-live-001",
+        )
+        assert archival_retry.archival_id == archival.archival_id
+        print(f"[ok] archival {archival.archival_id} is {archival.status.value}")
+
+        # 6. record_turn is for an exchange that was visible before ingestion.
+        historical = engine.record_turn(
+            AGENT_ID,
+            USER_ID,
+            "What is your name?",
+            "I am Lumi.",
+            turn_id="turn-history-001",
+            delivery_disposition=DeliveryDisposition.SHOWN_UNREVIEWED,
+            delivery_exception=_delivery_exception(
+                "preexisting_visible_exchange"
+            ),
+            processing_channels=[],
+        )
+        assert historical.source_turn_id == "turn-history-001"
+        print("[ok] recorded one preexisting visible exchange")
+
+        # 7. A generation failure can end without inventing an agent reply.
+        engine.begin_turn(
+            AGENT_ID,
+            USER_ID,
+            "This turn will be abandoned.",
+            turn_id="turn-abandoned-001",
+        )
+        abandoned = engine.abandon_turn(
+            AGENT_ID,
+            USER_ID,
+            "turn-abandoned-001",
+            reason="generation_failed",
+        )
+        assert abandoned.status == TurnStatus.ABANDONED
+        assert abandoned.transcript.agent_message is None
+        print(f"[ok] abandoned {abandoned.turn_id} without an agent message")
+
+        # 8. Reads remain scoped to this exact Agent x User relationship.
+        completed = engine.list_turns(
+            AGENT_ID,
+            USER_ID,
+            status=TurnStatus.COMPLETED,
+        )
+        restored = engine.get_turn(AGENT_ID, USER_ID, turn.turn_id)
+        attempts = engine.list_reply_attempts(AGENT_ID, USER_ID, turn.turn_id)
+        assert restored.status == TurnStatus.COMPLETED
+        assert len(attempts) == 1
+        print(f"[ok] listed {len(completed)} completed turns")
+
+        return {
+            "turn_id": restored.turn_id,
+            "turn_status": restored.status.value,
+            "completed_count": len(completed),
+            "attempt_count": len(attempts),
+            "archival_id": archival.archival_id,
+            "archival_status": archival.status.value,
+        }
+
+
+def main() -> None:
+    """Uses an auto-cleaned directory so the example never pollutes the CWD."""
+    print("E.R.I.I. Turn lifecycle integration example")
+    with TemporaryDirectory(prefix="erii-turn-example-") as temporary_dir:
+        summary = run_demo(Path(temporary_dir))
+    print(
+        "[ok] complete: "
+        f"turn={summary['turn_id']} archival={summary['archival_status']}"
     )
-    _receipt1 = engine.complete_turn(
-        "agent_lumi",
-        "user_chen",
-        "turn-color",
-        "好的，我记住了！你喜欢蓝色。",
-        delivery_disposition=DeliveryDisposition.SHOWN,
-        processing_channels=[SourceProcessingChannel.MEMORY_EXTRACTION],
-    )
-    engine.archive_turn("agent_lumi", "user_chen", "turn-color")
-    print("   ✓ First turn completed and archived")
-
-    # Second conversation (should recall previous)
-    print("\n3. Second conversation (with recall)...")
-    _turn2 = engine.begin_turn(
-        "agent_lumi", "user_chen", "我喜欢什么颜色？", turn_id="turn-recall-color"
-    )
-
-    # Recall should include the color preference
-    context = engine.recall_structured(
-        RecallRequest(agent_id="agent_lumi", user_id="user_chen", query="我喜欢什么颜色？")
-    )
-
-    print(f"   ✓ Recalled {len(context.memory_blocks)} memory blocks")
-    if context.memory_blocks:
-        print(f"   Sample memory: {context.memory_blocks[0].content[:50]}...")
-
-    # Generate reply using context (simplified)
-    reply = "你喜欢蓝色！我记得你之前告诉过我。"
-
-    _receipt2 = engine.complete_turn(
-        "agent_lumi",
-        "user_chen",
-        "turn-recall-color",
-        reply,
-        delivery_disposition=DeliveryDisposition.SHOWN,
-    )
-    print("   ✓ Second turn completed with recall")
-
-    engine.close()
-    print("\n✓ Example 6 completed!\n")
-
-
-def cleanup():
-    """Clean up demo data."""
-    import shutil
-    import os
-
-    if os.path.exists("./temp_demo"):
-        shutil.rmtree("./temp_demo")
-        print("✓ Cleaned up demo data")
 
 
 if __name__ == "__main__":
-    print("\n" + "=" * 60)
-    print("E.R.I.I. Turn Lifecycle Integration Examples")
-    print("=" * 60 + "\n")
-
-    try:
-        example_1_basic_two_phase_turn()
-        example_2_one_shot_turn()
-        example_3_error_handling()
-        example_4_turn_abandonment()
-        example_5_listing_and_querying()
-        example_6_full_integration()
-
-        print("=" * 60)
-        print("All examples completed successfully!")
-        print("=" * 60)
-
-    finally:
-        cleanup()
+    main()

@@ -74,8 +74,8 @@ class SourceMilestoneWorkflowContractTests(unittest.TestCase):
 
 class StableSourceContractTests(unittest.TestCase):
     def test_package_and_memory_pack_versions_have_independent_lifecycles(self) -> None:
-        self.assertEqual(erii.__version__, "0.5.0a2")
-        self.assertEqual(MemoryPack.CURRENT_VERSION, "0.5.0a2")
+        self.assertEqual(erii.__version__, "0.5.0a3")
+        self.assertEqual(MemoryPack.CURRENT_VERSION, "0.5.0a3")
 
     def test_python_support_contract_is_synchronized(self) -> None:
         pyproject = (REPOSITORY_ROOT / "pyproject.toml").read_text(encoding="utf-8")

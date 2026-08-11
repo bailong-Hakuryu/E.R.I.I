@@ -126,7 +126,7 @@ class ReferenceServerSecurityTests(unittest.TestCase):
     def test_reference_server_requires_constant_time_api_key_check(self):
         from fastapi.testclient import TestClient
 
-        api_key = "test-reference-server-key-1234567890"
+        api_key = "test-reference-server-" + ("x" * 32)
         server_module.configure_server_access(api_key)
         with TestClient(server_module.app) as client:
             missing = client.post("/api/v1/recall", json={})
@@ -149,7 +149,7 @@ class ReferenceServerSecurityTests(unittest.TestCase):
     def test_reference_server_rejects_ambiguous_duplicate_api_key_headers(self):
         from fastapi.testclient import TestClient
 
-        api_key = "test-reference-server-key-1234567890"
+        api_key = "test-reference-server-" + ("x" * 32)
         server_module.configure_server_access(api_key)
         with TestClient(server_module.app) as client:
             response = client.post(
@@ -310,7 +310,7 @@ class ReferenceServerSecurityTests(unittest.TestCase):
     def test_reference_server_rejects_oversized_request_before_routing(self):
         from fastapi.testclient import TestClient
 
-        api_key = "test-reference-server-key-1234567890"
+        api_key = "test-reference-server-" + ("x" * 32)
         server_module.configure_server_access(api_key)
         with TestClient(
             server_module.app,

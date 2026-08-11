@@ -126,18 +126,18 @@ class LifecycleTargetKind(str, Enum):
     BACKUP = "backup"
 
 
-_BACKUP_V1_V040_PRODUCER_FORMATS = {
-    LifecycleTargetKind.FILE_STORAGE: FormatCompatibility(
+_BACKUP_V1_HISTORICAL_PRODUCER_FORMATS = {
+    (LifecycleTargetKind.FILE_STORAGE, "1"): FormatCompatibility(
         format_id="erii.file-storage",
         current_version="1",
         readable_versions=("legacy", "1"),
     ),
-    LifecycleTargetKind.SQLITE: FormatCompatibility(
+    (LifecycleTargetKind.SQLITE, "9"): FormatCompatibility(
         format_id="erii.sqlite",
         current_version="9",
         readable_versions=tuple(str(version) for version in range(10)),
     ),
-    LifecycleTargetKind.MEMORY_PACK: FormatCompatibility(
+    (LifecycleTargetKind.MEMORY_PACK, "0.4.0a8"): FormatCompatibility(
         format_id="erii.memory-pack",
         current_version="0.4.0a8",
         readable_versions=(
@@ -151,6 +151,45 @@ _BACKUP_V1_V040_PRODUCER_FORMATS = {
             "0.4.0a6",
             "0.4.0a7",
             "0.4.0a8",
+        ),
+    ),
+    # Historical 0.5.0a1 source and the published 0.5.0a2 package artifact both
+    # wrote MemoryPack 0.5.0a1 into Backup-v1 source identities. Public post-tag
+    # a2 source checkouts also briefly wrote 0.5.0a2. These catalogs are frozen
+    # reader facts; they do not relax validation of live lifecycle plans.
+    (LifecycleTargetKind.MEMORY_PACK, "0.5.0a1"): FormatCompatibility(
+        format_id="erii.memory-pack",
+        current_version="0.5.0a1",
+        readable_versions=(
+            "0.1.0",
+            "0.2.0",
+            "0.4.0",
+            "0.4.0a2",
+            "0.4.0a3",
+            "0.4.0a4",
+            "0.4.0a5",
+            "0.4.0a6",
+            "0.4.0a7",
+            "0.4.0a8",
+            "0.5.0a1",
+        ),
+    ),
+    (LifecycleTargetKind.MEMORY_PACK, "0.5.0a2"): FormatCompatibility(
+        format_id="erii.memory-pack",
+        current_version="0.5.0a2",
+        readable_versions=(
+            "0.1.0",
+            "0.2.0",
+            "0.4.0",
+            "0.4.0a2",
+            "0.4.0a3",
+            "0.4.0a4",
+            "0.4.0a5",
+            "0.4.0a6",
+            "0.4.0a7",
+            "0.4.0a8",
+            "0.5.0a1",
+            "0.5.0a2",
         ),
     ),
 }
@@ -733,12 +772,12 @@ def _content_status_for_catalog(
 def _content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
     """Normalizes only frozen Backup-v1 producer catalogs before payload checks.
 
-    Backup v1 persists the producer's ``current_version`` and status. The v0.4
-    catalog therefore describes FileStorage v1, SQLite v9, and MemoryPack
-    v0.4.0a8 as current, while this reader correctly classifies them as migration
-    sources. Known v0.4 producer views are validated against their exact old
-    readable sets, then reclassified against the current catalog. Lifecycle
-    plans and live assessments remain current-catalog strict.
+    Backup v1 persists the producer's ``current_version`` and status. Frozen
+    released/source catalogs can therefore describe an older format as current,
+    while this reader correctly classifies it as a migration source. Known
+    producer views are validated against their exact old readable sets, then
+    reclassified against the current catalog. Lifecycle plans and live
+    assessments remain current-catalog strict.
     """
     if not isinstance(value, dict):
         return _content_from_dict(value)
@@ -746,7 +785,12 @@ def _content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
         kind = LifecycleTargetKind(value.get("kind"))
     except (TypeError, ValueError):
         return _content_from_dict(value)
-    historical = _BACKUP_V1_V040_PRODUCER_FORMATS.get(kind)
+    producer_current = value.get("current_version")
+    historical = (
+        _BACKUP_V1_HISTORICAL_PRODUCER_FORMATS.get((kind, producer_current))
+        if isinstance(producer_current, str)
+        else None
+    )
     if (
         historical is None
         or value.get("format_id") != historical.format_id

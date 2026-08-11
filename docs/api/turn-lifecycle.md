@@ -1,790 +1,338 @@
 # Turn Lifecycle API Reference
 
-**Version:** 0.5.0a2  
-**Status:** Stable  
-**Audience:** Host Integration Developers
+**Status:** alpha public contract
 
----
+**Verified against:** `ERIIEngine`, the REST models in `erii/server/app.py`, and
+`examples/08_turn_lifecycle_integration.py`
 
-## Overview
+The Turn lifecycle stores the exact conversation that was visible to the user.
+It separates transcript capture from recall, reply generation, continuity
+evaluation, archival, and relationship processing.
 
-The Turn Lifecycle API provides the canonical path for recording and processing chat interactions in E.R.I.I. It ensures that every conversation turn is:
+## Core invariants
 
-- **Traceable**: Each turn has a durable source record with content fingerprint
-- **Relationship-scoped**: Turns belong to exactly one `Agent × User` relationship
-- **Process-safe**: Concurrent writes are protected; retries are idempotent
-- **Portable**: Turns serialize into MemoryPack format for migration
+1. A relationship must already exist for the exact `agent_id` and `user_id`.
+2. `begin_turn()` stores the visible user message before a reply is generated.
+3. Failed or rejected drafts are not stored as transcript messages.
+4. `complete_turn()` stores only the agent reply actually displayed by the host.
+5. A Turn is `open`, `completed`, or `abandoned`; terminal transitions are
+   append-only.
+6. Every read and write is scoped to one Agent x User relationship.
+7. Archival is a separate operation with a required idempotency key.
+8. The host controls processing. Creating an engine does not start a hidden
+   reliable-archival thread.
 
----
+## Recommended flow
 
-## Architecture
-
-### Two-Phase Recording (Recommended)
-
+```text
+initialize relationship
+        |
+        v
+begin_turn(user_message) -> OPEN
+        |
+        +--> recall_structured(audience=...)
+        |
+        +--> generate candidate reply outside E.R.I.I.
+        |
+        +--> optionally evaluate_reply_continuity(...)
+        |
+        +--> generation failed: abandon_turn(reason=...) -> ABANDONED
+        |
+        v
+host displays reply
+        |
+        v
+complete_turn(displayed_reply, delivery truth) -> COMPLETED
+        |
+        +--> archive_turn(idempotency_key=...)
+        |
+        +--> process_relationship_turn(...) when that capability is configured
 ```
-begin_turn()        ← Opens turn, captures user message
-    ↓
-recall_structured() ← Fetch prior context (before new reply exists)
-    ↓
-[Host generates reply]
-    ↓
-complete_turn()     ← Seals agent reply and processing plan
-    ↓
-archive_turn()      ← Extract memories asynchronously
-```
 
-**Why two-phase?**
-- Recall sees only pre-reply context
-- Host controls generation and review
-- Processing happens after delivery
+Recall should happen after opening the Turn and before persisting the new agent
+reply. The recalled result does not mutate the Turn transcript.
 
-### One-Shot Recording (Alternative)
+## Python API
+
+### `begin_turn`
 
 ```python
-record_turn()  # Both messages already shown
-    ↓
-archive_turn()
-```
-
-Use when both messages are already delivered (e.g., importing historical data).
-
----
-
-## API Reference
-
-### begin_turn()
-
-Opens a new turn and persists the exact user message.
-
-```python
-def begin_turn(
-    self,
+begin_turn(
     agent_id: str,
     user_id: str,
     user_message: str,
     *,
-    turn_id: Optional[str] = None,
-    interaction_context: Sequence[InteractionContextSignal] = (),
+    turn_id: str | None = None,
+    interaction_context=(),
 ) -> TurnRecord
 ```
 
-**Parameters:**
+`interaction_context` accepts only `host_observed` signals through this public
+entry point. Callers must not supply internal relationship, Turn, or producer
+scope metadata.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `agent_id` | str | Yes | Stable agent identifier (not display name) |
-| `user_id` | str | Yes | Stable user identifier |
-| `user_message` | str | Yes | Exact visible user message content |
-| `turn_id` | str | No | Stable turn ID (UUID if omitted) |
-| `interaction_context` | Sequence | No | Host-observed context signals |
+An application-controlled `turn_id` is recommended. Repeating the same ID and
+same opening payload is idempotent. Reusing it for different content raises
+`TurnConflictError`.
 
-**Returns:** `TurnRecord` with status `OPEN`
-
-**Raises:**
-- `RelationshipNotFoundError` - Relationship not initialized
-- `TurnConflictError` - Turn ID already exists with different content
-- `ValueError` - Invalid parameters
-
-**Example:**
+### `evaluate_reply_continuity`
 
 ```python
-from erii import ERIIEngine
-
-engine = ERIIEngine(storage_dir="./data")
-
-# Initialize relationship first
-engine.initialize_relationship(
-    "agent_lumi",
-    "user_chen",
-    persona_source="...",
-    source_format="text/markdown"
-)
-
-# Open turn
-turn = engine.begin_turn(
-    "agent_lumi",
-    "user_chen",
-    "今天天气真好！",
-    turn_id="turn-2026-08-11-001"
-)
-
-print(f"Turn opened: {turn.turn_id}")
-print(f"Status: {turn.status}")
-# Output:
-# Turn opened: turn-2026-08-11-001
-# Status: TurnStatus.OPEN
+evaluate_reply_continuity(
+    agent_id: str,
+    user_id: str,
+    source_turn_id: str,
+    proposed_reply: str,
+    *,
+    persona_context_refs,
+    relationship_context_refs=(),
+    interaction_context=(),
+) -> ContinuityEvaluationResult
 ```
 
-**Best Practices:**
-- ✅ Use stable, application-generated turn IDs
-- ✅ Call before generating reply
-- ✅ Store turn_id for later completion
-- ❌ Don't use display names or temporary IDs
-- ❌ Don't open multiple turns for same ID
+This operation requires:
 
----
+- an open Turn;
+- a Persona Manifest frozen at Turn opening;
+- a configured continuity evaluator;
+- evidence references that resolve inside that frozen context.
 
-### complete_turn()
+The proposed reply is evaluated before delivery. A result is self-bound to the
+relationship, Turn, user message, Manifest, context baseline, and proposed reply.
+A result with a changed binding is rejected by `complete_turn()`.
 
-Seals the agent reply and marks the turn as completed.
+### `complete_turn`
 
 ```python
-def complete_turn(
-    self,
+complete_turn(
     agent_id: str,
     user_id: str,
     turn_id: str,
     agent_message: str,
     *,
-    continuity_assessment: Optional[ContinuityAssessment] = None,
-    continuity_result: Optional[ContinuityEvaluationResult] = None,
-    delivery_exception: Optional[DeliveryExceptionRecord] = None,
-    delivery_disposition: Optional[DeliveryDisposition] = None,
-    processing_channels: Optional[
-        Sequence[Union[SourceProcessingChannel, str]]
-    ] = None,
-) -> TurnReceipt
-```
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `agent_id` | str | Yes | Same as begin_turn |
-| `user_id` | str | Yes | Same as begin_turn |
-| `turn_id` | str | Yes | Same as begin_turn |
-| `agent_message` | str | Yes | Exact visible agent reply |
-| `continuity_assessment` | ContinuityAssessment | No | Continuity evaluation status |
-| `continuity_result` | ContinuityEvaluationResult | No | Detailed continuity data |
-| `delivery_exception` | DeliveryExceptionRecord | No | If reply shown unreviewed |
-| `delivery_disposition` | DeliveryDisposition | No | How reply was delivered |
-| `processing_channels` | Sequence | No | Which processing to enable |
-
-**Returns:** `TurnReceipt` with final status and content fingerprints
-
-**Raises:**
-- `TurnNotFoundError` - Turn doesn't exist
-- `TurnConflictError` - Turn already completed with different content
-- `TurnTerminalConflictError` - Turn in terminal state (completed/abandoned)
-
-**Example:**
-
-```python
-# After generating reply
-receipt = engine.complete_turn(
-    "agent_lumi",
-    "user_chen",
-    "turn-2026-08-11-001",
-    "是啊！我们可以出去走走。",
+    continuity_assessment=None,
+    continuity_result=None,
+    delivery_exception=None,
     delivery_disposition=DeliveryDisposition.SHOWN,
-    processing_channels=[
-        SourceProcessingChannel.MEMORY_EXTRACTION,
-        SourceProcessingChannel.RELATIONSHIP_EVENT_EXTRACTION
-    ]
-)
-
-print(f"Turn completed: {receipt.turn_id}")
-print(f"User message fingerprint: {receipt.user_message_fingerprint}")
-print(f"Agent message fingerprint: {receipt.agent_message_fingerprint}")
+    processing_channels=None,
+) -> SourceTurnReceipt
 ```
 
-**Best Practices:**
-- ✅ Only seal messages actually shown to user
-- ✅ Specify processing channels explicitly
-- ✅ Include continuity assessment if available
-- ❌ Don't seal draft/rejected replies
-- ❌ Don't modify content after sealing
+`SourceTurnReceipt` contains non-transcript acceptance metadata:
 
----
+- `source_turn_id`
+- `relationship_id`
+- `source_revision`
+- `accepted_at`
+- `processing_plan`
+- `processing_outcomes`
 
-### abandon_turn()
+It does not have `turn_id`, `task_id`, `state`, transcript, or message
+fingerprint fields. Use `get_turn()` to read the stored transcript.
 
-Abandons an open turn without recording an agent reply.
+There are three delivery branches:
+
+| Disposition | Required evidence | Delivery exception |
+|---|---|---|
+| `shown` | full `ContinuityEvaluationResult` | absent |
+| `overridden` | full `ContinuityEvaluationResult` | required |
+| `shown_unreviewed` | no successful continuity result | required |
+
+An identical completion retry returns the existing receipt. A changed terminal
+payload raises `TurnTerminalConflictError`, which is a `TurnConflictError`.
+
+### `record_reply_attempt_failure`
 
 ```python
-def abandon_turn(
-    self,
+record_reply_attempt_failure(
     agent_id: str,
     user_id: str,
     turn_id: str,
-) -> TurnReceipt
+    *,
+    attempt_number: int,
+    stage: ReplyAttemptStage | str,
+    capability_descriptor: str,
+    failure_classification: str,
+) -> ReplyAttemptRecord
 ```
 
-**Parameters:**
+Valid stages are `generation`, `continuity_evaluation`, and
+`delivery_preparation`. This stores sanitized failure metadata, not a draft.
+Use `list_reply_attempts(agent_id, user_id, turn_id)` to read the records.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `agent_id` | str | Yes | Same as begin_turn |
-| `user_id` | str | Yes | Same as begin_turn |
-| `turn_id` | str | Yes | Turn to abandon |
-
-**Returns:** `TurnReceipt` with status `ABANDONED`
-
-**Raises:**
-- `TurnNotFoundError` - Turn doesn't exist
-- `TurnTerminalConflictError` - Turn already in terminal state
-
-**Example:**
+### `abandon_turn`
 
 ```python
-try:
-    # Try to generate reply
-    reply = generate_reply(user_message)
-except Exception as e:
-    # Generation failed, abandon turn
-    receipt = engine.abandon_turn(
-        "agent_lumi",
-        "user_chen",
-        "turn-2026-08-11-001"
-    )
-    print(f"Turn abandoned: {receipt.turn_id}")
+abandon_turn(
+    agent_id: str,
+    user_id: str,
+    turn_id: str,
+    *,
+    reason: str,
+) -> TurnRecord
 ```
 
-**Use Cases:**
-- Generation failures
-- User cancellation
-- Safety filter rejection
-- Connection loss before reply
+The required `reason` is a compact machine-readable key. An abandoned Turn keeps
+the user message and has no agent message. Retrying with the same reason is
+idempotent; a different terminal transition conflicts.
 
----
-
-### record_turn()
-
-One-shot recording when both messages are already delivered.
+### `record_turn`
 
 ```python
-def record_turn(
-    self,
+record_turn(
     agent_id: str,
     user_id: str,
     user_message: str,
     agent_message: str,
     *,
-    turn_id: Optional[str] = None,
-    interaction_context: Sequence[InteractionContextSignal] = (),
-    continuity_assessment: Optional[ContinuityAssessment] = None,
-    continuity_result: Optional[ContinuityEvaluationResult] = None,
-    delivery_exception: Optional[DeliveryExceptionRecord] = None,
-    delivery_disposition: Optional[DeliveryDisposition] = None,
-    processing_channels: Optional[
-        Sequence[Union[SourceProcessingChannel, str]]
-    ] = None,
-) -> TurnReceipt
+    turn_id: str | None = None,
+    continuity_assessment=None,
+    delivery_exception=None,
+    delivery_disposition=DeliveryDisposition.SHOWN_UNREVIEWED,
+    processing_channels=None,
+) -> SourceTurnReceipt
 ```
 
-**Parameters:** Combination of begin_turn + complete_turn
+Use this only when both messages were already visible before E.R.I.I. received
+them. It requires:
 
-**Returns:** `TurnReceipt` with status `COMPLETED`
+- `shown_unreviewed`;
+- a `DeliveryExceptionRecord` whose reason is
+  `preexisting_visible_exchange`.
 
-**Example:**
+It cannot retroactively establish a successful continuity review.
+
+### Read operations
 
 ```python
-# Import historical conversation
-receipt = engine.record_turn(
-    "agent_lumi",
-    "user_chen",
-    user_message="你好！",
-    agent_message="你好！很高兴认识你。",
-    turn_id="historical-turn-001",
-    delivery_disposition=DeliveryDisposition.SHOWN
-)
+get_turn(agent_id, user_id, turn_id) -> TurnRecord
+list_turns(agent_id, user_id, *, status=None) -> list[TurnRecord]
 ```
 
-**Use Cases:**
-- Importing historical data
-- External chat systems integration
-- Batch recording
+`status` is absent or one of `open`, `completed`, and `abandoned`. Listing uses
+durable opening order and never crosses the relationship boundary.
 
----
-
-### get_turn()
-
-Retrieves a single turn by ID.
+### `archive_turn`
 
 ```python
-def get_turn(
-    self,
+archive_turn(
     agent_id: str,
     user_id: str,
-    turn_id: str,
-) -> TurnRecord
-```
-
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `agent_id` | str | Yes | Agent identifier |
-| `user_id` | str | Yes | User identifier |
-| `turn_id` | str | Yes | Turn identifier |
-
-**Returns:** `TurnRecord`
-
-**Raises:**
-- `TurnNotFoundError` - Turn doesn't exist in this relationship
-
-**Example:**
-
-```python
-turn = engine.get_turn(
-    "agent_lumi",
-    "user_chen",
-    "turn-2026-08-11-001"
-)
-
-print(f"Status: {turn.status}")
-print(f"User: {turn.transcript.user_message.content}")
-if turn.transcript.agent_message:
-    print(f"Agent: {turn.transcript.agent_message.content}")
-```
-
----
-
-### list_turns()
-
-Lists all turns for a relationship.
-
-```python
-def list_turns(
-    self,
-    agent_id: str,
-    user_id: str,
+    source_turn_id: str,
     *,
-    status: Optional[Union[TurnStatus, str]] = None,
-) -> List[TurnRecord]
+    idempotency_key: str,
+) -> ArchivalReceipt | ArchivalTombstone
 ```
 
-**Parameters:**
+Archival requires a configured memory extractor and an existing completed Turn.
+The return object uses `archival_id`, `status`, `phase`, `outcome_code`,
+`retryable`, and safe operational metadata. It does not expose the transcript.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `agent_id` | str | Yes | Agent identifier |
-| `user_id` | str | Yes | User identifier |
-| `status` | TurnStatus | No | Filter by status |
+- `ERIIConfig(async_archival=False)` processes the submission inline.
+- `ERIIConfig(async_archival=True)` durably accepts it for later processing.
+- A host can call `process_pending(max_tasks=...)` explicitly.
+- `ERIIEngine.start()` starts only the legacy `remember()` worker; it is not the
+  lifecycle control for reliable Turn archival.
 
-**Returns:** List of `TurnRecord` in opening order
+An identical idempotency-key retry resolves to the same archival identity. A key
+reused for a different immutable intent raises `ArchivalConflictError`.
 
-**Example:**
-
-```python
-from erii import TurnStatus
-
-# All turns
-all_turns = engine.list_turns("agent_lumi", "user_chen")
-print(f"Total turns: {len(all_turns)}")
-
-# Only completed turns
-completed = engine.list_turns(
-    "agent_lumi",
-    "user_chen",
-    status=TurnStatus.COMPLETED
-)
-print(f"Completed: {len(completed)}")
-
-# Only open turns
-open_turns = engine.list_turns(
-    "agent_lumi",
-    "user_chen",
-    status=TurnStatus.OPEN
-)
-print(f"Open: {len(open_turns)}")
-```
-
----
-
-### archive_turn()
-
-Asynchronously extracts memories from a completed turn.
+### Relationship processing
 
 ```python
-def archive_turn(
-    self,
+process_relationship_turn(
     agent_id: str,
     user_id: str,
-    turn_id: str,
+    source_turn_id: str,
     *,
-    accepted_relationship_events: Sequence[RelationshipEvent] = (),
-    enable_persona_context: bool = True,
-) -> ArchivalSubmission
+    processing_mode="normal",
+    reprocessing_id: str | None = None,
+) -> RelationshipProcessingRun
 ```
 
-**Parameters:**
+This synchronous operation requires a configured relationship-event extractor.
+`processing_mode` is `normal` or `historical_reprocessing`. Historical mode uses
+an explicit `reprocessing_id`. The result has `processing_id`, `status`,
+`outcome`, decision/event IDs, frozen extraction output, and provenance fields;
+it is not an archival task receipt.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `agent_id` | str | Yes | Agent identifier |
-| `user_id` | str | Yes | User identifier |
-| `turn_id` | str | Yes | Completed turn ID |
-| `accepted_relationship_events` | Sequence | No | Pre-adjudicated events |
-| `enable_persona_context` | bool | No | Include persona in recall |
-
-**Returns:** `ArchivalSubmission` with task ID
-
-**Raises:**
-- `ArchivalSubmissionError` - Turn not archivable
-
-**Example:**
+## Minimal direct-Python example
 
 ```python
-# Submit for archival
-submission = engine.archive_turn(
-    "agent_lumi",
-    "user_chen",
-    "turn-2026-08-11-001"
-)
+from erii import DeliveryDisposition, ERIIEngine
 
-print(f"Archival task: {submission.task_id}")
-print(f"State: {submission.state}")
+delivery_exception = {
+    "exception_record_version": "delivery-exception-record/v1",
+    "disposition": "shown_unreviewed",
+    "actor_kind": "host_policy",
+    "actor_id": "HOST_COMPONENT/v1",
+    "reason_code": "availability_fallback",
+    "decided_at": "TIMESTAMP",
+    "reply_attempt_number": None,
+}
 
-# Wait for completion (if synchronous config)
-# Task processes in background by default
+with ERIIEngine(storage_dir="DATA_DIR") as engine:
+    engine.initialize_relationship("AGENT", "USER", "PERSONA_SOURCE")
+    turn = engine.begin_turn(
+        "AGENT",
+        "USER",
+        "VISIBLE_USER_MESSAGE",
+        turn_id="HOST_TURN_ID",
+    )
+
+    # Generate and display the reply in the host application first.
+    receipt = engine.complete_turn(
+        "AGENT",
+        "USER",
+        turn.turn_id,
+        "VISIBLE_AGENT_REPLY",
+        delivery_disposition=DeliveryDisposition.SHOWN_UNREVIEWED,
+        delivery_exception=delivery_exception,
+        processing_channels=[],
+    )
+    assert receipt.source_turn_id == turn.turn_id
 ```
 
-**Processing:**
-- Extracts memory nodes
-- Updates recall index
-- Processes relationship events
-- Runs asynchronously by default
+For an executable archival and recall flow, run:
 
----
-
-### process_relationship_turn()
-
-Extracts and adjudicates relationship events from a turn.
-
-```python
-def process_relationship_turn(
-    self,
-    agent_id: str,
-    user_id: str,
-    turn_id: str,
-    *,
-    force_reextraction: bool = False,
-) -> RelationshipTurnProcessingResult
+```bash
+python examples/08_turn_lifecycle_integration.py
 ```
 
-**Parameters:**
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `agent_id` | str | Yes | Agent identifier |
-| `user_id` | str | Yes | User identifier |
-| `turn_id` | str | Yes | Turn to process |
-| `force_reextraction` | bool | No | Re-run extraction |
-
-**Returns:** `RelationshipTurnProcessingResult`
-
-**Example:**
-
-```python
-result = engine.process_relationship_turn(
-    "agent_lumi",
-    "user_chen",
-    "turn-2026-08-11-001"
-)
-
-print(f"Accepted events: {len(result.accepted_events)}")
-for event in result.accepted_events:
-    print(f"  - {event.event_type}: {event.description}")
-```
-
----
-
-## Data Models
-
-### TurnRecord
-
-```python
-@dataclass
-class TurnRecord:
-    turn_id: str
-    status: TurnStatus
-    transcript: TurnTranscript
-    context_snapshot: Optional[TurnContextSnapshot]
-    opened_at: str
-    completed_at: Optional[str]
-```
-
-### TurnStatus
-
-```python
-class TurnStatus(str, Enum):
-    OPEN = "open"
-    COMPLETED = "completed"
-    ABANDONED = "abandoned"
-```
-
-### TurnReceipt
-
-```python
-@dataclass
-class TurnReceipt:
-    turn_id: str
-    status: TurnStatus
-    user_message_fingerprint: str
-    agent_message_fingerprint: Optional[str]
-    processing_plan: ProcessingPlan
-```
-
----
-
-## Error Handling
-
-### Exception Hierarchy
-
-```
-TurnLifecycleError (base)
-├── TurnNotFoundError
-├── TurnConflictError
-└── TurnTerminalConflictError
-```
-
-### Common Errors
-
-#### TurnNotFoundError
-
-**Cause:** Turn ID doesn't exist in this relationship
-
-**Example:**
-```python
-try:
-    turn = engine.get_turn("agent", "user", "nonexistent-turn")
-except TurnNotFoundError as e:
-    print(f"Turn not found: {e}")
-    # Handle: create new turn or use different ID
-```
-
-#### TurnConflictError
-
-**Cause:** Turn ID exists with different content
-
-**Example:**
-```python
-try:
-    engine.begin_turn("agent", "user", "Hello", turn_id="turn-1")
-    engine.begin_turn("agent", "user", "Hi", turn_id="turn-1")  # Different content!
-except TurnConflictError as e:
-    print(f"Content mismatch: {e}")
-    # Handle: use new turn_id or check for retry
-```
-
-**Recovery:** Check if this is a retry with same content, or use new ID.
-
-#### TurnTerminalConflictError
-
-**Cause:** Turn already completed or abandoned
-
-**Example:**
-```python
-try:
-    engine.complete_turn("agent", "user", "turn-1", "Reply")
-    engine.complete_turn("agent", "user", "turn-1", "Another reply")  # Already terminal!
-except TurnTerminalConflictError as e:
-    print(f"Turn already sealed: {e}")
-    # Handle: this is not retryable, use new turn
-```
-
-**Recovery:** Cannot modify terminal turns. Create new turn if needed.
-
----
-
-## Best Practices
-
-### 1. Use Stable IDs
-
-```python
-# ✅ Good: Application-controlled ID
-turn_id = f"turn-{conversation_id}-{sequence_number}"
-
-# ❌ Bad: Temporary or display-based ID
-turn_id = f"turn-{datetime.now()}"  # Not stable across retries
-```
-
-### 2. Separate Recall and Generation
-
-```python
-# ✅ Good: Recall before new content exists
-turn = engine.begin_turn(agent_id, user_id, user_message)
-context = engine.recall_structured(...)  # Prior context only
-reply = generate_with_context(user_message, context)
-engine.complete_turn(agent_id, user_id, turn.turn_id, reply)
-
-# ❌ Bad: Recall after completion
-turn = engine.record_turn(...)  # New content already exists
-context = engine.recall_structured(...)  # Sees its own turn!
-```
-
-### 3. Handle Retries Idempotently
-
-```python
-def record_safely(agent_id, user_id, turn_id, user_msg, agent_msg):
-    try:
-        return engine.complete_turn(agent_id, user_id, turn_id, agent_msg)
-    except TurnConflictError as e:
-        # Check if this is a retry with same content
-        turn = engine.get_turn(agent_id, user_id, turn_id)
-        if turn.transcript.agent_message.content == agent_msg:
-            return turn  # Idempotent retry
-        else:
-            raise  # Different content, real conflict
-```
-
-### 4. Seal Only Shown Messages
-
-```python
-# ✅ Good: Only seal what user actually saw
-if safety_check_passed and user_saw_reply:
-    engine.complete_turn(..., delivery_disposition=DeliveryDisposition.SHOWN)
-
-# ❌ Bad: Seal rejected/draft content
-draft = generate_reply()
-if not safety_check(draft):
-    engine.complete_turn(..., agent_message=draft)  # Don't seal bad content!
-```
-
-### 5. Specify Processing Channels
-
-```python
-# ✅ Good: Explicit channels
-engine.complete_turn(
-    ...,
-    processing_channels=[
-        SourceProcessingChannel.MEMORY_EXTRACTION,
-        SourceProcessingChannel.RELATIONSHIP_EVENT_EXTRACTION
-    ]
-)
-
-# ⚠️ Okay: Default channels (memory only)
-engine.complete_turn(...)  # Uses defaults
-```
-
----
-
-## Performance Considerations
-
-### Concurrent Access
-
-Turn recording is **concurrency-safe**:
-- Multiple `begin_turn()` with same ID → first wins, others get TurnConflictError
-- Multiple `complete_turn()` with same ID → first wins, others get TurnTerminalConflictError
-- Exactly-one-winner guarantee
-
-### Batch Operations
-
-For importing historical data:
-
-```python
-# Process in batches
-for batch in chunks(historical_turns, size=100):
-    with engine.storage.batch_mode():  # If supported
-        for turn_data in batch:
-            engine.record_turn(...)
-```
-
-### Async Processing
-
-Archival runs asynchronously by default:
-
-```python
-# Non-blocking
-submission = engine.archive_turn(...)
-# Returns immediately, processes in background
-
-# Blocking (if needed)
-engine = ERIIEngine(
-    storage_dir="...",
-    config=ERIIConfig(async_archival=False)
-)
-submission = engine.archive_turn(...)  # Blocks until complete
-```
-
----
-
-## Migration and Portability
-
-### Export Turns
-
-```python
-# Export entire relationship
-pack = engine.export_memory("agent_lumi", "user_chen")
-
-# pack.turns contains all turn transcripts with fingerprints
-for turn in pack.turns:
-    print(f"{turn.turn_id}: {turn.user_message_fingerprint}")
-```
-
-### Import Turns
-
-```python
-# Import into new relationship
-engine.import_memory(pack, agent_id="agent_lumi", user_id="new_user")
-# All turns restored with source provenance
-```
-
----
-
-## Troubleshooting
-
-### Turn Not Archiving
-
-**Symptom:** `archive_turn()` succeeds but no memories extracted
-
-**Causes:**
-1. Turn not completed
-2. Processing channels not enabled
-3. Archival worker not running
-
-**Check:**
-```python
-turn = engine.get_turn(agent_id, user_id, turn_id)
-print(f"Status: {turn.status}")  # Must be COMPLETED
-
-# Check archival status
-from erii import ArchivalStatus
-status = engine.storage.get_archival_status(turn_id)
-print(f"Archival: {status}")
-```
-
-### Duplicate Turn IDs
-
-**Symptom:** TurnConflictError on different machines
-
-**Cause:** Turn ID not globally unique
-
-**Fix:**
-```python
-import uuid
-
-# Include machine/session ID
-turn_id = f"turn-{machine_id}-{uuid.uuid4()}"
-```
-
-### Missing Context
-
-**Symptom:** Recall returns empty context after recording turns
-
-**Cause:** Archival not completed yet
-
-**Fix:**
-```python
-# Wait for archival (development only)
-engine = ERIIEngine(
-    storage_dir="...",
-    config=ERIIConfig(async_archival=False)
-)
-
-# Or check archival status
-submission = engine.archive_turn(...)
-# Poll submission.state until COMPLETED
-```
-
----
-
-## See Also
-
-- [Host Integration Guide](../host-integration.md)
-
----
-
-**Last Updated:** 2026-08-11  
-**API Stability:** Golden (v0.5.0+)
+The example is offline, uses a temporary directory, and prints only ASCII-safe
+status output.
+
+## REST routes
+
+All non-public routes use the single-owner `X-API-Key` reference-server header.
+This header is service-side authority and must not be embedded in browser code.
+
+| Method | Route | Result |
+|---|---|---|
+| `POST` | `/api/v1/turns/open` | `201`, `{status, turn}` |
+| `POST` | `/api/v1/turns` | `{status, receipt}` |
+| `GET` | `/api/v1/turns` | `{status, turns}` |
+| `GET` | `/api/v1/turns/{turn_id}` | `{status, turn}` |
+| `POST` | `/api/v1/turns/{turn_id}/continuity/evaluate` | `{status, result}` |
+| `POST` | `/api/v1/turns/{turn_id}/complete` | `{status, receipt}` |
+| `POST` | `/api/v1/turns/{turn_id}/reply-attempts` | `201`, `{status, attempt}` |
+| `GET` | `/api/v1/turns/{turn_id}/reply-attempts` | `{status, attempts}` |
+| `POST` | `/api/v1/turns/{turn_id}/abandon` | `{status, turn}` |
+| `POST` | `/api/v1/archivals` | `200` or `202`, `{receipt}` |
+| `GET` | `/api/v1/archivals/{archival_id}` | `{receipt}` |
+
+The REST completion model deliberately accepts only:
+
+- a full continuity result with `shown` or `overridden`; or
+- `shown_unreviewed` with a delivery exception.
+
+REST `record_turn` also requires a delivery exception. Validation failures use
+the stable error contract described in
+[Turn error handling](turn-error-handling.md).
+
+## Related documents
+
+- [Advanced Turn usage](turn-advanced-usage.md)
+- [Turn error handling](turn-error-handling.md)
+- [REST archival boundary ADR](../adr/0068-map-archival-lifecycle-truthfully-at-the-rest-boundary.md)
+- [Executable example](../../examples/08_turn_lifecycle_integration.py)

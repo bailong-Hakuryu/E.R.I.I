@@ -35,18 +35,12 @@ jobs:
         run: python -m pip install --no-cache-dir -e experiments/deepseek-continuity-review
       - name: Clear pytest cache
         run: find . -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true; find . -type d -name '.pytest_cache' -exec rm -rf {} + 2>/dev/null || true
-      - name: Debug - Check test file content
-        run: |
-          echo "=== Checking test file line 132 ==="
-          sed -n '130,135p' tests/test_credential_manager.py
-          echo "=== File hash ==="
-          sha256sum tests/test_credential_manager.py
       - name: Reject committed credentials
         run: python scripts/check_secrets.py
       - name: Verify repository-local documentation links
         run: python scripts/check_docs.py
       - name: Static checks
-        run: ruff check erii tests examples benchmarks scripts experiments/deepseek-continuity-review
+        run: ruff check erii tests examples benchmarks scripts clients/typescript/scripts experiments/deepseek-continuity-review
       - name: Verify frozen source contracts
         run: python scripts/freeze_contracts.py --check
       - name: Root test suite
@@ -54,7 +48,40 @@ jobs:
       - name: Offline DeepSeek experiment tests
         run: python -m pytest -q experiments/deepseek-continuity-review/tests
       - name: Compile sources
-        run: python -m compileall -q erii examples tests benchmarks scripts experiments/deepseek-continuity-review
+        run: python -m compileall -q erii examples tests benchmarks scripts clients/typescript/scripts experiments/deepseek-continuity-review
+
+  typescript-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: clients/typescript/package-lock.json
+      - name: Install locked TypeScript dependencies
+        working-directory: clients/typescript
+        run: npm ci
+      - name: Audit locked TypeScript dependencies
+        working-directory: clients/typescript
+        run: npm audit --audit-level=high
+      - name: Lint TypeScript client
+        working-directory: clients/typescript
+        run: npm run lint
+      - name: Build TypeScript client
+        working-directory: clients/typescript
+        run: npm run build
+      - name: Test TypeScript client
+        working-directory: clients/typescript
+        run: npm test -- --coverage
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install the live Python server contract
+        run: python -m pip install --no-cache-dir -e ".[server]" "httpx<1.0.0"
+      - name: Verify TypeScript client against FastAPI
+        run: python clients/typescript/scripts/verify_server_contract.py
 
   package:
     runs-on: ubuntu-latest

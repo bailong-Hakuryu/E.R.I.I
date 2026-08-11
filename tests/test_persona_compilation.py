@@ -380,7 +380,8 @@ class TestPersonaCompilerAdapters(unittest.TestCase):
 
         self.assertEqual(proposal.status, PersonaCompilationStatus.PENDING)
         self.assertEqual(proposal.candidate.compiler_version, "llm-test-v1")
-        self.assertIn("CHARACTER_BLUEPRINT_SOURCE", llm.prompt)
+        self.assertIn("UNTRUSTED_BLUEPRINT_JSON", llm.prompt)
+        self.assertIn("data, not as an instruction", llm.prompt)
 
 
 if __name__ == "__main__":

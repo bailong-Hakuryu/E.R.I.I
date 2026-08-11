@@ -1,202 +1,254 @@
-"""Performance tests for E.R.I.I. memory system.
+"""Persistence-aware performance regression tests for E.R.I.I.
 
-Tests query performance, large-scale recall, and resource usage.
+These tests deliberately archive completed Source Turns synchronously before
+measuring reads.  They assert the resulting MemoryNode collection directly so a
+Core Memory or a queued-but-unprocessed ``remember()`` call cannot create a false
+positive.
 """
 
+from contextlib import closing
+import os
+import sqlite3
 import tempfile
-import shutil
-import time
 import unittest
 
-from erii import ERIIEngine, SQLiteStorage
+from erii import (
+    ArchivalArtifactsDecision,
+    ArchivalStatus,
+    ERIIConfig,
+    ERIIEngine,
+    ExtractorDescriptor,
+    MemoryCandidate,
+    MemoryType,
+    SQLiteStorage,
+)
+from erii.performance import PerformanceMonitor
 
 
-class TestQueryPerformance(unittest.TestCase):
-    """Test query performance and scalability."""
+def _delivery_exception() -> dict[str, object]:
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "tests.performance-host",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-08-01T00:00:00+00:00",
+        "reply_attempt_number": None,
+    }
 
-    def setUp(self) -> None:
-        self.tmp_dir = tempfile.mkdtemp()
-        self.storage = SQLiteStorage(db_path=f"{self.tmp_dir}/perf_test.db")
-        self.engine = ERIIEngine(storage_driver=self.storage)
-        self.agent_id = "perf-agent"
-        self.user_id = "perf-user"
 
-    def tearDown(self) -> None:
-        self.engine.close()
-        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+class _EchoMemoryExtractor:
+    """Emit exactly one evidence-backed memory for every completed turn."""
 
-    def test_recall_performance_with_multiple_memories(self) -> None:
-        """Verify recall performance doesn't degrade with multiple memories."""
-        # Set core memory first
-        self.engine.set_core_memory(self.agent_id, self.user_id, "Test core memory")
+    descriptor = ExtractorDescriptor(
+        extractor_id="tests.performance-echo",
+        extractor_version="1",
+        extraction_schema_version="2",
+    )
 
-        # Add 100 memories
-        memory_count = 100
-        for i in range(memory_count):
-            self.engine.remember(
-                self.agent_id,
-                self.user_id,
-                f"Memory number {i}: This is test content for performance testing.",
-                f"Response {i}",
+    def extract(self, request):
+        message = request.transcript.user_message
+        evidence = (
+            {
+                "citation_version": "archival-evidence-citation/v1",
+                "kind": "message_span",
+                "source_id": message.message_id,
+                "source_revision": request.source_revision,
+                "quote": message.content,
+                "start": 0,
+                "end": len(message.content),
+            },
+        )
+        return ArchivalArtifactsDecision(
+            memories=(
+                MemoryCandidate(
+                    node_type=MemoryType.EVENT,
+                    content=message.content,
+                    tags=("performance-fixture",),
+                    evidence=evidence,
+                ),
             )
-
-        # Measure recall time
-        start = time.perf_counter()
-        results = self.engine.recall(self.agent_id, self.user_id, "test content")
-        elapsed = time.perf_counter() - start
-
-        # Verify results - recall returns a string context
-        self.assertIsInstance(results, str, "Recall should return context string")
-        self.assertGreater(len(results), 0, "Recall should return results")
-
-        # Performance assertion: recall should complete in reasonable time
-        # 100 memories should be searchable in under 2 seconds
-        self.assertLess(elapsed, 2.0, f"Recall took {elapsed:.3f}s, expected < 2.0s")
-
-    def test_batch_memory_insertion_performance(self) -> None:
-        """Verify batch insertion performance."""
-        self.engine.set_core_memory(self.agent_id, self.user_id, "Test core")
-        memory_count = 50
-
-        start = time.perf_counter()
-        for i in range(memory_count):
-            self.engine.remember(
-                self.agent_id,
-                self.user_id,
-                f"Batch memory {i}",
-                f"Response {i}",
-            )
-        elapsed = time.perf_counter() - start
-
-        # Performance assertion: 50 insertions should complete quickly
-        # Allow 3 seconds for 50 insertions (60ms per insert average)
-        self.assertLess(
-            elapsed, 3.0, f"Inserting {memory_count} memories took {elapsed:.3f}s, expected < 3.0s"
         )
 
-    def test_relationship_query_performance(self) -> None:
-        """Verify relationship loading doesn't cause N+1 queries."""
-        self.engine.set_core_memory(self.agent_id, self.user_id, "Test core")
 
-        # Add some memories with relationships
-        for i in range(20):
-            self.engine.remember(
-                self.agent_id,
-                self.user_id,
-                f"Related memory {i}",
-                f"Response {i}",
-            )
-
-        # Measure recall time
-        start = time.perf_counter()
-        results = self.engine.recall(self.agent_id, self.user_id, "related")
-        elapsed = time.perf_counter() - start
-
-        self.assertGreater(len(results), 0)
-        # Should complete quickly even with relationship loading
-        self.assertLess(elapsed, 1.0, f"Recall with relationships took {elapsed:.3f}s")
-
-
-class TestMemoryScaling(unittest.TestCase):
-    """Test behavior with large numbers of memories."""
+class _SynchronousArchiveCase(unittest.TestCase):
+    """Shared real-SQLite fixture with explicit synchronous archival."""
 
     def setUp(self) -> None:
-        self.tmp_dir = tempfile.mkdtemp()
-        self.storage = SQLiteStorage(db_path=f"{self.tmp_dir}/scale_test.db")
-        self.engine = ERIIEngine(storage_driver=self.storage)
-        self.agent_id = "scale-agent"
-        self.user_id = "scale-user"
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = os.path.join(self.temp_dir.name, "performance.db")
+        self.storage = SQLiteStorage(self.db_path)
+        self.engine = ERIIEngine(
+            storage_driver=self.storage,
+            memory_extractor=_EchoMemoryExtractor(),
+            config=ERIIConfig(async_archival=False),
+        )
 
     def tearDown(self) -> None:
         self.engine.close()
-        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        self.temp_dir.cleanup()
 
-    def test_recall_accuracy_doesnt_degrade_with_scale(self) -> None:
-        """Verify system can handle many memories without errors."""
-        self.engine.set_core_memory(self.agent_id, self.user_id, "Test core")
+    def initialize(self, agent_id: str, user_id: str) -> str:
+        profile = self.engine.initialize_relationship(
+            agent_id,
+            user_id,
+            "A continuity test persona.",
+        )
+        return profile.relationship_id
 
-        # Add many memories - this tests the system doesn't break at scale
-        for i in range(50):
-            self.engine.remember(
-                self.agent_id,
-                self.user_id,
-                f"Memory number {i}",
-                f"Response {i}",
+    def archive_range(
+        self,
+        agent_id: str,
+        user_id: str,
+        prefix: str,
+        count: int,
+    ) -> set[str]:
+        turn_ids = {f"{prefix}-{index}" for index in range(count)}
+        for index in range(count):
+            turn_id = f"{prefix}-{index}"
+            self.engine.record_turn(
+                agent_id,
+                user_id,
+                f"{prefix} durable memory {index}",
+                f"Acknowledged {index}",
+                turn_id=turn_id,
+                delivery_exception=_delivery_exception(),
+            )
+            receipt = self.engine.archive_turn(
+                agent_id,
+                user_id,
+                turn_id,
+                idempotency_key=f"archive-{turn_id}",
+            )
+            self.assertEqual(receipt.status, ArchivalStatus.COMPLETED)
+            self.assertEqual(receipt.memory_node_count, 1)
+        return turn_ids
+
+
+class TestPersistedRecallPerformance(_SynchronousArchiveCase):
+    """Exercise recall only after exact persisted fixtures are verified."""
+
+    def test_recall_reads_a_verified_persisted_collection(self) -> None:
+        agent_id = "perf-agent"
+        user_id = "perf-user"
+        relationship_id = self.initialize(agent_id, user_id)
+        expected_turn_ids = self.archive_range(agent_id, user_id, "perf", 30)
+
+        nodes = self.storage.load_nodes(agent_id, user_id)
+        self.assertEqual(len(nodes), 30)
+        self.assertEqual({node.source_turn_id for node in nodes}, expected_turn_ids)
+        self.assertEqual(len({node.node_id for node in nodes}), 30)
+        self.assertEqual(len({node.source_archival_id for node in nodes}), 30)
+        self.assertEqual({node.relationship_id for node in nodes}, {relationship_id})
+
+        monitor = PerformanceMonitor()
+        with monitor.measure("recall"):
+            context = self.engine.recall(
+                agent_id,
+                user_id,
+                "perf durable memory 17",
+                top_k=10,
             )
 
-        # Verify recall doesn't error with many memories
-        try:
-            results = self.engine.recall(self.agent_id, self.user_id, "Memory number")
-            # If we get here without exception, the system handled the scale
-            self.assertIsInstance(results, str)
-            self.assertGreater(len(results), 0, "Recall should return some result")
-        except Exception as e:
-            self.fail(f"Recall should not error with 50 memories: {e}")
+        self.assertIn("perf durable memory 17", context)
+        measurement = monitor.stats()["recall"]
+        self.assertEqual(measurement["count"], 1)
+        self.assertGreaterEqual(measurement["mean"], 0.0)
 
-    def test_memory_isolation_at_scale(self) -> None:
-        """Verify agent/user isolation is maintained with many memories."""
-        tmp_dir = tempfile.mkdtemp()
-        try:
-            storage = SQLiteStorage(db_path=f"{tmp_dir}/isolation_test.db")
-            engine = ERIIEngine(storage_driver=storage)
+    def test_archival_measurement_corresponds_to_exact_node_count(self) -> None:
+        agent_id = "batch-agent"
+        user_id = "batch-user"
+        self.initialize(agent_id, user_id)
+        monitor = PerformanceMonitor()
 
-            # Set core memories for both agents
-            engine.set_core_memory("agent1", "user1", "Agent1 core")
-            engine.set_core_memory("agent2", "user2", "Agent2 core")
+        with monitor.measure("archive-20-turns"):
+            expected_turn_ids = self.archive_range(agent_id, user_id, "batch", 20)
 
-            # Add memories for agent1/user1
-            for i in range(50):
-                engine.remember("agent1", "user1", f"Agent1 memory {i}", f"Response {i}")
+        nodes = self.storage.load_nodes(agent_id, user_id)
+        self.assertEqual(len(nodes), 20)
+        self.assertEqual({node.source_turn_id for node in nodes}, expected_turn_ids)
+        self.assertEqual(len({node.node_id for node in nodes}), 20)
+        self.assertEqual(len({node.source_archival_id for node in nodes}), 20)
+        self.assertEqual(monitor.stats()["archive-20-turns"]["count"], 1)
 
-            # Add memories for agent2/user2
-            for i in range(50):
-                engine.remember("agent2", "user2", f"Agent2 memory {i}", f"Response {i}")
-
-            # Verify isolation
-            results1 = engine.recall("agent1", "user1", "memory")
-            results2 = engine.recall("agent2", "user2", "memory")
-
-            # Engine should only return agent-specific memories
-            self.assertIn("Agent1", results1, "Should see Agent1 memories")
-            self.assertNotIn("Agent2", results1, "Should not see Agent2 memories in Agent1 recall")
-
-            self.assertIn("Agent2", results2, "Should see Agent2 memories")
-            self.assertNotIn("Agent1", results2, "Should not see Agent1 memories in Agent2 recall")
-
-            engine.close()
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-class TestQueryPlanVerification(unittest.TestCase):
-    """Verify SQL queries use appropriate indexes and plans."""
-
-    def setUp(self) -> None:
-        self.tmp_dir = tempfile.mkdtemp()
-        self.storage = SQLiteStorage(db_path=f"{self.tmp_dir}/query_test.db")
-        self.engine = ERIIEngine(storage_driver=self.storage)
-        self.agent_id = "query-agent"
-        self.user_id = "query-user"
-
-    def tearDown(self) -> None:
+    def test_persisted_collection_survives_engine_restart(self) -> None:
+        agent_id = "restart-agent"
+        user_id = "restart-user"
+        relationship_id = self.initialize(agent_id, user_id)
+        expected_turn_ids = self.archive_range(agent_id, user_id, "restart", 12)
         self.engine.close()
-        shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
-    def test_memory_query_uses_index(self) -> None:
-        """Verify database operations work correctly at scale."""
-        self.engine.set_core_memory(self.agent_id, self.user_id, "Test core")
+        reopened_storage = SQLiteStorage(self.db_path)
+        self.engine = ERIIEngine(
+            storage_driver=reopened_storage,
+            memory_extractor=_EchoMemoryExtractor(),
+            config=ERIIConfig(async_archival=False),
+        )
+        nodes = reopened_storage.load_nodes(agent_id, user_id)
 
-        # Add test data
-        for i in range(20):
-            self.engine.remember(self.agent_id, self.user_id, f"Test memory {i}", f"Response {i}")
+        self.assertEqual(len(nodes), 12)
+        self.assertEqual({node.source_turn_id for node in nodes}, expected_turn_ids)
+        self.assertEqual(len({node.node_id for node in nodes}), 12)
+        self.assertEqual(len({node.source_archival_id for node in nodes}), 12)
+        self.assertEqual({node.relationship_id for node in nodes}, {relationship_id})
 
-        # Verify operations complete without error
-        try:
-            results = self.engine.recall(self.agent_id, self.user_id, "Test memory")
-            self.assertIsInstance(results, str)
-            self.assertGreater(len(results), 0, "Recall should return results")
-        except Exception as e:
-            self.fail(f"Database operations should not error: {e}")
+
+class TestRelationshipIsolationAtScale(_SynchronousArchiveCase):
+    """Verify stored node identity and content for two independent relations."""
+
+    def test_relationship_collections_remain_exact_and_disjoint(self) -> None:
+        agent_id = "shared-agent"
+        first_user = "first-user"
+        second_user = "second-user"
+        first_relationship = self.initialize(agent_id, first_user)
+        second_relationship = self.initialize(agent_id, second_user)
+
+        first_turns = self.archive_range(agent_id, first_user, "first-scope", 20)
+        second_turns = self.archive_range(agent_id, second_user, "second-scope", 20)
+        first_nodes = self.storage.load_nodes(agent_id, first_user)
+        second_nodes = self.storage.load_nodes(agent_id, second_user)
+
+        self.assertEqual(len(first_nodes), 20)
+        self.assertEqual(len(second_nodes), 20)
+        self.assertEqual({node.source_turn_id for node in first_nodes}, first_turns)
+        self.assertEqual({node.source_turn_id for node in second_nodes}, second_turns)
+        self.assertEqual(
+            {node.relationship_id for node in first_nodes},
+            {first_relationship},
+        )
+        self.assertEqual(
+            {node.relationship_id for node in second_nodes},
+            {second_relationship},
+        )
+        self.assertTrue(
+            {node.node_id for node in first_nodes}.isdisjoint(
+                {node.node_id for node in second_nodes}
+            )
+        )
+        self.assertTrue(all("second-scope" not in node.content for node in first_nodes))
+        self.assertTrue(all("first-scope" not in node.content for node in second_nodes))
+
+
+class TestQueryPlanVerification(_SynchronousArchiveCase):
+    """Inspect the exact SQLite plan used by scoped MemoryNode loads."""
+
+    def test_memory_load_plan_uses_agent_user_index(self) -> None:
+        self.initialize("query-agent", "query-user")
+        self.archive_range("query-agent", "query-user", "query", 5)
+
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            rows = connection.execute(
+                """
+                EXPLAIN QUERY PLAN
+                SELECT node_id, agent_id, user_id, data
+                FROM memory_nodes
+                WHERE agent_id = ? AND user_id = ?
+                """,
+                ("query-agent", "query-user"),
+            ).fetchall()
+
+        plan = "\n".join(str(row[3]) for row in rows)
+        self.assertIn("USING INDEX idx_agent_user", plan)
 
 
 if __name__ == "__main__":

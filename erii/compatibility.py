@@ -47,7 +47,7 @@ FILE_STORAGE_FORMAT = FormatCompatibility(
 )
 MEMORY_PACK_FORMAT = FormatCompatibility(
     format_id="erii.memory-pack",
-    current_version="0.5.0a2",
+    current_version="0.5.0a3",
     readable_versions=(
         "0.1.0",
         "0.2.0",
@@ -61,6 +61,7 @@ MEMORY_PACK_FORMAT = FormatCompatibility(
         "0.4.0a8",
         "0.5.0a1",
         "0.5.0a2",
+        "0.5.0a3",
     ),
 )
 LIFECYCLE_BACKUP_FORMAT = FormatCompatibility(
@@ -114,6 +115,7 @@ _MEMORY_PACK_V050A1_EXTENSION_FIELDS = frozenset(
         "narrative_tension_links",
     }
 )
+_MEMORY_PACK_V050A1_EXTENSION_VERSION = "0.5.0a1"
 _MEMORY_PACK_LEGACY_ROOT_FIELDS = (
     MEMORY_PACK_ROOT_FIELDS - _MEMORY_PACK_V050A1_EXTENSION_FIELDS
 )
@@ -196,7 +198,7 @@ def validate_memory_pack_envelope(data: object) -> Dict[str, Any]:
     if incompatible_root:
         raise ValueError(
             f"MemoryPack version {version!r} contains fields introduced in "
-            f"{MEMORY_PACK_FORMAT.current_version!r}: "
+            f"{_MEMORY_PACK_V050A1_EXTENSION_VERSION!r}: "
             + ", ".join(sorted(str(item) for item in incompatible_root))
         )
     for field_name in ("agent_id", "user_id", "exported_at"):

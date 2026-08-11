@@ -1,271 +1,251 @@
-"""
-Example: Using E.R.I.I. Performance Optimization Features
+"""Offline examples for the opt-in E.R.I.I. performance utilities.
 
-This example demonstrates how to use the performance optimization utilities
-including query caching, batch loading, and performance monitoring.
+Nothing in this file enables caching inside ``ERIIEngine``.  The host owns cache
+scope and invalidation.  The integrated example uses a temporary on-disk SQLite
+database and explicitly archives a completed Source Turn before recall, so it
+runs consistently on Windows as well as POSIX systems.
 """
 
-from erii import ERIIEngine, SQLiteStorage
-from erii.performance import QueryCache, cached_method, PerformanceMonitor
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import time
 
+from erii import (
+    ArchivalArtifactsDecision,
+    ArchivalStatus,
+    ERIIConfig,
+    ERIIEngine,
+    ExtractorDescriptor,
+    MemoryCandidate,
+    MemoryType,
+    SQLiteStorage,
+)
+from erii.performance import BatchLoader, PerformanceMonitor, QueryCache, cached_method
 
-def example_1_basic_query_cache():
-    """Example 1: Basic query result caching."""
+
+def _delivery_exception() -> dict[str, object]:
+    return {
+        "exception_record_version": "delivery-exception-record/v1",
+        "disposition": "shown_unreviewed",
+        "actor_kind": "host_policy",
+        "actor_id": "examples.performance-host",
+        "reason_code": "preexisting_visible_exchange",
+        "decided_at": "2026-08-01T00:00:00+00:00",
+        "reply_attempt_number": None,
+    }
+
+
+class _ExampleMemoryExtractor:
+    """Deterministic offline host adapter that emits one MemoryNode."""
+
+    descriptor = ExtractorDescriptor(
+        extractor_id="examples.performance-memory",
+        extractor_version="1",
+        extraction_schema_version="2",
+    )
+
+    def extract(self, request):
+        message = request.transcript.user_message
+        evidence = (
+            {
+                "citation_version": "archival-evidence-citation/v1",
+                "kind": "message_span",
+                "source_id": message.message_id,
+                "source_revision": request.source_revision,
+                "quote": message.content,
+                "start": 0,
+                "end": len(message.content),
+            },
+        )
+        return ArchivalArtifactsDecision(
+            memories=(
+                MemoryCandidate(
+                    node_type=MemoryType.PREFERENCE,
+                    content=message.content,
+                    tags=("offline-example",),
+                    evidence=evidence,
+                ),
+            )
+        )
+
+
+def example_1_basic_query_cache() -> None:
+    """Cache one simulated host query under an explicit relationship scope."""
     print("=" * 60)
     print("Example 1: Basic Query Cache")
     print("=" * 60)
-
-    # Create cache with 1000 entry limit, 5 minute TTL
     cache = QueryCache(max_size=1000, ttl=300)
-
-    # Simulate expensive queries
-    def expensive_recall(agent_id: str, user_id: str, query: str) -> str:
-        time.sleep(0.1)  # Simulate delay
-        return f"Context for {query}"
-
-    # Generate cache key
     key = cache.make_key("recall", "agent1", "user1", "what is my name?")
 
-    # Check cache
     if cache.has(key):
         result = cache.get(key)
-        print("✓ Cache hit!")
+        print("[HIT] Cached result")
     else:
-        print("✗ Cache miss, executing query...")
-        result = expensive_recall("agent1", "user1", "what is my name?")
+        print("[MISS] Running simulated host query")
+        time.sleep(0.01)
+        result = "Context for: what is my name?"
         cache.set(key, result)
-        print("✓ Result cached")
 
     print(f"Result: {result}")
     print(f"Cache stats: {cache.stats()}")
     print()
 
 
-def example_2_cached_method_decorator():
-    """Example 2: Using @cached_method decorator."""
+def example_2_cached_method_isolation() -> None:
+    """Show that equal calls on two service instances never share results."""
     print("=" * 60)
-    print("Example 2: @cached_method Decorator")
+    print("Example 2: @cached_method Instance Isolation")
     print("=" * 60)
 
-    class MyEngine:
-        def __init__(self):
+    class ProfileService:
+        def __init__(self, scope: str) -> None:
+            self.scope = scope
             self.query_count = 0
 
         @cached_method(ttl=300, max_size=100)
-        def get_user_profile(self, user_id: str) -> dict:
-            """Cached method - only computed once per user."""
+        def get_user_profile(self, user_id: str) -> dict[str, str]:
             self.query_count += 1
-            print(f"  → Computing profile for {user_id}...")
-            time.sleep(0.05)
-            return {"user_id": user_id, "name": f"User {user_id}"}
+            return {"scope": self.scope, "user_id": user_id}
 
-    engine = MyEngine()
-
-    # First call - cache miss
-    print("First call:")
-    profile1 = engine.get_user_profile("user123")
-    print(f"  Result: {profile1}")
-    print(f"  Total queries: {engine.query_count}")
-
-    # Second call - cache hit
-    print("\nSecond call (cached):")
-    profile2 = engine.get_user_profile("user123")
-    print(f"  Result: {profile2}")
-    print(f"  Total queries: {engine.query_count}")
-
-    # Different user - cache miss
-    print("\nDifferent user:")
-    profile3 = engine.get_user_profile("user456")
-    print(f"  Result: {profile3}")
-    print(f"  Total queries: {engine.query_count}")
-
+    first = ProfileService("relationship-a")
+    second = ProfileService("relationship-b")
+    print(f"First call:  {first.get_user_profile('same-user')}")
+    print(f"First cached: {first.get_user_profile('same-user')}")
+    print(f"Second call: {second.get_user_profile('same-user')}")
+    assert first.query_count == 1
+    assert second.query_count == 1
+    print("[PASS] Equal arguments remained isolated by service instance")
     print()
 
 
-def example_3_performance_monitoring():
-    """Example 3: Performance monitoring and metrics."""
+def example_3_host_controlled_batching() -> None:
+    """Accumulate items, then let the host invoke its own batch function."""
     print("=" * 60)
-    print("Example 3: Performance Monitoring")
+    print("Example 3: Host-Controlled Batching")
     print("=" * 60)
+    loader = BatchLoader(window_ms=1000, max_batch_size=3)
+    for item in ("memory-a", "memory-b", "memory-c"):
+        loader.add(item)
 
+    if loader.should_flush():
+        batch = loader.flush()
+        results = [item.upper() for item in batch]
+        print(f"Flushed {len(batch)} items: {results}")
+    assert loader.pending_count() == 0
+    print()
+
+
+def example_4_performance_monitoring() -> None:
+    """Collect observed durations without claiming an environment-wide target."""
+    print("=" * 60)
+    print("Example 4: Performance Monitoring")
+    print("=" * 60)
     monitor = PerformanceMonitor()
+    for _ in range(5):
+        with monitor.measure("simulated-read"):
+            time.sleep(0.002)
 
-    # Simulate various operations
-    for i in range(10):
-        with monitor.measure("recall"):
-            time.sleep(0.01)
-
-    for i in range(5):
-        with monitor.measure("remember"):
-            time.sleep(0.02)
-
-    # Get statistics
-    stats = monitor.stats()
-
-    print("Performance Statistics:")
-    print("-" * 60)
-    for operation, metrics in stats.items():
-        print(f"\n{operation}:")
-        print(f"  Count:  {metrics['count']}")
-        print(f"  Mean:   {metrics['mean']*1000:.2f}ms")
-        print(f"  P50:    {metrics['p50']*1000:.2f}ms")
-        print(f"  P95:    {metrics['p95']*1000:.2f}ms")
-        print(f"  P99:    {metrics['p99']*1000:.2f}ms")
-
+    metrics = monitor.stats()["simulated-read"]
+    print(f"Observed calls: {metrics['count']}")
+    print(f"Observed mean:  {metrics['mean'] * 1000:.2f} ms")
+    print(f"Observed p95:   {metrics['p95'] * 1000:.2f} ms")
     print()
 
 
-def example_4_integrated_caching():
-    """Example 4: Integrated caching in E.R.I.I. engine."""
+def example_5_integrated_persisted_recall() -> None:
+    """Cache recall only after verifying one synchronously archived node."""
     print("=" * 60)
-    print("Example 4: Integrated Caching with E.R.I.I.")
+    print("Example 5: Persisted E.R.I.I. Recall with Host Cache")
     print("=" * 60)
 
-    # Create engine with caching
-    storage = SQLiteStorage(db_path=":memory:")
-    engine = ERIIEngine(storage_driver=storage)
+    with TemporaryDirectory() as directory:
+        storage = SQLiteStorage(str(Path(directory) / "performance-example.db"))
+        engine = ERIIEngine(
+            storage_driver=storage,
+            memory_extractor=_ExampleMemoryExtractor(),
+            config=ERIIConfig(async_archival=False),
+        )
+        try:
+            engine.initialize_relationship(
+                "agent1",
+                "user1",
+                "A character who remembers shared preferences accurately.",
+            )
+            source = engine.record_turn(
+                "agent1",
+                "user1",
+                "The user likes coffee.",
+                "I will remember that.",
+                turn_id="performance-example-turn",
+                delivery_exception=_delivery_exception(),
+            )
+            receipt = engine.archive_turn(
+                "agent1",
+                "user1",
+                source.source_turn_id,
+                idempotency_key="archive-performance-example-turn",
+            )
+            assert receipt.status == ArchivalStatus.COMPLETED
+            nodes = storage.load_nodes("agent1", "user1")
+            assert len(nodes) == 1
+            assert nodes[0].source_turn_id == source.source_turn_id
+            print("[PASS] Verified one persisted MemoryNode")
 
-    # Create cache and monitor
-    recall_cache = QueryCache(max_size=500, ttl=300)
-    monitor = PerformanceMonitor()
+            recall_cache = QueryCache(max_size=50, ttl=300)
+            monitor = PerformanceMonitor()
 
-    def cached_recall(agent_id: str, user_id: str, query: str) -> str:
-        """Cached recall wrapper."""
-        key = recall_cache.make_key("recall", agent_id, user_id, query)
+            def cached_recall(query: str) -> str:
+                key = recall_cache.make_key("recall", "agent1", "user1", query)
+                if recall_cache.has(key):
+                    print("[HIT] Host recall cache")
+                    cached = recall_cache.get(key)
+                    assert isinstance(cached, str)
+                    return cached
+                print("[MISS] E.R.I.I. persisted recall")
+                with monitor.measure("erii-recall"):
+                    context = engine.recall("agent1", "user1", query)
+                recall_cache.set(key, context)
+                return context
 
-        if recall_cache.has(key):
-            print("  ✓ Cache hit")
-            return recall_cache.get(key)
-
-        print("  ✗ Cache miss, querying database...")
-        with monitor.measure("recall"):
-            result = engine.recall(agent_id, user_id, query)
-
-        recall_cache.set(key, result)
-        return result
-
-    # Setup
-    engine.set_core_memory("agent1", "user1", "User likes coffee")
-    engine.remember("agent1", "user1", "I love coffee", "Great!")
-
-    # Query 1 - cache miss
-    print("Query 1:")
-    result1 = cached_recall("agent1", "user1", "what do I like?")
-    print(f"  Length: {len(result1)} chars")
-
-    # Query 2 - cache hit
-    print("\nQuery 2 (same query):")
-    result2 = cached_recall("agent1", "user1", "what do I like?")
-    print(f"  Length: {len(result2)} chars")
-
-    # Statistics
-    print(f"\nCache stats: {recall_cache.stats()}")
-    print("\nPerformance stats:")
-    for op, metrics in monitor.stats().items():
-        print(f"  {op}: {metrics['count']} calls, {metrics['mean']*1000:.2f}ms avg")
-
-    engine.close()
+            first = cached_recall("What does the user like?")
+            second = cached_recall("What does the user like?")
+            assert first == second
+            assert "likes coffee" in first
+            assert monitor.stats()["erii-recall"]["count"] == 1
+            print(f"Cache stats: {recall_cache.stats()}")
+        finally:
+            engine.close()
     print()
 
 
-def example_5_cache_warming():
-    """Example 5: Cache warming strategy."""
+def example_6_explicit_invalidation() -> None:
+    """Demonstrate the host's responsibility to invalidate after writes."""
     print("=" * 60)
-    print("Example 5: Cache Warming")
+    print("Example 6: Explicit Cache Invalidation")
     print("=" * 60)
-
-    cache = QueryCache(max_size=1000, ttl=600)
-
-    # Common queries to pre-warm
-    common_queries = [
-        ("agent1", "user1", "what is my name?"),
-        ("agent1", "user1", "what do I like?"),
-        ("agent1", "user2", "what did we discuss?"),
-    ]
-
-    print("Pre-warming cache with common queries...")
-    for agent_id, user_id, query in common_queries:
-        key = cache.make_key("recall", agent_id, user_id, query)
-        # Simulate loading result
-        cache.set(key, f"Pre-warmed result for: {query}")
-        print(f"  ✓ Cached: {query}")
-
-    print(f"\nCache warmed: {cache.size()} entries")
+    cache = QueryCache(max_size=10, ttl=300)
+    cache.set(cache.make_key("profile", "agent1", "user1"), {"revision": 1})
+    print(f"Before write: {cache.stats()}")
+    cache.clear()
+    print(f"After write invalidation: {cache.stats()}")
+    assert cache.size() == 0
     print()
 
 
-def example_6_adaptive_caching():
-    """Example 6: Adaptive cache sizing based on hit rate."""
+def main() -> None:
+    print("\n" + "=" * 60)
+    print("E.R.I.I. Opt-In Performance Utility Examples")
+    print("=" * 60 + "\n")
+    example_1_basic_query_cache()
+    example_2_cached_method_isolation()
+    example_3_host_controlled_batching()
+    example_4_performance_monitoring()
+    example_5_integrated_persisted_recall()
+    example_6_explicit_invalidation()
     print("=" * 60)
-    print("Example 6: Adaptive Caching")
+    print("All offline examples completed and verified.")
     print("=" * 60)
-
-    class AdaptiveCache:
-        """Cache that adjusts size based on hit rate."""
-
-        def __init__(self):
-            self.cache = QueryCache(max_size=100, ttl=300)
-            self.hits = 0
-            self.misses = 0
-
-        def get(self, key: str):
-            if self.cache.has(key):
-                self.hits += 1
-                return self.cache.get(key)
-            else:
-                self.misses += 1
-                return None
-
-        def set(self, key: str, value):
-            self.cache.set(key, value)
-
-        def hit_rate(self) -> float:
-            total = self.hits + self.misses
-            return self.hits / total if total > 0 else 0
-
-        def adapt(self):
-            """Adjust cache size based on hit rate."""
-            rate = self.hit_rate()
-            if rate > 0.8 and self.cache.max_size < 1000:
-                # High hit rate, increase cache
-                self.cache.max_size = min(self.cache.max_size * 2, 1000)
-                print(f"  ↑ Increased cache size to {self.cache.max_size}")
-            elif rate < 0.3 and self.cache.max_size > 50:
-                # Low hit rate, decrease cache
-                self.cache.max_size = max(self.cache.max_size // 2, 50)
-                print(f"  ↓ Decreased cache size to {self.cache.max_size}")
-
-    adaptive = AdaptiveCache()
-
-    # Simulate queries
-    print("Simulating queries...")
-    for i in range(100):
-        key = f"query_{i % 20}"  # 20 unique queries
-        result = adaptive.get(key)
-        if result is None:
-            adaptive.set(key, f"result_{i}")
-
-        if (i + 1) % 20 == 0:
-            print(f"\nAfter {i+1} queries:")
-            print(f"  Hit rate: {adaptive.hit_rate():.2%}")
-            adaptive.adapt()
-
-    print()
 
 
 if __name__ == "__main__":
-    print("\n" + "=" * 60)
-    print("E.R.I.I. Performance Optimization Examples")
-    print("=" * 60 + "\n")
-
-    example_1_basic_query_cache()
-    example_2_cached_method_decorator()
-    example_3_performance_monitoring()
-    example_4_integrated_caching()
-    example_5_cache_warming()
-    example_6_adaptive_caching()
-
-    print("=" * 60)
-    print("All examples completed!")
-    print("=" * 60)
+    main()

@@ -1,5 +1,6 @@
 # Ignore node_modules
 node_modules/
+.npm-cache/
 
 # Ignore build output
 dist/
@@ -18,7 +19,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# Ignore npm package lock (library project)
-package-lock.json
+# This package uses npm and commits package-lock.json for reproducible CI.
 yarn.lock
 pnpm-lock.yaml

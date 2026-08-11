@@ -1,9 +1,13 @@
-# Publishing to NPM
+# Publishing to npm
+
+This document is a maintainer checklist, not an instruction for CI. The
+TypeScript client is not published automatically. Do not publish it merely
+because a repository commit or Python prerelease exists.
 
 ## Prerequisites
 
-1. NPM account with 2FA enabled
-2. Organization scope `@erii` created on NPM
+1. npm account with 2FA enabled
+2. Organization scope `@erii` created on npm
 3. Collaborator access to `@erii` scope
 
 ## First-time Setup
@@ -23,14 +27,18 @@ npm whoami
 ```bash
 cd clients/typescript
 
-# Install dependencies
-npm install
+# Install the committed dependency graph
+npm ci
 
-# Run tests
-npm test
+# Verify against the live Python server contract from the repository root
+cd ../..
+python clients/typescript/scripts/verify_server_contract.py
+cd clients/typescript
 
-# Build
+# Run static, build, and behavioral checks
+npm run lint
 npm run build
+npm test -- --coverage
 
 # Check what will be published
 npm pack --dry-run
@@ -77,38 +85,13 @@ npm install @erii/client@alpha
 
 ## Publishing Checklist
 
-- [ ] All tests passing
+- [ ] `npm ci`, lint, build, and tests pass from a clean checkout
+- [ ] Live FastAPI contract verification passes
+- [ ] No owner API key appears in browser/frontend examples
 - [ ] README.md up to date
 - [ ] CHANGELOG.md updated
 - [ ] Version bumped appropriately
-- [ ] Build successful (`npm run build`)
 - [ ] Dry-run checked (`npm pack --dry-run`)
 - [ ] Published with correct tag
 - [ ] Verified on npmjs.com
 - [ ] Tested installation
-
-## Automation (Future)
-
-Consider setting up GitHub Actions for automated publishing:
-
-```yaml
-# .github/workflows/publish.yml
-name: Publish to NPM
-on:
-  release:
-    types: [created]
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
-      - run: npm test
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
-```
