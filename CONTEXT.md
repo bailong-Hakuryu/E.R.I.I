@@ -45,6 +45,130 @@ _Avoid_: 回复生成器、自动润色器、Persona Growth 审批器、事后�
 宿主基于一个冻结 Turn 与当前关系内的 Agent-private 依据，让角色形成拟交付回复与有来源心理候选的 Provider-neutral 过程；它不直接展示回复，也不直接写入人设、关系或长期记忆。
 _Avoid_: DeepSeek Thinking、模型原始推理、聊天回复本身、自动人格变化
 
+**Character Deliberation Result（角色审思结果）**：
+Character Actor 针对一个冻结 Turn 提出的临时、关系范围内候选，由可验证的 Deliberation Semantic Frame、有温度的 Character Interior Scene 与拟交付回复组成；它必须允许未知、尚未形成判断、多个竞争冲动与相互冲突的心理候选。它不是心理真值，不具有 Persona、Relationship、Memory 或 Turn 写入权威，也不是 Provider raw thinking。
+_Avoid_: 真实内心、确定性强迫、Chain-of-Thought、Persona Reflection、长期心理状态、回复通过证明
+
+**Deliberation Semantic Frame（审思语义骨架）**：
+Character Deliberation Result 中机器可校验的心理与表达结构，分别描述有来源的情境理解、心理候选、竞争张力、行为意图、披露程度、沟通策略与不确定性；重要事实、记忆、关系和知识主张逐项绑定当前冻结范围内的依据，而文学比喻、节奏与非事实性感受不被迫写成带引用的报告。
+_Avoid_: 单一情绪标签、自由推理全文、逐句脚注文学、数值心理真值、关系状态写入
+
+**Character Interior Scene（角色内在场景）**：
+Character Actor 依据已提出的 Deliberation Semantic Frame 创作的角色原生心理叙事成品；它可以使用第一人称、贴近第三人称、碎片意识、感官反应、记忆回声、沉默、自我矛盾与未说出口的话，并按表达预算形成一瞬或完整场景。它是显式生成的 fictional Agent-private artifact，不是 Provider raw thinking；其事实性记忆回声必须回指获准依据，完整文本默认只在当前审思运行中存在。
+_Avoid_: 结构化短摘要、Chain-of-Thought、Provider reasoning、无来源共同回忆、默认长期保存、所有角色同一种独白
+
+**Character Self-Interpretation（角色自我解释）**：
+角色在一个 Character Interior Scene 中对自身感受、冲动和行为所形成的当时理解；它可以是已识别、部分识别、错误归因、主动回避或尚未形成，并允许后续经历产生追加式 Reinterpretation。系统不在其背后保存一个由模型宣告的隐藏心理标准答案。
+_Avoid_: 真实感情标签、事后覆盖旧理解、模型全知视角、强迫角色立刻理解自己
+
+**Deliberative Expression Divergence（审思表达差异）**：
+Character Interior Scene、Deliberation Semantic Frame 与最终回复之间由角色选择造成的非字面对齐；允许直接、部分、间接、保留、保护性隐瞒、防御性反话、有依据的误导与矛盾表达，只要表达选择能够由冻结范围内的心理因果和沟通策略解释。
+_Avoid_: 内外逐字一致要求、无因果反转、诚实即唯一正确、为迎合 User 强制披露
+
+**Unreliable Interior Narration（不可靠内在叙述）**：
+Character Interior Scene 以角色有限视角表达自我欺骗、主观夸张、偏见、误解或尚未形成的理解；Semantic Frame 保留相互竞争的候选与认识状态，Deliberation Explanation 也只说明当前依据更支持什么，而不把文学叙述或系统猜测宣布为心理真值。
+_Avoid_: Provider 幻觉洗白、系统全知旁白、把自我否认自动翻译成唯一隐藏答案、覆盖后续重新理解
+
+**Interior Narrative Budget（内在叙事预算）**：
+宿主按 `glimpse | standard | rich | scene` 等表达档位为 Character Interior Scene 提供的可配置输出上限；预算只防止失控输出，不规定最低字数，也不以情绪正负、User 满意度或“温柔程度”决定深度。角色可以在高预算中保持沉默，也可以在重要张力中获得充分篇幅。
+_Avoid_: 统一短字符限制、强制填满、情绪分数决定长度、生气自动升级、长文本即深刻
+
+**Deliberation Trusted Envelope（审思可信外壳）**：
+由宿主与内核而非 Character Actor 构造的精确范围绑定，至少承诺当前 Relationship、open Turn、Persona、Manifest、冻结基线、User 原文、获准依据顺序以及 Schema、Actor 与 Router 策略身份；模型输出不能声明、替换或扩张这些身份，最终拟回复还必须绑定宿主实际准备展示的精确 UTF-8 内容。
+_Avoid_: 模型自报关系、模型自报证据权限、审查后格式化、跨 Turn 复用结果、用显示名称代替稳定身份
+
+**Deliberation Abstention（角色审思保留判断）**：
+Character Actor 在现有依据不足、冲动尚未整合或角色尚未形成明确理解时返回的正常成功结果；它如实保留 unknown、conflicted 或 stance-unformed，而不被当作 Provider 故障反复重试到产生方便结论。Actor 可以请求分阶段审思，但最终路由仍由版本化宿主策略决定。
+_Avoid_: 空错误、强迫结论、重试到迎合、Provider unavailable、静默伪造动机
+
+**Residue Admission Gate（审思余留准入门）**：
+只允许与同一 Turn 的精确最终回复绑定、通过 Continuity 为 `aligned | supported_new_choice` 且以 `shown` 实际交付的有来源未决候选成为 Pending Deliberation Residue；Character Actor 只能提出候选，不能接纳。被丢弃草稿、失败尝试、`overridden`、`shown_unreviewed`、未解析依据或重复 lineage 不进入正常余留。
+_Avoid_: Actor 自批、草稿残留、Continuity 例外洗白、回复显示即自动保存全部所想、重复候选增权
+
+**Visible Reply Envelope（可见回复信封）**：
+宿主准备向 User 展示的 `1..N` 个有序消息片段及其规范整体身份；每个片段保留精确 UTF-8 内容、顺序与类型，Deliberation Binding 和 Continuity Review 都针对该最终信封。`$` 等分隔符只属于宿主 Adapter，并在建立信封前解析。
+_Avoid_: 审查后分条、把分隔符当领域协议、无顺序消息集合、只哈希拼接字符串
+
+**Deliberation Attempt（审思调用尝试）**：
+Character Deliberation Orchestrator 对 Provider 执行的一次物理调用或技术重试；超时、传输故障或非法输出可以只有 Attempt 而没有角色语义结果，Attempt 只保留脱敏运行元数据。
+_Avoid_: Deliberation Revision、角色历史、草稿存档、Provider 错误正文
+
+**Deliberation Revision（审思修订）**：
+一次通过范围与 Schema 校验、形成完整 Semantic Frame、Character Interior Scene 和拟回复的不可变角色语义版本；新版本以 lineage 显式替代旧版本，只有当前 active leaf 可以进入 Continuity 与 Delivery，旧版本不会因后续失败被静默复活。
+_Avoid_: Provider 重试次数、原地改写、多个 active 草稿、Reply Attempt Record
+
+**Deliberation Escalation（审思升级）**：
+Adaptive Router 将 Compact 路径提升为 Staged 路径的版本化决定；质量偏好形成 soft escalation，已通过 Continuity 且冻结绑定仍有效的 Compact Revision 可被密封为显式 fallback，范围、依据、知识或连续性问题形成 hard escalation，旧 Revision 随即退出可交付集合。
+_Avoid_: 生气即升级、User 不满意即升级、硬问题恢复旧草稿、无限循环修订
+
+**Deliberation Run Fence（审思运行栅栏）**：
+由 open Turn 状态、record version、冻结基线指纹和 run epoch 共同形成的并发边界；新运行、权威撤销、Turn 终态或 Completion CAS 胜者会使旧结果失效，迟到内容只产生脱敏 `late_result_discarded` 运行事实。
+_Avoid_: 迟到结果写历史、跨 Turn callback、CAS 输家生成 Residue、后台静默恢复
+
+**Delivered Without Residue（已交付但无余留）**：
+最终回复已经精确审查、实际展示并成功完成 Turn，但其可选 Pending Deliberation Residue 在准入或保存时失败的诚实结果；交付历史保持成立，宿主可以基于原 binding 显式重试余留准入，但不会重新生成不同心理候选冒充原结果。
+_Avoid_: 回滚已展示回复、伪造余留成功、重新生成心理、把附加能力故障写成交付失败
+
+**Character Deliberation Orchestrator（角色审思编排器）**：
+由宿主或可拆卸 Labs 模块拥有的生成期控制器；它使用 E.R.I.I. 提供的冻结上下文、关系范围证据与校验契约调用 Character Actor，并把拟交付回复送回既有 Continuity 与 Delivery Gate。Provider 调用、预算、超时、重试和降级属于宿主策略，Core 不因此取得聊天回复生成职责。
+_Avoid_: E.R.I.I. Core 回复生成器、Provider 锁定、持久状态写入器、Continuity Reviewer
+
+**Compact Character Deliberation（紧凑角色审思）**：
+Character Actor 在一次严格结构化调用中同时提出 Character Deliberation Result 与拟交付回复的默认路径；它证明结果与回复共享同一冻结输入和作者契约，但不声称 Provider 在不可观察的内部计算中按某种时间顺序“先想后说”。
+_Avoid_: Provider raw thinking、自由推理文本、两阶段调用、心理真值证明
+
+**Staged Character Deliberation（分阶段角色审思）**：
+同一逻辑 Character Actor 先提出无最终台词的受限 Deliberation Plan，经范围、证据与 Schema 校验后，再在第二次调用中把该 Plan 实现为拟交付回复的高保真路径；它只由版本化结构信号或宿主策略触发，失败切换 Provider 时必须从第一阶段重新开始。
+_Avoid_: 每轮强制双调用、按情绪正负升级、多模型共同写台词、把第一阶段当作 Chain-of-Thought
+
+**Pending Deliberation Residue（待定审思余留）**：
+与一个已精确绑定且实际交付的回复共同产生、可在后续少量 Turn 中作为 Agent-private 注意线索使用的关系范围心理候选；它具有 provisional authority，不进入 Continuity Basis、Persona、Relationship State、Voice Activation 或普通 Memory，也不会因召回、重复生成或被再次引用而增强权威或刷新期限。首个实验阶段只在 Session 内跨轮保存；跨重启的可携带形态必须等待完整 Storage、MemoryPack、Backup、Erase 与 Rebuild 契约。
+_Avoid_: 长期人格事实、Inner Monologue、自动续命、重复即确认、跨关系心理状态
+
+**Private Reflection Adjudication（私有反思裁决）**：
+在 Character Actor 之外，依据已交付选择、正式关系事件、原始人设与关系范围权威证据，独立判断 Pending Deliberation Residue 是否形成长期关系范围心理立场的过程；它可以得出 accepted private stance、stance unformed、no durable meaning 或 unsupported，但 Character Actor 不能批准自己的候选，核心人格或巨大变化仍只产生 Persona Growth Proposal。
+_Avoid_: Actor 自批、重复候选投票、把 User 期待写成角色内心、自动核心人格变化
+
+**Accepted Private Stance（已接受私有立场）**：
+Private Reflection Adjudication 从正式 Persona 依据、已交付选择和当前关系内可解析事实独立得出的长期关系范围心理立场；它只在 psychological causality、behavioral intent 与 communication strategy 范围内成为后续 Continuity Basis，不改写全局 Character Blueprint、其他关系、共同经历、知识边界、关系数值或 Voice Activation。触及核心人格或巨大跃迁时仍只触发 Persona Growth Proposal。
+_Avoid_: 全局 Persona 变化、关系数值、User 心理、跨关系继承、普通 MemoryNode THOUGHT、自动语气激活
+
+**Deliberation Explanation（审思解释）**：
+从已验证的 Character Deliberation Result 派生、面向 User 或维护者的有限来源化解释；它与 Agent-private 审思材料分离，不披露 Provider raw thinking，也不自动成为人格或关系事实。
+_Avoid_: 原始推理展示、内心真相、调试 Trace、Persona Reflection、共同关系结论
+
+**Thought Projection（心理投影）**：
+从已验证且与最终回复绑定的角色审思结果派生的第一人称文学化可见表达；它不是 Agent-private 审思原文或 Provider raw thinking。宿主一旦向 User 展示，就必须把精确文本与展示事实作为可导出、可擦除且不可事后冒充未展示内容的 Visible Artifact 处理。
+_Avoid_: Chain-of-Thought、隐藏调试文本、未交付草稿的心理旁白、事后伪造的当时内心
+
+**Deliberation Exposure（审思展示事实）**：
+宿主实际向特定 audience 展示某一 Thought Projection 或 Deliberation Explanation 的精确、顺序化事实；默认 Thought Projection 是 User 可见但角色不被视为主动披露的叙事观察层，角色主动告知内心则进入 Agent 可见回复。Exposure 与 Source Transcript 分账保存，User 随后的可见回应再作为新的共同关系输入。
+_Avoid_: 把投影伪装成 Agent 台词、角色自动知道 User 看过、重复查看增加心理权威、未展示候选进入历史
+
+**Experience History（体验历史）**：
+宿主向数据所有者重建一次关系体验时联合呈现的 Source Transcript 与 Deliberation Exposure Ledger；前者证明双方实际说过什么，后者证明 User 或维护者额外看见过什么。两个账本保持独立权威、顺序和擦除语义，不把观察层内容伪装成角色主动表达。
+_Avoid_: 单一聊天字符串、Exposure 混入 Agent Message、角色自动读取 User-only 观察层、遗漏实际展示内容
+
+**Deliberation Visibility Policy（审思可见性策略）**：
+由可信宿主配置的 Thought Projection 与 Deliberation Explanation 独立展示规则，支持关系级默认与单 Turn 显式覆盖；普通聊天文本、Character Actor 输出和 User 对角色的请求都不直接改变系统设置，User 与 Operator audience 使用不同 Schema 与访问边界。
+_Avoid_: 聊天内开启权限、Actor 自行展示、User/Operator 共用自由文本、默认公开 Agent-private 内容
+
+**Deliberation Feedback（审思反馈）**：
+User 或维护者对 Thought Projection、Deliberation Explanation 或回复质量提出的质疑、标注或复核请求；聊天中的回应属于新的 User Source，而产品反馈属于评测与修订输入。两者都不直接改写 Character Self-Interpretation、Accepted Private Stance 或 Persona。
+_Avoid_: User 直接编辑角色内心、产品按钮即 Persona Growth、静默覆盖已展示内容、反馈即关系事实
+
+**Full Psychological Continuity Export（完整心理连续性导出）**：
+面向数据所有者、承诺导入后保留已有角色行为连续性的完整关系携带物；凡是实际展示过或会跨重启影响角色行为的 Exposure、Durable Residue、Accepted Private Stance 及其 lineage 都必须显式包含，Provider raw thinking、Prompt、未展示草稿与凭证仍然排除。
+_Avoid_: 静默遗漏行为状态、脱敏分享包、模型重建缺失心理、Provider 会话转储
+
+**Redacted Psychological Sharing Pack（脱敏心理分享包）**：
+为分享、演示或公开评测而显式有损生成的独立携带物；它用机器可读 loss manifest 声明被排除的私有心理、Exposure、关系历史和连续性能力，并禁止导入方把缺失数据推测成原角色历史。
+_Avoid_: 冒充完整 MemoryPack、静默有损、自动补全私有心理、行为连续性保证
+
+**Deliberation Evaluation Matrix（审思评测矩阵）**：
+对 direct、Compact、Staged、Adaptive、等计算量非审思对照及带 Session Residue 路径进行成对盲测的预注册实验；它分别衡量最终回复质量、心理因果、角色可区分性、非迎合中立、跨关系与来源硬门、延迟成本，以及可见 Projection 的独立用户体验，不以字段填满、文本长度或少数优秀样例证明晋级。
+_Avoid_: Actor 自评、只看 Thought 文本、更多 token 即架构收益、温柔度评分、可见性偏好替代回复质量
+
 **Character Actor（角色作者）**：
 一次 Character Deliberation 中唯一有资格提出角色可见回复的模型角色；其 Model Provider 可以替换，它不是新的 E.R.I.I. Agent 身份，也没有持久历史写权限。
 _Avoid_: 多个模型投票决定台词、模型供应商身份、关系参与者、人格审批者
@@ -706,7 +830,8 @@ _Avoid_: 带时间前缀的字符串、MemoryNode、伪造的 UTC 时间或归�
 _Avoid_: 关系事件、权威事实
 
 **Inner Monologue（心理独白）**：
-Agent 未言说的第一人称心理活动、内省或情感余温。
+Agent 未言说的第一人称心理活动、内省或情感余温所形成的长期叙事产物；它不同于本轮临时 Character Deliberation、Provider raw thinking 和事件接受后的 Persona Reflection。
+_Avoid_: Character Deliberation Result、Chain-of-Thought、Prompt、Persona Reflection、心理真值证明
 
 **Recall Salience（召回显著性）**：
 一段记忆在当前情境中被想起的倾向；显著性降低不表示历史被删除或关系影响被撤销。

@@ -3,7 +3,7 @@
 **English** · [简体中文](development-strategy.md)
 
 > Status: project direction, not a release-date promise or an SLA
-> Last reviewed: 2026-08-04
+> Last reviewed: 2026-08-11
 
 This document explains how E.R.I.I. should grow, what it should deliberately
 avoid, and what evidence is required before an experiment becomes part of the
@@ -105,7 +105,7 @@ expectations.
 ```mermaid
 flowchart TB
     CORE["Open continuity core<br/>persona · relationship · turn · recall<br/>continuity · consequence · lifecycle"]
-    ADAPTERS["Optional Adapters and labs<br/>DeepSeek · other remote models · local models<br/>host integrations · Deliberation Ensemble"]
+    ADAPTERS["Optional Adapters and labs<br/>Claude · DeepSeek · other remote models · local models<br/>host integrations · Deliberation Ensemble"]
     PRODUCT["Product host<br/>identity · authorization · encryption · tenancy<br/>sync · UI · observability · commercial support"]
 
     PRODUCT --> ADAPTERS
@@ -121,7 +121,7 @@ The open core owns stable domain meaning and durable data:
 - Source Turn and exact delivered transcript;
 - provenance-aware memory and structured Recall;
 - relationship events, current projections, open matters, and promises;
-- continuity review and, later, relationship consequences;
+- continuity review and relationship consequences;
 - storage, MemoryPack, backup, migration, erasure, rebuild, and compatibility.
 
 The core should expose deep Modules: a small Interface should hide substantial
@@ -132,7 +132,7 @@ creates Leverage for host authors and Locality for maintainers.
 
 This layer contains things that may vary or be removed:
 
-- Model Provider Adapters, including an optional DeepSeek Adapter;
+- Model Provider Adapters, including optional Claude and DeepSeek Adapters;
 - local-model and other remote-provider Adapters;
 - KouriChat and other host integrations;
 - Shadow evaluations and experimental character-deliberation implementations;
@@ -185,7 +185,7 @@ understood.
 
 This track may move quickly and be deleted:
 
-- DeepSeek thinking Shadow comparisons;
+- Claude, DeepSeek, and other Provider Adapter/Shadow comparisons;
 - provider and local-model experiments;
 - host integration examples;
 - offline or selectively triggered multi-model review;
@@ -202,12 +202,13 @@ capable models without making one Provider part of E.R.I.I.'s identity.
 ## 5. Current implementation and planned work
 
 The distinction in this section is normative: **current** means present in the
-`0.4.0` source tree; **planned** means it must not be advertised as already
+`0.5.0a3` source tree; **planned** means it must not be advertised as already
 implemented.
 
-### Current in `0.4.0`
+### Current in `0.5.0a3`
 
-The current source is the stable v0.4 source milestone and includes:
+The current source is an active Alpha milestone. It includes the stable v0.4
+continuity/data-lifecycle foundation plus:
 
 - stable, independent relationship, persona, and identity IDs;
 - preserved Character Blueprint source plus reviewable Persona Compilation;
@@ -222,20 +223,21 @@ The current source is the stable v0.4 source milestone and includes:
 - FileStorage, SQLiteStorage, structured Recall, MemoryPack, and a reference
   REST host;
 - versioned backup, restore, upgrade, import, erasure, rebuild, bounded I/O,
-  compatibility snapshots, and long-horizon regression scenarios.
+  compatibility snapshots, and long-horizon regression scenarios;
+- the v0.5 Relationship Consequence and Narrative Tension vertical slice,
+  including later relationship-scoped recall and result projection;
+- `0.5.0a3` source-identity, SDK, Turn-documentation, performance, and isolation
+  stabilization work.
 
 The current reference host is designed for a trusted local owner. It is not a
 complete public multi-user security system.
 
-### Not implemented in `0.4.0`
+### Accepted design and work not yet implemented
 
 The following remain planned or experimental:
 
-- a durable Relationship Consequence and Narrative Tension vertical slice;
-- automatic memory of harm, later response, repair, refusal of repair, or
-  relationship ending as one causal sequence;
 - a first-class Character Deliberation Module;
-- a DeepSeek character-deliberation Adapter;
+- a Claude, DeepSeek, or other runtime character-deliberation Adapter;
 - a Deliberation Ensemble or general multi-model orchestration;
 - per-user identity, authorization, encrypted storage, and multi-tenant
   isolation;
@@ -243,15 +245,28 @@ The following remain planned or experimental:
   relationship data;
 - a product SLA.
 
+> **Character Deliberation status: Experimental; the offline C0 contract slice
+> is implemented, while product integration has not started.** The implementation remains in removable Python Labs:
+> Compact is the main path and Staged is an evidence-driven auxiliary path.
+> Session Residue, independent Private Reflection, durable state,
+> Visibility/Exposure, REST/TypeScript, and a Deliberation Ensemble each have
+> separate behavior, security, lifecycle, and removability admission gates.
+
+See the [complete development plan](architecture/character-deliberation-development-plan.md),
+the [removable Claude Adapter guide](integrations/character-deliberation-claude.md), and
+[ADR-0120](adr/0120-keep-character-deliberation-transient-layered-and-host-owned.md).
+
 ### Source and published state
 
-As of this review, `0.4.0` identifies the current stable source milestone. The
+As of this review, `0.4.0` identifies the stable maintenance line and
+`0.5.0a3` identifies the active Alpha source milestone. The
 accepted b1 baseline is
 `f6dca322379c4ea88320c69d752cab471d035e95`, and the rc1 source-closure evidence
-is `58ea8e69df28bec8e755e0a0d2a175679c18a694`. The last immutable historical
-release cited by the repository is `v0.4.0a8`. The project does not plan to
-publish each later `0.x` source milestone. Reproducible integrations should pin
-a reviewed full commit SHA until the formal `1.0` release line exists.
+is `58ea8e69df28bec8e755e0a0d2a175679c18a694`. The latest immutable historical
+Alpha tag/package cited by the repository is `v0.5.0a2`; `0.5.0a3` remains a
+source milestone. The project does not plan to publish every later `0.x`
+source milestone. Reproducible integrations should pin a reviewed full commit
+SHA until the formal `1.0` release line exists.
 This decision is recorded in
 [ADR-0119](adr/0119-defer-formal-package-distribution-until-v1.md).
 
@@ -301,7 +316,7 @@ The Golden Continuity Demo shows, without private or copyrighted data:
 The target is for an unfamiliar developer to install the project and see the
 relationship-isolation result in no more than ten minutes.
 
-### `0.4.0` and `0.4.x`: current stable source milestone
+### `0.4.0` and `0.4.x`: stable maintenance line
 
 `0.4.0` completes the final source identity, contract snapshots, and the Golden
 Demo export/fresh-import round trip. The stable source line maintains data
@@ -311,9 +326,17 @@ defect, security, and compatibility work; they are not a promise that a package
 has been distributed and do not silently change persona, relationship, or
 authority semantics.
 
-### `v0.5`: one consequence vertical slice
+### `0.5.0a1` through `0.5.0a3`: consequence and stabilization
 
-The first v0.5 slice should prove this complete path:
+`0.5.0a1` established the Relationship Consequence and Narrative Tension
+vertical slice. `0.5.0a2` added credential, logging, error, and lifecycle
+compatibility work; `0.5.0a3` is the active source-stabilization milestone.
+These are Alpha source milestones, not a production SLA.
+
+### `v0.5`: consequence vertical slice and deliberation Labs gate
+
+The first v0.5 slice has established this complete path; the active source now
+stabilizes its contracts and integrations:
 
 ```text
 exact delivered reply
@@ -328,9 +351,14 @@ It must support a character making a coherent but painful choice without
 classifying discomfort as OOC or forcing agreement. It must also preserve the
 consequence when later participants do not reconcile.
 
-Character Deliberation may enter the durable kernel only after a Shadow
-experiment proves value. DeepSeek-specific provider fields, raw thinking, full
-prompts, credentials, and provider error bodies must not become character
+The Provider-neutral Character Deliberation design is accepted. An offline,
+removable C0 contract slice now covers a real open Turn snapshot, host commitment,
+fake Claude-shaped SSE parsing, strict validation and exact result binding. It is
+not wired into ERIIEngine, a real provider, continuity delivery, persistence or a
+public API. Only a Shadow experiment and
+the applicable lifecycle gates can qualify a persistent meaning for later Core
+admission. Claude-, DeepSeek-, or other Provider-specific fields, raw thinking,
+full prompts, credentials, and provider error bodies must not become character
 history.
 
 ### `v0.6`: security hooks and product-host boundary
@@ -361,9 +389,17 @@ This phase makes open data rights usable by non-maintainers:
 - correct, quarantine, export, migrate, and request deletion;
 - expose Legacy and Quarantined labels rather than hiding uncertainty;
 - verify backup recovery, device migration, and deletion workflows;
-- explain dispositions without exposing Agent-private model reasoning.
+- explain dispositions without exposing raw Provider thinking, prompts, drafts,
+  or unapproved private deliberation; validated Projection/Explanation follows
+  its own visibility contract.
 
-## 7. DeepSeek and Provider-neutral collaboration
+## 7. Claude, DeepSeek, and Provider-neutral collaboration
+
+Claude may have a dedicated, separately installable and disableable Adapter for
+the Character Actor and, only in a later stage, a Reviewer. It is not a Core
+dependency, receives no identity/history-write authority, and does not make
+Staged deliberation the default. The implementation boundary is defined in the
+[Claude Adapter guide](integrations/character-deliberation-claude.md).
 
 DeepSeek may have a dedicated, separately installable, disableable Adapter. It
 is not required by E.R.I.I., and users should not redesign an otherwise working
@@ -381,7 +417,7 @@ before enabling a remote Adapter.
 The future multi-model design is unrelated to any privileged DeepSeek role. A
 Provider-neutral Deliberation Ensemble may combine:
 
-- one Character Actor using DeepSeek, another remote Provider, or a local
+- one Character Actor using Claude, DeepSeek, another remote Provider, or a local
   model;
 - zero or more Reviewers using any mixture of Providers;
 - selective escalation for high-risk continuity decisions instead of
@@ -389,8 +425,9 @@ Provider-neutral Deliberation Ensemble may combine:
 
 Reviewers do not vote to define the character and cannot directly write persona,
 relationship, memory, or Turn state. The core remains the continuity authority.
-The accepted architecture decision is recorded in
-[ADR-0117](adr/0117-keep-character-deliberation-provider-neutral.md).
+The accepted architecture decisions are recorded in
+[ADR-0117](adr/0117-keep-character-deliberation-provider-neutral.md) and
+[ADR-0120](adr/0120-keep-character-deliberation-transient-layered-and-host-owned.md).
 
 ## 8. Adoption targets
 
@@ -514,27 +551,29 @@ surface that a sole maintainer cannot verify.
 
 ## 11. Near-term execution status and order
 
-As of the current `0.4.0` stable source milestone, completed and remaining work
+As of the current `0.5.0a3` Alpha source milestone, completed and remaining work
 is ordered as follows unless new evidence changes the priority:
 
 1. **Accepted:** preserve the verified `0.4.0b1` source checkpoint at its
    immutable full commit SHA;
 2. **Completed:** accept the `0.4.0rc1` public-Interface, adoption, contract,
    build, and documentation closure;
-3. **Current:** maintain the `0.4.0` stable source identity, final contracts,
-   and reproducible Golden Demo;
-4. **Next:** recruit the first external host integrations and convert failures
-   into synthetic regressions and compatibility fixes;
-5. accept only defect, security, and compatibility maintenance in `0.4.x`;
-6. implement the smallest complete v0.5 Relationship Consequence slice;
-7. continue source milestones and establish the formal package-release
-   workflow only for `1.0`.
+3. **Completed:** deliver the v0.5 Relationship Consequence vertical slice and
+   advance it to the `0.5.0a3` stabilization milestone;
+4. **Current:** Character Deliberation CD-0 terminology, ADR, strict offline
+   contracts, trusted Host Bridge, fake Claude SSE, threat boundaries, and regressions;
+5. **Next:** CD-1 Shadow/Pilot comparisons across Direct, Compact, and Staged
+   under explicit host orchestration, without persistence or a public API;
+6. **Evidence-gated continuation:** CD-2 real Adapters/Shadow, followed by the
+   separately admitted psychological-continuity, durable, visibility/API, and
+   Ensemble stages;
+7. continue external-host adoption and `0.4.x` defect/security/compatibility
+   maintenance, with formal package-release commitments reserved for `1.0`.
 
-In parallel from now onward, DeepSeek and other model experiments may run in
-the independent Labs & Integrations track. They never block steps 1–7 and do
-not acquire durable compatibility promises merely by producing a promising
-result. Character Deliberation or multi-model collaboration enters the kernel
-only after its evaluation and admission criteria are met.
+The full CD-0 through CD-6 dependency and stop conditions live in the
+[Roadmap](../ROADMAP.md#character-deliberationc0-离线合同已实现产品集成待开发). Claude, DeepSeek,
+other model, and host experiments may proceed independently in Labs; one
+promising result never grants a durable compatibility commitment.
 
 This order changes the measure of progress from "how many domain objects were
 added" to "can a non-author install, understand, trust, integrate, recover, and

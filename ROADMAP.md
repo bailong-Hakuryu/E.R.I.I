@@ -27,7 +27,7 @@ E.R.I.I. 的 North Star 是**有因果来源的角色连续性**：角色从既�
 | `0.5.0a1` | 历史 alpha 源码里程碑 | 关系后果与叙事张力最小纵切 |
 | `0.5.0a2` | 已发布 alpha | 凭据、日志、错误与生命周期兼容性增量 |
 | `0.5.0a3` | 活跃 alpha 源码里程碑 | 收口版本身份、SDK、Turn 文档、性能测试与隔离边界 |
-| `0.5.x` 后续 | 计划 | 扩展角色内在审视、修复选择与认知修订 |
+| `0.5.x` 后续 | C0 离线合同与 CD-1 Shadow mechanics 已实现 | 下一步是 Pilot、人评和尚未实现的 Private Transient/Product 编排；真实 Provider Adapter 仍待后续 |
 | `0.6.x` | 计划 | 内核安全 Hook 与正式多用户产品宿主边界 |
 | `0.7.x` | 计划 | 用户查看、解释、迁移、纠正与删除关系数据的体验 |
 | `1.0` | 远期 | 产品级数据、评测、安全、支持、发布与法律准入 |
@@ -49,7 +49,7 @@ E.R.I.I. 不再把不同稳定性的工作塞进同一版本承诺：
 
 - **内核演进轨**维护角色、关系、来源、召回、数据格式与生命周期语义。进入这条轨道
   的能力必须具备明确 Interface、迁移与失败语义、跨 Storage 验证和长期维护证据。
-- **Labs 与集成轨**承载 DeepSeek、其他模型、本地模型、KouriChat、Shadow 评测和
+- **Labs 与集成轨**承载 Claude、DeepSeek、其他模型、本地模型、KouriChat、Shadow 评测和
   未来 Deliberation Ensemble。它们必须可安装、可替换、可禁用、可整体删除，不能
   静默改变持久格式或角色身份。
 
@@ -265,40 +265,255 @@ Authority 与 Relationship Consequence 是两条独立追加式结论：一段�
 - 长期轨迹能区分“角色连续但让人不舒服”和“无来源漂移”；
 - 评测不使用“越温柔越高分”的价值偏置。
 
+### Character Deliberation：C0 离线合同已实现，产品集成待开发
+
+Character Deliberation（角色审思）的领域设计已经确认；当前源码已经实现**可拆卸、无网络、
+无持久化的 C0 Python Labs 合同纵切**：真实 OPEN Turn 权威快照、宿主 HMAC 承诺、
+Fake Claude SSE、严格解析、证据/Canary 校验、精确 Result Binding 与迟到结果拒绝。
+它尚未接入 `ERIIEngine`、真实 Provider、Continuity/Delivery、持久化、REST 或 TypeScript API。现有
+`remember_thought()` / Inner Monologue 也不是回复前审思接口，不能把事后保存的心理
+叙事改名后当成这个功能已经完成。
+
+权威设计入口是：
+
+- [Character Deliberation 完整开发计划](docs/architecture/character-deliberation-development-plan.md)；
+- [Claude 可拆卸适配指南](docs/integrations/character-deliberation-claude.md)；
+- [Provider-neutral ADR-0117](docs/adr/0117-keep-character-deliberation-provider-neutral.md)；
+- [Character Deliberation 架构 ADR-0120](docs/adr/0120-keep-character-deliberation-transient-layered-and-host-owned.md)。
+
+目标运行链是：
+
+```mermaid
+flowchart LR
+    U["冻结 User Envelope"] --> B["关系内 Baseline 与有界证据"]
+    B --> R{"Adaptive Router"}
+    R -->|"主路径"| C["Compact Deliberation"]
+    R -->|"结构性复杂度"| S["Staged Deliberation"]
+    C --> D["Deliberation Spine + Character Interior Scene"]
+    S --> D
+    D --> V["Visible Reply Envelope"]
+    V --> Q["Continuity Review"]
+    Q --> X["最终交付"]
+    X --> P["可选 Session Residue"]
+```
+
+`Deliberation Spine` 保存可校验的情境理解、冲突冲动、行为意图、表达策略、不确定性和
+来源引用；`Character Interior Scene` 保存有温度、符合角色的内在体验。后者可以使用
+第一人称、近距离第三人称、碎片化意识、感官表达或混合形式，但仍是有来源的心理候选，
+不是隐藏的心理真值。Provider 的 raw thinking、系统 Prompt、草稿、凭据和错误正文都
+不进入该结果，也不成为 Inner Monologue、关系事实或长期人格。
+
+Compact 是普通回合的绝对主路径；Staged 只在来源冲突、知识边界不清、关系作用域不清、
+重要承诺/边界/关系转折或宿主明确选择高保真策略时使用。角色生气、拒绝、尖锐表达或
+用户不高兴本身都不是升级或重写理由。两条路径最后仍必须审查**用户实际看到的精确有序
+消息序列**；`$` 等宿主分隔符先由 Adapter 转成 `VisibleReplyEnvelope`，不能在审查后
+再次改变文本或气泡顺序。
+
+#### 四条并行发展轨
+
+| 轨道 | 起点 | 后续目标 | 晋级约束 |
+| --- | --- | --- | --- |
+| Generation | Provider-neutral Schema、Fake Actor、Compact 主路径 | Staged、Adaptive、真实 Provider、稳定 Host API | 审思相对直接生成及等计算量对照有可重复净收益 |
+| Psychological Continuity | 本 Turn 暂态结果、Session Residue | 独立 Private Reflection、Durable Provisional Residue、Accepted Private Stance | 生成器不能审批自己的心理；重复召回和重复生成不能增权 |
+| Visibility | 全部私有、默认不展示 | User Explanation、Thought Projection、Exposure Ledger | 可见性与内部审思分别评测；展示事实可导出、可擦除、可纠正 |
+| Multi-Agent | 单一 Character Actor | 单 Reviewer、专业 Reviewer、异构 Deliberation Ensemble | Reviewer 只提交发现，不能投票决定人格或直接写历史 |
+
+四条轨道可以分别失败或停止；不能为了完成 Visibility 或 Ensemble 而提前冻结 Durable
+格式，也不能因为某一 Provider 表现好就把它的 API、thinking 字段或模型名称写入 Core
+契约。
+
+#### 阶段 CD-0：契约、威胁模型与评测基线（当前文档阶段）
+
+交付物：
+
+- 冻结术语、可信 Envelope 与不可信语义 Payload 的边界；
+- 定义 Compact Result、Staged Plan/Realization、Attempt、Revision、Reply Binding、
+  `abstain`、升级请求和失败码；
+- 定义 Character Interior Scene 与 Provider raw thinking 的不可跨越边界；
+- 定义跨关系、Prompt 注入、非法 Evidence、stale baseline、late result、草稿泄漏和
+  Provider 错误泄漏威胁场景；
+- 建立直接生成、Compact、Staged、Adaptive、等计算量非审思对照和 Session Residue
+  组合的盲测矩阵。
+
+本阶段的完成只表示设计可实施，不表示用户已经能够调用该功能。退出条件是文档、ADR、
+Schema 草案和离线场景相互一致，且没有把未实现行为写成当前 API。
+
+#### 阶段 CD-1：Python Labs / Private Transient MVP
+
+首个实现严格限制在可整体删除的 Python Labs：
+
+- `CharacterActor` Provider-neutral Protocol、Fake Actor 和严格 Codec；
+- Compact 单调用主路径，Staged 两阶段辅路径以及 `off | compact | adaptive | staged`
+  宿主策略；
+- 冻结 Turn、关系内 Evidence View、精确 `VisibleReplyEnvelope` Binding 和现有
+  Continuity Review 集成；
+- Provider Attempt 与不可变语义 Revision 分离，软升级可使用已审查 Compact fallback，
+  硬升级永久排除有问题的旧候选；
+- Turn version、baseline fingerprint、run epoch 与 completion CAS fencing，迟到结果只
+  留脱敏运维状态；
+- Direct fallback 和显式 `not_deliberated`，不在失败时伪造角色所想；
+- 仅在进程/会话内存在的 Pending Deliberation Residue；完整 Interior Scene 默认不进入
+  Memory、Transcript、MemoryPack、Backup 或普通日志。
+
+该阶段不增加 SQLite/FileStorage 字段、MemoryPack 格式、REST、TypeScript SDK、隐藏
+worker 或用户可见 Thought Projection。卸载 Labs 后，普通 Turn、Recall、Continuity、
+MemoryPack、备份和删除必须保持原有行为。
+
+当前已落地的是本阶段的 **离线 Shadow mechanics 子集**：D0-D4 合成 fixture、冻结输入和
+精确结果绑定、盲测导出、指标与未填阈值的晋级门。它尚不包含产品 Direct fallback、
+Continuity delivery 编排、Session Residue 或真实 Provider，因此不表示 CD-1 整体完成，
+也不支持任何行为收益声明。
+
+#### 阶段 CD-2：真实 Adapter 与 Shadow Evaluation
+
+真实 Provider 从 Adapter 边缘接入，优先验证 Claude，同时保持 DeepSeek、其他远程模型
+和本地模型可替换。Claude 不是默认内核依赖，也不获得新的心理、关系或持久化权威：
+
+- Host 选择具体模型与能力；公开 Schema 不固定模型 ID、SDK 类或厂商 thinking 格式；
+- Adapter 只提交规范 Request，严格解析规范 Result；Provider raw thinking 即使可用也
+  不越过 Adapter；
+- API Key 由环境变量或 Secret Manager 注入；Prompt、证据正文、凭据和 Provider 错误
+  不进入普通日志；
+- 结构化输出能力、超时、取消、token/延迟计量和可重试错误在 Adapter 内映射为统一结果；
+- 同一个 Claude Adapter 可以实现 Compact Actor，并在 Staged 策略下完成 plan 与
+  realization，但两阶段不会因此变成默认；
+- Claude 将来可以承担 Reviewer，但同一流程仍只有一名 Character Actor，Reviewer 不能
+  直接改写回复、Persona、Relationship、Memory 或 Residue。
+
+Provider Interface 在至少两个真实、行为不同的 Adapter 通过同一合同套件之前不冻结。
+Live 测试必须显式 opt-in，离线 CI 使用合成 fixture；任何价格、速率、模型能力和区域
+政策都由宿主在运行时核对，不写成路线图承诺。
+
+Shadow 评测至少区分当前直接生成、Compact、Staged、Adaptive、等 token/等计算量但无
+审思结构的对照，以及带/不带 Session Residue 的长期轨迹。Judge 看冻结人设、当前关系、
+User 输入与最终回复，不读取实验组、Provider 或审思文本；人类评价是锚点，模型 Judge
+只是辅助。阈值先由 Pilot 校准，再在正式实验前预注册，不在路线图中写未经证据支持的
+固定百分比、延迟或成本数字。
+
+#### 阶段 CD-3：Opt-in Experimental 与独立心理延续
+
+只有 CD-2 证明行为收益且关键维度不退化后，宿主才可以显式开启 Experimental 路径：
+
+- Session Residue 按 completed-turn ordinal 和语义期限延续，不因被召回或模型重复而
+  自动续命；
+- Residue 只能从已经精确绑定、通过 Continuity 且实际展示的回复提出，由独立 Admission
+  Gate 接纳；
+- Private Reflection Adjudication 独立检查人设、形成性经历、关系历史、实际行为和原始
+  Evidence；Character Actor 不能审批自己的候选；
+- 结果可以是 accepted private stance、stance unformed、no durable meaning 或
+  rejected as unsupported；触及核心人格或巨大跃迁仍只生成 Growth Proposal；
+- Accepted Private Stance 只在原 `Agent × User` 关系内影响心理因果和表达选择，不直接
+  修改关系数值、Voice Activation、世界知识、共同经历或全局 Character Blueprint。
+
+本阶段仍可只使用 Session 状态。Private Reflection 的存在不自动要求把完整文学化
+Interior Scene 持久化。
+
+#### 阶段 CD-4：Durable Provisional Residue 与完整生命周期
+
+跨重启心理余留必须同时具备以下能力后才晋级：
+
+- FileStorage 与 SQLite 等价实现、重启和并发幂等、显式 schema/version 迁移；
+- MemoryPack、Backup/Restore、完整关系导出、loss manifest 脱敏分享包；
+- Turn/Relationship 级级联擦除、来源失效、冲突关闭、Rebuild 与旧 Reader 行为；
+- Adapter 卸载后仍可读取、导出、删除和重建，不要求重新安装 Claude 或其他 Provider；
+- 心理敏感文本的最小化、宿主授权、加密和出站边界；
+- 长期轨迹证明 Residue 不形成模型自我强化闭环。
+
+Durable Residue 即使跨重启和携带，权威仍是 `provisional`。完整 Interior Scene 默认仍是
+暂态；持久层只保存支持后续延续所需的最小心理含义、来源、lineage、不确定性和期限。
+
+#### 阶段 CD-5：Visibility、Exposure 与公共接口
+
+内部审思和用户可见性使用两套实验、两套 Schema 和两套晋级门：
+
+- Thought Projection 是文学化的观察镜头；Deliberation Explanation 是有认知边界的
+  表达选择解释；二者默认关闭、独立开关；
+- Source Transcript 只保存 User/Agent 实际发言，Exposure Ledger 单独保存用户实际
+  看见的 Projection/Explanation、顺序、精确内容、绑定和角色知情状态；
+- User Explanation 与 Operator Explanation 使用不同 Renderer、字段和权限；
+- Full Relationship MemoryPack 保留影响行为连续性的 Exposure 与 Durable state；
+  Redacted Sharing Pack 明确声明有损类别，不猜测补写缺失心理；
+- 先稳定 Python Host API，再按同一合同增加 REST，最后增加 TypeScript SDK；任何一层
+  都不能比下层多出心理或关系写权限；
+- 支持原子 Delivery Batch 的宿主记录逐项回执；不支持时先确认 Agent Reply，再追加可选
+  Projection，避免出现只有心理投影而没有对应回复的悬空历史。
+
+CD-5 的离线 Renderer 与单 owner 本地宿主可以先在 Labs 验证；面向真实多用户的
+Exposure API、前端和远程数据操作必须等待 v0.6 安全边界，并作为 v0.7 用户体验工作
+交付，不能用参考服务的单一 owner key 提前冒充对象级授权。
+
+用户喜欢查看 Projection 不等于审思改善了最终回复；反过来，内部审思有效也不表示每轮
+都适合展示。可见性实验还要观察沉浸、主体性感知、神秘感、长期疲劳、用户是否误认成
+Provider 真正思维，以及 Exposure 如何改变用户下一轮行为。
+
+#### 阶段 CD-6：Reviewer 与 Deliberation Ensemble
+
+多 Agent 协同最后进入，并且与 Claude、DeepSeek 或任何单一 Provider 解耦：
+
+- 始终只有一名代表角色作出表达选择的 Character Actor；
+- Reviewer 只提交有来源 findings，由 Actor 生成新的不可变 Revision；
+- 多 Reviewer 不以多数票决定角色人格、关系、内心或最终台词；
+- 只有单 Actor 暴露可重复失败类型，且 Reviewer 的净收益覆盖延迟、成本、隐私和维护
+  负担时，才增加专业 Reviewer；
+- Reviewer 可以由 Claude、其他远程模型或本地模型混合承担，但 Provider 故障、禁用或
+  删除不能改变 Core 数据可读性；
+- 面向真实多用户的远程协同必须等待 v0.6 的 Principal/Capability、对象授权、密钥、
+  出站、审计、配额和隔离边界。
+
+#### 总晋级门与停止条件
+
+每次晋级都必须同时检查：
+
+1. **行为收益**：心理因果、身份、关系、知识、语言、主体性和矛盾表达相对直接生成及
+   等计算量对照有可重复净收益；
+2. **情绪中立**：拒绝、愤怒、边界和合理伤人表达不被系统性柔化，用户满意不替代角色
+   连续性；
+3. **范围安全**：跨关系泄漏、raw thinking/Prompt/凭据泄漏、非法 Evidence 接受、stale
+   Binding、late result 写入和未展示草稿持久化保持硬失败；
+4. **数据生命周期**：任何新持久对象都具备两种 Storage、Pack、Backup、迁移、删除、
+   Rebuild、旧 Reader 和卸载 Adapter 后的处理；
+5. **运营可承受**：Host 可以显式限制成本、延迟、升级率、重试和保留；项目不以某一时刻
+   的 Provider 价格或吞吐量作保证；
+6. **可拆卸性**：关闭或删除 Claude/其他 Adapter、Visibility 或 Ensemble 后，Core 的
+   Turn、Recall、Continuity 和用户数据携带不退化。
+
+任一阶段未通过时保持在 Labs、缩小范围或删除实验，不通过版本号或文档宣称绕过晋级门。
+
 ## Labs 与集成：模型 Provider 和多模型协同
 
-DeepSeek 是角色审思研究中可选的 Experimental Model Provider，不是 E.R.I.I. 的
-核心依赖。已有记录只是小样本探索，尚未证明生产准确率、SLA、可复现成本/延迟优势，
-也不构成生产推荐。价格、模型和 API 会变化；项目不要求使用者为了接入 DeepSeek 而
-更换原本正常工作的宿主、存储、网络或部署架构。
+Claude、DeepSeek、其他远程模型和本地模型都是可选 Experimental Model Provider，
+不是 E.R.I.I. Core 依赖。DeepSeek 的既有小样本探索和 Claude 的后续适配都只能证明
+具体实验结果，不能证明生产准确率、SLA、价格、可复现延迟或长期供应商稳定性。
 
-演进顺序是：
+所有 Provider 共享以下边界：
 
-- `0.4.0` 没有改变持久格式；只允许在内核外进行可整体删除、无心理持久化的
-  Shadow 对照实验；
-- 实验证明 thinking 相比同模型 non-thinking 和现有基线有稳定净收益后，v0.5 才
-  考虑冻结 Provider-neutral 的 Character Deliberation 领域契约；
-- DeepSeek 只通过独立、可安装、可禁用的 Adapter 接入；未安装时普通 Turn、Recall、
-  Continuity、MemoryPack 与生命周期必须保持可用；
-- 原始 thinking、Prompt、凭据和 Provider 错误正文不成为 Inner Monologue 或持久
-  角色历史；
-- 远程模型出站前由宿主取得授权、最小化 Prompt/证据/对话/记忆，并核对 Provider 的
-  数据地区、留存、删除与训练政策；
-- API Key 只从环境变量或宿主 Secret Manager 注入，不进入源码、文档、fixture、
-  命令行参数、日志或持久角色数据；
-- 未来常称的“多 Agent 协同”在领域语言中使用 Deliberation Ensemble，避免与代表
-  角色身份的 E.R.I.I. Agent 混淆；
-- 一个 Ensemble 只有一名 Character Actor；多个 Reviewer 可混用 DeepSeek、其他
-  远程模型和本地模型，但不以多数票决定人格，也没有直接历史写权限；
-- 多模型在线编排只有在单模型/单 Reviewer 暴露可重复失败类型且评测证明净收益后才
-  晋级；面向真实多用户的云端协同仍受 v0.6 授权、密钥、出站和隔离边界约束。
+- 只通过独立、可安装、可禁用、可整体删除的 Adapter 接入；未安装时普通 Turn、Recall、
+  Continuity、MemoryPack 与生命周期保持可用；
+- 使用同一 Provider-neutral Request/Result 与合同测试，供应商 SDK、模型 ID、角色字段和
+  raw thinking 格式停留在 Adapter 内；
+- raw thinking、Prompt、凭据、未展示草稿和 Provider 错误正文不成为 Character Interior
+  Scene、Inner Monologue、关系事实或持久角色历史；
+- 远程模型出站前由宿主取得授权并最小化 Prompt、证据、对话和记忆；宿主核对实际 Provider
+  的地区、留存、删除、训练和子处理方政策；
+- API Key 只从环境变量或宿主 Secret Manager 注入，不进入源码、文档、fixture、命令行
+  参数、日志或持久角色数据；
+- Live Provider 测试显式 opt-in，普通 CI 使用 Fake Actor 与合成 fixture；离线解析通过
+  不等于远程行为、隐私、成本或可用性已经通过；
+- 多模型在线编排只有在单 Actor 或单 Reviewer 暴露可重复失败类型且评测证明净收益后
+  晋级；面向真实多用户的远程协同还依赖 v0.6 授权、密钥、出站与隔离边界。
 
-Labs 可以独立迭代、失败或删除，不决定 v0.5 的源码进度。多模型协同与 DeepSeek
-没有设计依赖；如果单 Actor 或单 Reviewer 已经足够好，就不为“多 Agent”概念增加
-每轮延迟、成本与维护负担。
+未来常称的“多 Agent 协同”在领域语言中使用 Deliberation Ensemble，避免与代表角色
+身份的 E.R.I.I. Agent 混淆。一个 Ensemble 只有一名 Character Actor；Reviewer 可以
+混用 Claude、DeepSeek、其他远程模型和本地模型，但不以多数票决定人格，也没有直接
+历史写权限。如果单 Actor 已经足够好，就不为“多 Agent”概念增加每轮延迟、成本、隐私
+暴露面与维护负担。
 
-架构理由与非目标见
-[ADR-0117](docs/adr/0117-keep-character-deliberation-provider-neutral.md)。
+详细阶段、Claude 边界与非目标见
+[Character Deliberation 开发计划](docs/architecture/character-deliberation-development-plan.md)、
+[Claude 适配指南](docs/integrations/character-deliberation-claude.md)和
+[ADR-0117](docs/adr/0117-keep-character-deliberation-provider-neutral.md)；模块归属、暂态边界和
+持久化准入见
+[ADR-0120](docs/adr/0120-keep-character-deliberation-transient-layered-and-host-owned.md)。
 
 ## v0.6：安全内核 Hook 与产品宿主边界
 
@@ -331,7 +546,8 @@ FileStorage 不承担完整多租户平台职责；关系 ID、路径哈希或�
 - 用户可导出、迁移、纠正、隔离和请求删除自己的数据；
 - 清楚区分原文、摘要、推断、当前认知、反思和已批准人格变化；
 - 展示 Legacy / Quarantined 标签，而不是隐藏不确定历史；
-- 在不暴露 Agent-private 推理的前提下提供可解释处置；
+- 不暴露 raw Provider thinking、Prompt、草稿或未获准私有审思；按 CD-5 的独立可见性
+  语义提供经过验证的 Thought Projection 或 Explanation；
 - 支持恢复演练、设备迁移和数据所有权操作；
 - 用真实可用性测试验证非维护者能正确完成常见流程。
 

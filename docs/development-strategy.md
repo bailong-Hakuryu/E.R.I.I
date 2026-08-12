@@ -2,7 +2,8 @@
 
 **简体中文** · [English](development-strategy.en.md)
 
-本文记录项目自已接受的 `0.4.0b1` 源码基线之后的发展原则。它不是固定日期、融资计划或 SLA，
+本文记录项目自已接受的 `0.4.0b1` 源码基线之后的发展原则。当前活跃源码里程碑是
+`0.5.0a3`；它不是固定日期、融资计划或 SLA，
 也不把尚未实现的能力描述成当前功能。具体版本范围仍以 [Roadmap](../ROADMAP.md)、
 [Changelog](../CHANGELOG.md) 和经过验证的 commit 为准。`0.x` 版本号表示源码演进
 里程碑；项目计划到 `1.0` 再建立正式包发布链路。
@@ -49,7 +50,7 @@ E.R.I.I. 的目标不是保存最多文本，也不是成为通用 RAG 或万能
 └─ Provider-neutral capability Interface
 
 可选 Adapter 与实验
-├─ DeepSeek Adapter
+├─ Claude / DeepSeek / 其他 Provider Adapter
 ├─ 其他云端或本地模型 Adapter
 ├─ KouriChat 等宿主集成
 └─ Deliberation Ensemble / 多模型协同
@@ -83,7 +84,7 @@ E.R.I.I. 的目标不是保存最多文本，也不是成为通用 RAG 或万能
 
 实验与集成轨承载可以快速替换或整体删除的内容：
 
-- DeepSeek thinking 对照实验；
+- Claude、DeepSeek 与其他 Provider 的可拆卸 Adapter 和对照实验；
 - Provider Adapter、KouriChat Bridge 与参考宿主；
 - 多模型 Actor / Reviewer 编排；
 - Prompt、模型路由、行为评测和原型 UI。
@@ -95,7 +96,7 @@ E.R.I.I. 的目标不是保存最多文本，也不是成为通用 RAG 或万能
 进入 Kernel Evolution Track。DeepSeek 或任何其他 Provider 的品牌、模型名、价格和响应
 字段都不能进入角色身份、关系权威或持久格式。
 
-## 当前阶段：先完成可采用的 v0.4
+## 当前阶段：稳定 `0.5.0a3`，准备角色审思 Labs
 
 ### 已接受源码检查点：`0.4.0b1`
 
@@ -124,21 +125,39 @@ RC 没有增加新关系维度、记忆类型、人格变化渠道或 v0.5 后�
 - 整理项目元数据和正式包名候选，但把 PyPI/GitHub Release 流程留给 `1.0`；
 - 修正 GitHub About、topics 等仓库外元数据，不再把“零依赖”当作卖点。
 
-Golden Continuity Demo 在 v0.4 只展示已经实现的能力：
+Golden Continuity Demo 在该 v0.4 检查点只展示当时已经实现的能力：
 
 1. 同一个角色分别与 User A、User B 建立关系；
 2. 只有 User A 与角色“一起看雪”；
 3. 进程重启后 A 能正确召回，B 不能召回也不继承亲密度；
 4. 用户可以检查来源并导出 MemoryPack。
 
-它不能提前演示尚未实现的 v0.5 Relationship Consequence。
+它不能被回写成已经演示后来才在 v0.5 实现的 Relationship Consequence。
 
-### 当前源码稳定里程碑：`0.4.0` / `0.4.x`
+### 稳定维护线：`0.4.0` / `0.4.x`
 
 `0.4.0` 已完成最终源码身份、契约快照和 Golden Demo 的导出/全新 SQLite 导入往返。
 稳定源码线维护数据可读性、迁移、导出和回归，不代表已经分发正式包，也不承诺商业
 SLA。`0.4.x` 源码标识只用于缺陷、安全和兼容改进，不静默改变人格、关系或来源权威
 语义。
+
+### 当前活跃源码里程碑：`0.5.0a3`
+
+`0.5.0a1` 已实现从最终交付回复到 Relationship Consequence、Narrative Tension、后续
+关系内召回和结果投影的最小纵切；`0.5.0a2` 增加了凭据、日志、错误与生命周期兼容性
+工作，当前 `0.5.0a3` 优先收口版本身份、SDK、Turn 文档、性能与隔离边界。它仍是 Alpha
+源码里程碑，不是生产 SLA。
+
+> **Character Deliberation 状态：Experimental；C0 离线合同纵切已实现，产品集成尚未开始。**
+> 第一实现阶段只进入可整体删除的 Python Labs：Compact 是主路径，Staged 只处理结构性
+> 复杂回合；默认私有、暂态并继续经过现有 Continuity Review。Session Residue、独立
+> Private Reflection、Durable state、Visibility/Exposure、REST/TypeScript 和
+> Deliberation Ensemble 分别通过自己的行为、安全、数据生命周期与可拆卸性晋级门，
+> 不能因为设计已接受就写成当前源码能力。
+
+详细设计见 [完整开发计划](architecture/character-deliberation-development-plan.md)、
+[Claude 可拆卸适配指南](integrations/character-deliberation-claude.md)和
+[ADR-0120](adr/0120-keep-character-deliberation-transient-layered-and-host-owned.md)。
 
 采用目标不是硬性的源码阶段门禁，但在冻结更多持久格式前应努力获得：
 
@@ -151,7 +170,7 @@ SLA。`0.4.x` 源码标识只用于缺陷、安全和兼容改进，不静默改
 
 ## v0.5：先证明角色的选择会留下后果
 
-`v0.5.0a1` 的首要纵切是：
+`v0.5.0a1` 已经实现以下首要纵切，当前 `0.5.0a3` 继续稳定其契约与集成：
 
 ```text
 最终实际交付的 Agent 回复
@@ -174,22 +193,25 @@ SLA。`0.4.x` 源码标识只用于缺陷、安全和兼容改进，不静默改
 - 新记录具备完整携带、擦除、重建和关系隔离语义。
 
 Character Review、双方 Stance、历史例外解除和更复杂的认知修订在这条纵切稳定后分阶段
-进入后续 v0.5 Alpha。Character Deliberation 只有在 Shadow 对照实验证明它改善角色
-连续性而不破坏自然度之后，才考虑成为 Provider-neutral 持久能力。
+进入后续 v0.5 Alpha。Character Deliberation 的 Provider-neutral 领域设计已经接受，
+运行代码仍从 Python Labs 起步；只有 Shadow 对照证明它改善角色连续性而不破坏自然度，
+并完成相应生命周期验证后，某项持久语义才有资格提出进入内核。
 
 ## 模型与多模型协同
 
-DeepSeek 是当前维护者用于实验、且对预算敏感场景较友好的可选 Provider。该推荐带
-日期并受官方定价、模型行为和隐私条款变化影响；E.R.I.I. 不强制使用，也不建议仅为了
-接入它而改造一套正常工作的宿主、存储或部署。
+Claude、DeepSeek、其他远程模型和本地模型都是可选、可拆卸的 Provider。DeepSeek 是
+维护者用于实验、且对预算敏感场景较友好的一个选择；Claude 可以通过独立 Adapter
+承担 Character Actor，并在后续阶段承担 Reviewer。任何推荐都受模型行为、价格和隐私
+条款变化影响；E.R.I.I. 不强制使用某一 Provider，也不建议仅为了接入它而改造一套正常
+工作的宿主、存储或部署。
 
 未来常称的“多 Agent 协同”在领域语言中是 Deliberation Ensemble：一名 Character
-Actor 提出角色回复，若干 Reviewer 可以混用 DeepSeek、其他远程 Provider 与本地模型。
-它与 DeepSeek 没有设计绑定，也不以多数票决定角色是谁。
+Actor 提出角色回复，若干 Reviewer 可以混用 Claude、DeepSeek、其他远程 Provider 与
+本地模型。它与任何单一 Provider 都没有设计绑定，也不以多数票决定角色是谁。
 
 晋级条件：
 
-- thinking 相比同模型 non-thinking 和当前基线有稳定行为收益；
+- Deliberation 相比直接生成和等计算量非审思对照有稳定行为收益；
 - raw thinking、Prompt、凭据和跨关系数据泄漏为 0；
 - 单 Actor / 单 Reviewer 已暴露可重复、可归类的失败；
 - Ensemble 能显著修复该失败，收益足以覆盖延迟、成本与维护负担。
@@ -257,20 +279,25 @@ FileStorage 不承担完整多租户平台职责。参考 REST 服务继续被�
 
 ## 近期执行状态与顺序
 
-截至当前 `0.4.0` 稳定源码里程碑，已完成与待完成工作按以下顺序推进；除非新证据
+截至当前 `0.5.0a3` Alpha 源码里程碑，已完成与待完成工作按以下顺序推进；除非新证据
 改变优先级：
 
 1. **已接受：**以不可移动的完整 commit SHA 保留经验证的 `0.4.0b1` 源码检查点；
 2. **已完成：**接受 `0.4.0rc1` 的公共 Interface、采用路径、契约、构建和文档收口；
-3. **当前：**维护 `0.4.0` 稳定源码身份、最终契约和可重复 Golden Demo；
-4. **下一步：**邀请第一批外部宿主接入，把失败转成合成回归和兼容性修复；
-5. 在 `0.4.x` 仅接受缺陷、安全和兼容维护；
-6. 实现最小而完整的 v0.5 Relationship Consequence 纵切；
-7. 持续推进后续源码里程碑，到 `1.0` 再建立并演练正式包发布流程。
+3. **已完成：**交付 v0.5 Relationship Consequence 最小纵切，并推进到 `0.5.0a3`
+   稳定化里程碑；
+4. **当前：**Character Deliberation CD-0 的术语、ADR、严格离线合同、可信 Host Bridge、
+   Fake Claude SSE、威胁边界和回归基线；
+5. **下一步：**CD-1 Shadow/Pilot：在宿主显式编排下比较 Direct、Compact 与 Staged，
+   但仍不进入持久格式或公开 API；
+6. **后续按证据晋级：**CD-2 真实 Adapter/Shadow，再依次评估心理延续、Durable、
+   Visibility/API 和 Ensemble；
+7. 持续邀请外部宿主、维护 `0.4.x` 缺陷/安全/兼容线，并到 `1.0` 再建立正式包发布承诺。
 
-从现在起，DeepSeek、其他模型与宿主集成实验可以在 Labs 与集成轨并行进行。它们永远
-不阻塞上述 1–7，也不会因为一次结果不错就自动获得持久兼容承诺。Character
-Deliberation 或多模型协同只有通过评测与准入门槛后才进入内核。
+CD-0—CD-6 的完整依赖、验收和停止条件以
+[Roadmap](../ROADMAP.md#character-deliberationc0-离线合同已实现产品集成待开发) 为准。Claude、DeepSeek、
+其他模型与宿主集成实验可以在 Labs 轨并行进行；它们不会因为一次结果不错就自动获得
+持久兼容承诺。
 
 ## 相关决策
 
@@ -282,3 +309,5 @@ Deliberation 或多模型协同只有通过评测与准入门槛后才进入内�
   收窄 v0.5 第一条纵切，并拆分内核演进轨与实验集成轨。
 - [ADR-0119](adr/0119-defer-formal-package-distribution-until-v1.md)
   把 `0.x` 定义为源码里程碑，并把正式包发布链路留到 `1.0`。
+- [ADR-0120](adr/0120-keep-character-deliberation-transient-layered-and-host-owned.md)
+  接受角色审思的分层、暂态与宿主编排边界，同时把持久化留给独立准入。

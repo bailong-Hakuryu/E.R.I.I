@@ -29,6 +29,13 @@ surface is in
   formal tags, GitHub Release assets and package-registry distribution until
   `1.0`. Local package build and clean-install verification remain engineering
   checks rather than release gates.
+- ADR 0120 records the accepted Character Deliberation design contract: a
+  sourced Semantic Frame, warm but non-authoritative Interior Scene, exact
+  visible-reply binding, host-owned Compact-first/Staged-when-earned
+  orchestration, and Session Residue that may become durable only after
+  independent reflection and lifecycle gates. The implementation remains
+  Experimental and is not a currently shipped capability; see the detailed
+  [`development plan`](../architecture/character-deliberation-development-plan.md).
 - ADR 0003 predates the b1 lifecycle coordinator. Its broad MemoryPack
   “migration” language is superseded operationally by the explicit distinction
   between backup/restore, side-by-side upgrade and fresh import in

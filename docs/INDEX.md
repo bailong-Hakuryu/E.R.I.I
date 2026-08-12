@@ -38,6 +38,31 @@ initialize_relationship
 - [上下文声音模式 ADR](adr/0086-model-voice-as-source-backed-contextual-repertoire.md)
 - [0.5 关系后果迁移](migration-0.5.0.md)
 
+## Character Deliberation（C0 离线合同已实现）
+
+Character Deliberation 的领域边界和阶段路线已经确认；当前源码已有可拆卸、无网络、
+无持久化的 C0 Python Labs 合同纵切和 Fake Claude SSE，但尚无真实 Claude/其他 Provider
+Adapter、`ERIIEngine`/Continuity/Delivery 集成、持久化、REST 或 TypeScript API。现有
+Inner Monologue 是独立的长期心理叙事对象，不是回复前审思实现。
+
+- [完整开发计划](architecture/character-deliberation-development-plan.md)：领域对象、
+  Compact/Staged 双轨、运行生命周期、心理延续、Visibility、评测、风险和逐阶段准入。
+- [Claude 可拆卸适配指南](integrations/character-deliberation-claude.md)：Claude 作为可选
+  Character Actor/Reviewer 的 Adapter 边界、凭据、数据最小化、结构化结果、失败降级与测试。
+- [Provider-neutral ADR](adr/0117-keep-character-deliberation-provider-neutral.md)：任何单一
+  Provider 的 thinking、SDK 或模型名称都不进入 Core 契约。
+- [Character Deliberation 架构 ADR](adr/0120-keep-character-deliberation-transient-layered-and-host-owned.md)：
+  首版保持暂态、分层、由 Host/Labs 编排；持久化必须另过准入门。
+- [项目路线图](../ROADMAP.md#character-deliberationc0-离线合同已实现产品集成待开发)：从 Private
+  Transient Python Labs 到 Session Residue、Private Reflection、Durable state、
+  Exposure/Visibility、REST/TypeScript 与 Deliberation Ensemble 的依赖顺序和晋级门。
+
+首个实现只进入 Python Labs：Compact 为主、Staged 为辅，默认私有且暂态，复用现有
+Continuity Review，并提供 Direct fallback。Claude、DeepSeek、其他远程模型与本地模型
+都只能通过可安装、可替换、可禁用的 Adapter 接入；raw thinking、Prompt、凭据、草稿和
+Provider 错误正文不进入角色历史。持久格式、用户可见心理投影、REST/SDK 和多 Reviewer
+协同要分别通过自己的行为、安全、数据生命周期与可拆卸性准入门。
+
 ## API 与稳定性
 
 - [API Stability](api-stability.md)：Golden、Advanced、Experimental 与 Internal。
@@ -80,7 +105,8 @@ Turn 文档中的示例必须与 `ERIIEngine` 的公开签名一起通过测试�
 DeepSeek Continuity Review 位于
 `experiments/deepseek-continuity-review/`，是可整体拆卸的离线/Provider 实验。
 实验测试证明解析、证据和错误边界，不证明真实 Provider 的准确率、延迟、价格、SLA
-或生产部署质量。多模型协同与任何单一 Provider 都没有设计绑定。
+或生产部署质量。Claude 适配同样属于后续 Labs 工作，不是当前已实现 API；多模型协同
+与任何单一 Provider 都没有设计绑定。
 
 ## 发布与验证事实
 
