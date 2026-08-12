@@ -295,7 +295,7 @@ FileStorage 不承担完整多租户平台职责。参考 REST 服务继续被�
 7. 持续邀请外部宿主、维护 `0.4.x` 缺陷/安全/兼容线，并到 `1.0` 再建立正式包发布承诺。
 
 CD-0—CD-6 的完整依赖、验收和停止条件以
-[Roadmap](../ROADMAP.md#character-deliberationc0-离线合同已实现产品集成待开发) 为准。Claude、DeepSeek、
+[Roadmap](../ROADMAP.md#character-deliberationc0-与-g2-离线编排已实现产品晋级待开发) 为准。Claude、DeepSeek、
 其他模型与宿主集成实验可以在 Labs 轨并行进行；它们不会因为一次结果不错就自动获得
 持久兼容承诺。
 

@@ -24,6 +24,16 @@ from .schemas import (
     UserMessageEnvelope,
     VisibleReplyEnvelopeV1,
 )
+from .orchestration import (
+    CompactDeliberationOrchestrator,
+    DeliberationMode,
+    EngineDeliberationRuntime,
+    PreparationFailureCode,
+    PreparedVisibleReplyV1,
+    ReplyPreparationOutcomeV1,
+    ReplySource,
+    build_user_envelope,
+)
 
 __all__ = [
     "ActorDescriptor",
@@ -41,6 +51,14 @@ __all__ = [
     "ResultKind",
     "UserMessageEnvelope",
     "VisibleReplyEnvelopeV1",
+    "CompactDeliberationOrchestrator",
+    "DeliberationMode",
+    "EngineDeliberationRuntime",
+    "PreparationFailureCode",
+    "PreparedVisibleReplyV1",
+    "ReplyPreparationOutcomeV1",
+    "ReplySource",
+    "build_user_envelope",
 ]
 
 __status__ = "experimental"

@@ -1,6 +1,6 @@
 # Character Deliberation（角色审思）完整开发计划
 
-> 状态：**Accepted design / Experimental；C0 离线合同纵切已实现**
+> 状态：**Accepted design / Experimental；C0 与 G2 离线纵切已实现**
 >
 > 更新时间：2026-08-12
 >
@@ -1402,8 +1402,8 @@ erase Turn
 | 阶段 | 交付 | 前置 | 晋级证据 |
 |---|---|---|---|
 | G0 | 术语、ADR、威胁模型、场景分类、基线快照 | 无 | 设计评审通过 |
-| G1 | 严格 V1 Schema、codec、Fake Actor、binding validator | G0 | 合同/恶意输入全通过 |
-| G2 | Private Compact MVP、Direct fallback、Continuity 集成 | G1 | D0/D1 可重复 Shadow |
+| G1 | 严格 V1 Schema、codec、Fake Actor、binding validator（已实现） | G0 | 合同/恶意输入全通过 |
+| G2 | Private Compact MVP、Direct fallback、Continuity 集成（已实现） | G1 | D0/D1 可重复 Shadow |
 | G3 | Staged + Adaptive Router + soft/hard escalation | G2 | 路由规则和调用上限通过 |
 | G4 | Claude + 第二个真实 Provider Adapter | G2/G3 | 共用 Contract Suite；无 Provider 泄漏 |
 | G5 | Opt-in Experimental Host API | 评测门通过 | 公共 surface review + 使用反馈 |
@@ -1596,6 +1596,13 @@ Adapter 自己批准。关闭 Labs 时它们不运行，现有 Core 路径保持
 若现有 Continuity Binding 只能接受单字符串，第一阶段 Adapter 必须提供一个规范、无歧义
 的暂态桥并写清限制；原生多消息 Envelope 进入 Core 需要单独兼容性设计，不能以 `$`
 拼接冒充完成。
+
+当前 G2 实现遵守该限制：`EngineDeliberationRuntime` 只复用现有 Turn、relationship guard、
+`evaluate_reply_continuity()`、attempt receipt 与 `complete_turn()`；
+`CompactDeliberationOrchestrator` 将准备和展示后完成拆为两个显式步骤。只有单个 text part
+可以进入现有 Continuity 单字符串接缝，多分条候选 fail closed 到 Direct fallback。
+交付对象不保留 Frame 或 Interior Scene，且 Actor/Direct 回调异常只留下稳定脱敏分类。
+这不是稳定公共 Host API，也不代表后续 G3/P1 已实现。
 
 ### 17.4 第一阶段测试文件
 

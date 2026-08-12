@@ -27,7 +27,7 @@ E.R.I.I. 的 North Star 是**有因果来源的角色连续性**：角色从既�
 | `0.5.0a1` | 历史 alpha 源码里程碑 | 关系后果与叙事张力最小纵切 |
 | `0.5.0a2` | 已发布 alpha | 凭据、日志、错误与生命周期兼容性增量 |
 | `0.5.0a3` | 活跃 alpha 源码里程碑 | 收口版本身份、SDK、Turn 文档、性能测试与隔离边界 |
-| `0.5.x` 后续 | C0 离线合同与 CD-1 Shadow mechanics 已实现 | 下一步是 Pilot、人评和尚未实现的 Private Transient/Product 编排；真实 Provider Adapter 仍待后续 |
+| `0.5.x` 后续 | C0、G2 Private Compact 编排与 CD-1 Shadow mechanics 已实现 | 下一步是 G3 Staged/Adaptive、P1 Session Residue、Pilot 与人评；真实 Provider Adapter 仍待后续 |
 | `0.6.x` | 计划 | 内核安全 Hook 与正式多用户产品宿主边界 |
 | `0.7.x` | 计划 | 用户查看、解释、迁移、纠正与删除关系数据的体验 |
 | `1.0` | 远期 | 产品级数据、评测、安全、支持、发布与法律准入 |
@@ -265,12 +265,15 @@ Authority 与 Relationship Consequence 是两条独立追加式结论：一段�
 - 长期轨迹能区分“角色连续但让人不舒服”和“无来源漂移”；
 - 评测不使用“越温柔越高分”的价值偏置。
 
-### Character Deliberation：C0 离线合同已实现，产品集成待开发
+### Character Deliberation：C0 与 G2 离线编排已实现，产品晋级待开发
 
 Character Deliberation（角色审思）的领域设计已经确认；当前源码已经实现**可拆卸、无网络、
-无持久化的 C0 Python Labs 合同纵切**：真实 OPEN Turn 权威快照、宿主 HMAC 承诺、
-Fake Claude SSE、严格解析、证据/Canary 校验、精确 Result Binding 与迟到结果拒绝。
-它尚未接入 `ERIIEngine`、真实 Provider、Continuity/Delivery、持久化、REST 或 TypeScript API。现有
+无持久化的 C0 Python Labs 合同纵切与 G2 Private Compact 编排接缝**：真实 OPEN Turn
+权威快照、宿主 HMAC 承诺、Fake Claude SSE、严格解析、证据/Canary 校验、精确 Result
+Binding、迟到结果拒绝，以及显式 `off | compact`、Direct fallback、现有 Continuity
+Review 和精确展示后完成 Turn。G2 通过独立 Adapter 调用现有 `ERIIEngine` 能力，不修改
+Engine、TurnRecord 或存储格式，也不是稳定公共 Host API。它尚未接入真实 Provider、
+Staged/Adaptive、Session Residue、REST 或 TypeScript API。现有
 `remember_thought()` / Inner Monologue 也不是回复前审思接口，不能把事后保存的心理
 叙事改名后当成这个功能已经完成。
 
@@ -359,10 +362,12 @@ Schema 草案和离线场景相互一致，且没有把未实现行为写成当�
 worker 或用户可见 Thought Projection。卸载 Labs 后，普通 Turn、Recall、Continuity、
 MemoryPack、备份和删除必须保持原有行为。
 
-当前已落地的是本阶段的 **离线 Shadow mechanics 子集**：D0-D4 合成 fixture、冻结输入和
-精确结果绑定、盲测导出、指标与未填阈值的晋级门。它尚不包含产品 Direct fallback、
-Continuity delivery 编排、Session Residue 或真实 Provider，因此不表示 CD-1 整体完成，
-也不支持任何行为收益声明。
+当前已落地的是本阶段的 **G1、G2 与离线 Shadow mechanics 子集**：严格合同、Private
+Compact、Direct fallback、现有单字符串 Continuity/Delivery 接缝，以及 D0-D4 合成
+fixture、冻结输入和精确结果绑定、盲测导出、指标与未填阈值的晋级门。G2 只允许单个
+text part 进入现有 Continuity API；多分条候选不会用分隔符拼接，而会走 Direct fallback。
+它尚不包含 G3 Staged/Adaptive、P1 Session Residue 或真实 Provider，因此不表示 CD-1
+整体完成，也不支持任何行为收益声明。
 
 #### 阶段 CD-2：真实 Adapter 与 Shadow Evaluation
 

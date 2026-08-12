@@ -571,7 +571,7 @@ is ordered as follows unless new evidence changes the priority:
    maintenance, with formal package-release commitments reserved for `1.0`.
 
 The full CD-0 through CD-6 dependency and stop conditions live in the
-[Roadmap](../ROADMAP.md#character-deliberationc0-离线合同已实现产品集成待开发). Claude, DeepSeek,
+[Roadmap](../ROADMAP.md#character-deliberationc0-与-g2-离线编排已实现产品晋级待开发). Claude, DeepSeek,
 other model, and host experiments may proceed independently in Labs; one
 promising result never grants a durable compatibility commitment.
 

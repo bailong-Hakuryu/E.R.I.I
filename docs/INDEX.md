@@ -53,7 +53,7 @@ Inner Monologue 是独立的长期心理叙事对象，不是回复前审思实�
   Provider 的 thinking、SDK 或模型名称都不进入 Core 契约。
 - [Character Deliberation 架构 ADR](adr/0120-keep-character-deliberation-transient-layered-and-host-owned.md)：
   首版保持暂态、分层、由 Host/Labs 编排；持久化必须另过准入门。
-- [项目路线图](../ROADMAP.md#character-deliberationc0-离线合同已实现产品集成待开发)：从 Private
+- [项目路线图](../ROADMAP.md#character-deliberationc0-与-g2-离线编排已实现产品晋级待开发)：从 Private
   Transient Python Labs 到 Session Residue、Private Reflection、Durable state、
   Exposure/Visibility、REST/TypeScript 与 Deliberation Ensemble 的依赖顺序和晋级门。
 

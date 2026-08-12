@@ -221,7 +221,12 @@ class DeliberationHostBridge:
         if not self._matches_current_turn(prepared, current_before_call):
             return _failure(ProviderErrorCode.LATE_RESULT)
 
-        provider_result = actor.compact(prepared.actor_request, timeout=timeout)
+        try:
+            provider_result = actor.compact(prepared.actor_request, timeout=timeout)
+        except Exception:
+            return _failure(ProviderErrorCode.UNAVAILABLE)
+        if not isinstance(provider_result, ProviderResult):
+            return _failure(ProviderErrorCode.OUTPUT_SCHEMA_INVALID)
         if not provider_result.success:
             code = provider_result.error_code
             if code is None:
@@ -235,7 +240,7 @@ class DeliberationHostBridge:
                 canary_hit=provider_result.canary_hit,
             )
         decision = provider_result.data
-        if decision is None:
+        if not isinstance(decision, CompactDecisionV1):
             return _failure(ProviderErrorCode.OUTPUT_SCHEMA_INVALID)
 
         current = self._resolver.resolve_open_turn(prepared.commitment.turn_id)
