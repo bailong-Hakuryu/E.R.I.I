@@ -627,7 +627,6 @@ class ArchivalCoordinator:
         )
 
         def renew_processing_lease():
-            started_at = time.monotonic()
             renewed = store.renew_archival_lease(
                 relationship_id=record.receipt.relationship_id,
                 archival_id=record.receipt.archival_id,
@@ -636,7 +635,11 @@ class ArchivalCoordinator:
                 now=time.time(),
                 lease_seconds=self.lease_seconds,
             )
-            return started_at if renewed else None
+            # The storage call can include a durable file replacement and fsync.
+            # Schedule the next heartbeat from the successful completion time,
+            # rather than from its start, so that a slow renewal does not cause
+            # an immediate follow-up against an already-expired lease window.
+            return time.monotonic() if renewed else None
 
         def renew_leases(*, consumer_due: bool):
             nonlocal next_consumer_renewal
@@ -645,7 +648,6 @@ class ArchivalCoordinator:
                 return None
             if not consumer_due:
                 return processing_started_at
-            consumer_started_at = time.monotonic()
             if not store.acquire_archival_consumer(
                 self.consumer_id,
                 now=time.time(),
@@ -653,7 +655,7 @@ class ArchivalCoordinator:
             ):
                 return None
             next_consumer_renewal = (
-                consumer_started_at + consumer_heartbeat_interval
+                time.monotonic() + consumer_heartbeat_interval
             )
             return renew_processing_lease()
 
