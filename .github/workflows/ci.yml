@@ -74,7 +74,7 @@ jobs:
       - name: Enforce refactoring performance gate
         run: >-
           python benchmarks/run_refactoring_baseline.py
-          --iterations 5
+          --iterations 15
           --compare benchmarks/baselines/v0.5.0a3-refactoring-r0.json
 
   typescript-client:
