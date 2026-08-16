@@ -63,11 +63,9 @@ jobs:
   refactoring-benchmark:
     needs: test
     runs-on: windows-latest
-    # The frozen 5-sample baseline predates the current refactoring window.
-    # Shared hosted runners can shift the ~20 ms SQLite export metric past the
-    # 10% gate without a real code regression, so keep this advisory until the
-    # baseline is re-recorded on CI hardware.
-    continue-on-error: true
+    # The benchmark comparison skips automatically when the runner's OS build
+    # differs from the frozen baseline, so this remains a hard gate only on a
+    # matching environment.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

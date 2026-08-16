@@ -135,6 +135,13 @@ def _platform_family(value: object) -> str:
     return normalized.split("-", 1)[0]
 
 
+def _platform_build_key(value: object) -> str:
+    """Returns the full OS identity used to compare benchmark environments."""
+    if type(value) is not str or not value.strip():
+        raise ValueError("benchmark environment platform must be a non-empty string")
+    return value.strip().lower()
+
+
 def _python_major_minor(value: object) -> tuple[int, int]:
     if type(value) is not str:
         raise ValueError("benchmark environment python must be a version string")
@@ -202,6 +209,10 @@ def _environment_mismatch(
     baseline_platform = _platform_family(baseline_environment["platform"])
     if current_platform != baseline_platform:
         return f"platform family differs ({current_platform} vs {baseline_platform})"
+    current_build = _platform_build_key(current_environment["platform"])
+    baseline_build = _platform_build_key(baseline_environment["platform"])
+    if current_build != baseline_build:
+        return f"platform build differs ({current_build} vs {baseline_build})"
     return None
 
 

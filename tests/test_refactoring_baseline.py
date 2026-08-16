@@ -111,6 +111,17 @@ class RefactoringBaselineTests(unittest.TestCase):
         self.assertEqual(comparison.metrics, ())
         self.assertIn("Python major/minor differs", comparison.environment_reason)
 
+    def test_compare_reports_skips_different_windows_build(self) -> None:
+        baseline = self._baseline()
+        current = deepcopy(baseline)
+        current["environment"]["platform"] = "Windows-2025Server-10.0.26100-SP0"
+
+        comparison = compare_reports(current, baseline)
+
+        self.assertFalse(comparison.compatible)
+        self.assertEqual(comparison.metrics, ())
+        self.assertIn("platform build differs", comparison.environment_reason)
+
     def test_main_returns_nonzero_for_comparison_regression(self) -> None:
         baseline = self._baseline()
         current = deepcopy(baseline)
