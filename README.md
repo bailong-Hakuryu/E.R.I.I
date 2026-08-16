@@ -144,6 +144,7 @@ E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，�
 
 ## Reference
 
+- [项目状态看板](docs/PROJECT_STATUS.md)
 - [Getting Started：一键关系隔离与重启证明](docs/getting-started.md)
 - [0.4.0 稳定源码里程碑说明](docs/release-notes-0.4.0.md)
 - [Host Integration：真实聊天唯一推荐路径](docs/host-integration.md)

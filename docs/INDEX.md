@@ -38,12 +38,14 @@ initialize_relationship
 - [上下文声音模式 ADR](adr/0086-model-voice-as-source-backed-contextual-repertoire.md)
 - [0.5 关系后果迁移](migration-0.5.0.md)
 
-## Character Deliberation（C0 离线合同已实现）
+## Character Deliberation（C0 与 G2 离线编排已实现）
 
 Character Deliberation 的领域边界和阶段路线已经确认；当前源码已有可拆卸、无网络、
-无持久化的 C0 Python Labs 合同纵切和 Fake Claude SSE，但尚无真实 Claude/其他 Provider
-Adapter、`ERIIEngine`/Continuity/Delivery 集成、持久化、REST 或 TypeScript API。现有
-Inner Monologue 是独立的长期心理叙事对象，不是回复前审思实现。
+无持久化的 C0 Python Labs 合同纵切、Fake Claude SSE 和 G2 Private Compact 编排。G2
+通过独立 Adapter 调用现有 `ERIIEngine`、Continuity Review 和精确 Delivery 接缝，但不是
+稳定公共 Host Interface。真实 Claude/其他 Provider、Staged/Adaptive、Session Residue、
+REST 和 TypeScript Interface 尚未实现。现有 Inner Monologue 是独立的长期心理叙事对象，
+不是回复前审思实现。
 
 - [完整开发计划](architecture/character-deliberation-development-plan.md)：领域对象、
   Compact/Staged 双轨、运行生命周期、心理延续、Visibility、评测、风险和逐阶段准入。
@@ -57,8 +59,9 @@ Inner Monologue 是独立的长期心理叙事对象，不是回复前审思实�
   Transient Python Labs 到 Session Residue、Private Reflection、Durable state、
   Exposure/Visibility、REST/TypeScript 与 Deliberation Ensemble 的依赖顺序和晋级门。
 
-首个实现只进入 Python Labs：Compact 为主、Staged 为辅，默认私有且暂态，复用现有
-Continuity Review，并提供 Direct fallback。Claude、DeepSeek、其他远程模型与本地模型
+当前实现只进入 Python Labs：Private Compact 是唯一审思路径，默认私有且暂态，复用现有
+Continuity Review，并提供 Direct fallback；Staged/Adaptive 仍待开发。Claude、DeepSeek、
+其他远程模型与本地模型
 都只能通过可安装、可替换、可禁用的 Adapter 接入；raw thinking、Prompt、凭据、草稿和
 Provider 错误正文不进入角色历史。持久格式、用户可见心理投影、REST/SDK 和多 Reviewer
 协同要分别通过自己的行为、安全、数据生命周期与可拆卸性准入门。
@@ -91,11 +94,17 @@ Turn 文档中的示例必须与 `ERIIEngine` 的公开签名一起通过测试�
 
 ## 开发与维护
 
+- [项目状态看板](PROJECT_STATUS.md)：由机器可读状态目录生成，区分维护、活跃 Alpha、
+  实验、占位和计划 Module，并记录各自下一道晋级门。
 - [路线图](../ROADMAP.md)
 - [变更记录](../CHANGELOG.md)
 - [贡献指南](../CONTRIBUTING.md)
 - [发展战略（中文）](development-strategy.md)
 - [Development Strategy (English)](development-strategy.en.md)
+- [结构重构总控路线图](architecture/refactoring-program.md)：2026-08-13 至 2026-12-20 的
+  批次、并行开发规则、验证门和停止条件。
+- [R0 重构清单](architecture/refactoring-r0-inventory.md)：由 Git 已跟踪和未忽略的提交候选
+  源码生成的 Engine、Lifecycle、Storage Interface 和 MemoryPack 调用地图。
 - [Engine 重构计划](architecture/engine-refactoring-plan.md)
 - [Lifecycle 重构计划](architecture/lifecycle-refactoring-plan.md)
 - [ADR 索引](adr/README.md)

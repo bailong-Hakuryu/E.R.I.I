@@ -1,0 +1,178 @@
+{
+  "schema_version": "erii-project-status/v1",
+  "as_of": "2026-08-15",
+  "source_version": "0.5.0a3",
+  "baseline_commit": "94a61d5c1b77b5aa8871521aa53b0dba58dedf38",
+  "program": {
+    "phase": "R1B",
+    "status": "in_progress",
+    "window_start": "2026-08-13",
+    "window_end": "2026-09-13",
+    "next_gate": "Extend the versioned execution boundary from an existing target's non-compilation payload to target creation, Persona Compilation and profile binding, then prove a failed public import leaves no partial new target before moving guard or conflict ownership."
+  },
+  "modules": [
+    {
+      "id": "continuity-kernel",
+      "name": "Continuity and relationship kernel",
+      "track": "core",
+      "maturity": "maintenance",
+      "paths": ["erii/core", "erii/models"],
+      "public_interface": "advanced",
+      "persistence_impact": "current-formats",
+      "ci": ["python-matrix", "windows-smoke", "longitudinal"],
+      "summary": "Relationship isolation, sourced continuity review, persona, temporal, consequence, and recall semantics.",
+      "next_gate": "Accept only defect, security, compatibility, and source-backed v0.5 extensions."
+    },
+    {
+      "id": "engine-facade",
+      "name": "ERIIEngine facade",
+      "track": "core",
+      "maturity": "active-alpha",
+      "paths": ["erii/engine.py", "erii/_engine", "erii/__init__.py"],
+      "public_interface": "golden",
+      "persistence_impact": "orchestrates-current-formats",
+      "ci": ["python-matrix", "windows-smoke", "contract-snapshots"],
+      "summary": "Primary host facade plus private MemoryPack analysis, export assembly, snapshot-bound transfer planning, and a preflighted executor whose existing-target non-compilation payload is exception-atomic on built-in Storage adapters; SQLite post-commit errors are surfaced as indeterminate rather than reported as success, while target orchestration and Persona Compilation stay in the facade.",
+      "next_gate": "Version a main-database operation receipt for exactly-once SQLite commit-error recovery, then freeze target creation, Persona Compilation and profile binding into one public-import execution contract and prove new-target failure atomicity."
+    },
+    {
+      "id": "storage-lifecycle",
+      "name": "Storage and data lifecycle",
+      "track": "core",
+      "maturity": "maintenance",
+      "paths": [
+        "erii/storage",
+        "erii/data_lifecycle.py",
+        "erii/lifecycle_erasure.py",
+        "erii/lifecycle_memory_pack_import.py",
+        "erii/lifecycle_sqlite_upgrade.py",
+        "erii/lifecycle_streaming.py"
+      ],
+      "public_interface": "golden",
+      "persistence_impact": "owns-current-formats",
+      "ci": ["python-matrix", "windows-smoke", "contract-snapshots", "longitudinal"],
+      "summary": "FileStorage v2 with recoverable flat-format MemoryPack payload journaling, SQLite schema 10 with single-transaction payload execution, MemoryPack 0.5.0a3, backup, restore, upgrade, import, erasure, and rebuild.",
+      "next_gate": "Complete R2/R3 internal extraction while preserving every declared reader and atomicity invariant."
+    },
+    {
+      "id": "reference-server",
+      "name": "FastAPI reference server",
+      "track": "host",
+      "maturity": "active-alpha",
+      "paths": ["erii/server"],
+      "public_interface": "advanced",
+      "persistence_impact": "delegates-to-core",
+      "ci": ["python-matrix", "windows-smoke", "contract-snapshots", "typescript-contract"],
+      "summary": "Trusted single-owner reference host with a frozen /api/v1 shape; not a multi-tenant SaaS boundary.",
+      "next_gate": "Wait for v0.6 principal, capability, object authorization, egress, quota, and audit seams."
+    },
+    {
+      "id": "typescript-client",
+      "name": "TypeScript server client",
+      "track": "client",
+      "maturity": "active-alpha",
+      "paths": ["clients/typescript"],
+      "public_interface": "advanced",
+      "persistence_impact": "none",
+      "ci": ["typescript-build", "typescript-test", "typescript-contract"],
+      "summary": "Node-oriented client at 0.5.0-alpha.3, verified against the live FastAPI contract.",
+      "next_gate": "Keep parity with stable Python host interfaces; do not add deliberation state before its Python interface stabilizes."
+    },
+    {
+      "id": "llm-adapters",
+      "name": "OpenAI and callable LLM adapters",
+      "track": "adapter",
+      "maturity": "active-alpha",
+      "paths": ["erii/adapters"],
+      "public_interface": "experimental",
+      "persistence_impact": "candidate-only",
+      "ci": ["python-matrix"],
+      "summary": "Optional generation and persona-compilation adapters; LLM output remains an untrusted candidate.",
+      "next_gate": "Add adapter-specific contract evidence only when a second behaviorally distinct implementation justifies a seam."
+    },
+    {
+      "id": "vector-adapters",
+      "name": "Vector retrieval adapters",
+      "track": "adapter",
+      "maturity": "experimental",
+      "paths": ["erii/vector"],
+      "public_interface": "experimental",
+      "persistence_impact": "derived-index-only",
+      "ci": ["python-matrix"],
+      "summary": "In-memory and optional Chroma retrieval adapters with relationship-isolation checks.",
+      "next_gate": "Demonstrate stable host value and lifecycle behavior before any promotion."
+    },
+    {
+      "id": "character-deliberation",
+      "name": "Character Deliberation C0/G2",
+      "track": "labs",
+      "maturity": "experimental",
+      "paths": ["erii/deliberation", "tests/deliberation"],
+      "public_interface": "experimental",
+      "persistence_impact": "none",
+      "ci": ["python-matrix", "optimized-python"],
+      "summary": "Offline strict contracts, private Compact orchestration, Direct fallback, continuity review, and exact reply binding.",
+      "next_gate": "After the R3 checkpoint, implement G3 Staged/Adaptive and P1 Session Residue, then run Pilot and human evaluation."
+    },
+    {
+      "id": "deliberation-shadow-eval",
+      "name": "Deliberation Shadow evaluation",
+      "track": "labs",
+      "maturity": "experimental",
+      "paths": ["erii/labs/deliberation/shadow_eval", "tests/labs/deliberation/shadow_eval"],
+      "public_interface": "internal",
+      "persistence_impact": "none",
+      "ci": ["python-matrix"],
+      "summary": "D0-D4 synthetic fixtures, blinding, metrics, preregistration slots, and human-anchored promotion gates.",
+      "next_gate": "Run a real Pilot with calibrated thresholds and human judgments; do not infer behavior quality from fake actors."
+    },
+    {
+      "id": "claude-deliberation-adapter",
+      "name": "Claude Deliberation adapter",
+      "track": "adapter",
+      "maturity": "placeholder",
+      "paths": ["erii/deliberation/claude_adapter.py"],
+      "public_interface": "experimental",
+      "persistence_impact": "none",
+      "ci": ["python-matrix"],
+      "summary": "Credential-free unavailable descriptor and stub methods; no Anthropic SDK construction or live transport.",
+      "next_gate": "Implement strict offline byte fixtures, explicit opt-in transport, deadline/cancellation, and raw-thinking destruction before live claims."
+    },
+    {
+      "id": "deepseek-continuity-review",
+      "name": "DeepSeek Continuity Review",
+      "track": "experiment",
+      "maturity": "experimental",
+      "paths": ["experiments/deepseek-continuity-review"],
+      "public_interface": "experimental",
+      "persistence_impact": "none",
+      "ci": ["deepseek-offline"],
+      "summary": "Removable continuity evaluator experiment with real client code and offline contract tests; historical accuracy claims are invalid.",
+      "next_gate": "Build a larger blind, independently labeled data set with confidence intervals, budgets, privacy assessment, and model-version baselines."
+    },
+    {
+      "id": "security-hooks",
+      "name": "Principal and capability security hooks",
+      "track": "core",
+      "maturity": "planned",
+      "paths": ["erii/security"],
+      "public_interface": "internal",
+      "persistence_impact": "planned-format-impact",
+      "ci": ["python-matrix"],
+      "summary": "Current credential and sanitizer utilities exist, but formal object authorization and multi-user host seams are v0.6 work.",
+      "next_gate": "Design and validate provider-neutral principal, capability, egress, encryption, audit, and quota interfaces."
+    },
+    {
+      "id": "user-data-experience",
+      "name": "User data management experience",
+      "track": "product",
+      "maturity": "planned",
+      "paths": ["docs/development-strategy.md", "ROADMAP.md"],
+      "public_interface": "none",
+      "persistence_impact": "uses-existing-lifecycle",
+      "ci": ["docs"],
+      "summary": "User-facing inspection, explanation, migration, correction, and deletion workflows planned for v0.7.",
+      "next_gate": "Wait for v0.6 authorization hooks and validate usability with non-maintainer users."
+    }
+  ]
+}

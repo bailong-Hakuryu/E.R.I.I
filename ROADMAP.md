@@ -57,6 +57,23 @@ E.R.I.I. 不再把不同稳定性的工作塞进同一版本承诺：
 内核兼容成本之后才可晋级。源码里程碑是否前进由这些证据决定，不以是否上传包为
 门槛。某个 Provider 的价格、thinking 字段或 SDK 形状不能成为公开持久契约。
 
+## 2026 结构重构窗口
+
+项目从 2026-08-13 起进入受控结构重构窗口，计划最晚在 2026-12-20 做一次收口判断。
+这不是新版本或发布 SLA；每个批次必须独立通过完整回归，失败时停在当前检查点，不为了
+日期继续推进。详细日历、并行开发规则、门禁和停止条件见
+[结构重构总控路线图](docs/architecture/refactoring-program.md)。
+
+顺序固定为：先冻结基线和组件清单；再提取 MemoryPack Transfer；随后分离 Lifecycle 的
+只读与写入路径；2026-10-26 至 2026-11-01 完成稳定检查点后，才继续 Turn/Archival、
+Relationship/Persona/Temporal 工作流和 Storage 能力 Interface。`ERIIEngine`、根级导入、
+REST/TypeScript 合同和全部持久格式在整个窗口内保持兼容。
+
+在 Lifecycle 稳定检查点通过前，Character Deliberation G3、Session Residue、新持久对象、
+新格式和新的根级公共符号不得进入主写入链。Labs 的合成评测、人评流程和独立 Provider
+Adapter 可以并行，但必须保持可拆卸且不修改 Engine、Storage、Lifecycle 或持久格式。大型
+功能开发最早在 2026-11-02 恢复，并仍取决于实际门禁，而不是日历自动放行。
+
 ## 项目不变量
 
 后续版本不能为了功能数量破坏以下原则：

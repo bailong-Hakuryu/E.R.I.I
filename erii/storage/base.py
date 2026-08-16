@@ -38,7 +38,11 @@ from erii.models.consequence import (
     NarrativeTensionLink,
     RelationshipConsequence,
 )
-from erii.storage.archival import AtomicArchivalStoreV1
+from erii.storage.archival import (
+    ArchivalTombstoneValidationSource,
+    AtomicArchivalStoreV1,
+)
+from erii.storage.memory_pack import AtomicMemoryPackWriteStoreV1
 from erii.storage.turn_context import TurnContextSourceSnapshot
 
 
@@ -546,8 +550,24 @@ class BaseStorage(ABC):
         """Preflights portable archival identities without writing them."""
         raise NotImplementedError("storage adapter does not support archival ledger")
 
+    def capture_archival_tombstone_validation_source(
+        self,
+        relationship_id: str,
+        archival_ids: List[str],
+    ) -> ArchivalTombstoneValidationSource:
+        """Captures relevant ledger inputs used by tombstone validation."""
+        raise NotImplementedError(
+            "storage adapter does not expose archival validation source state"
+        )
+
     def atomic_archival_store_v1(self) -> Optional[AtomicArchivalStoreV1]:
         """Returns the optional versioned reliable-archival capability."""
+        return None
+
+    def atomic_memory_pack_write_store_v1(
+        self,
+    ) -> Optional[AtomicMemoryPackWriteStoreV1]:
+        """Returns the optional whole-pack payload transaction capability."""
         return None
 
     def create_relationship_processing_run(

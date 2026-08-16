@@ -2244,16 +2244,19 @@ def _upgrade_memory_pack_snapshot(
 
 def _validate_memory_pack_semantic_graph(pack: MemoryPack) -> None:
     """Runs the production import graph checks without opening any Storage."""
+    from erii._engine.memory_pack_analysis import (
+        analyze_memory_pack,
+        validate_memory_pack_persisted_turn_adjudications,
+        validate_memory_pack_turn_records,
+    )
     from erii.core.memory_pack_evidence import validate_memory_pack_archival_evidence
     from erii.engine import ERIIEngine
 
     try:
-        ERIIEngine._validate_memory_pack_node_types(pack)
-        ERIIEngine._validate_temporal_pack(pack)
-        ERIIEngine._validate_persona_growth_pack(pack)
-        ERIIEngine._validate_turn_pack(pack, pack.agent_id, pack.user_id)
+        analyze_memory_pack(pack)
+        validate_memory_pack_turn_records(pack)
         validate_memory_pack_archival_evidence(pack)
-        ERIIEngine._validate_persisted_turn_adjudication_pack(
+        validate_memory_pack_persisted_turn_adjudications(
             pack,
             pack.agent_id,
             pack.user_id,

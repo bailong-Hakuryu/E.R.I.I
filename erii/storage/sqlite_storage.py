@@ -10,9 +10,10 @@ import hashlib
 import json
 import os
 import sqlite3
+import threading
 import time
-from contextlib import closing, contextmanager
-from typing import Any, Dict, List, Optional, Union
+from contextlib import ExitStack, closing, contextmanager
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 import uuid
 
 from erii.models.adjudication import (
@@ -78,8 +79,10 @@ from erii.compatibility import SQLITE_FORMAT
 from erii.data_lifecycle import read_sqlite_schema_version
 from erii.errors import MigrationRequiredError, UnsupportedFormatError
 from erii.security.sanitizer import SecuritySanitizer
+from erii.storage.archival import ArchivalTombstoneValidationSource
 from erii.storage.base import BaseStorage, cross_process_file_lock
 from erii.storage.errors import StorageIntegrityError
+from erii.storage.memory_pack import AtomicMemoryPackWriteStoreV1
 from erii.storage.timeline_order import timeline_timestamp_sort_key
 from erii.storage.turn_context import (
     TurnContextSourceSnapshot,
@@ -99,6 +102,57 @@ def _decode_json_object(value: object, field_name: str) -> Dict[str, Any]:
     return decoded
 
 
+_MemoryPackResultT = TypeVar("_MemoryPackResultT")
+
+
+class _SQLiteMemoryPackTransactionConnection:
+    """Keeps legacy method-local transaction calls inside one outer unit."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    @staticmethod
+    def _is_transaction_control(sql: object) -> bool:
+        if not isinstance(sql, str):
+            return False
+        normalized = " ".join(sql.strip().upper().split())
+        if normalized.endswith(";"):
+            normalized = normalized[:-1].rstrip()
+        return normalized in {
+            "BEGIN",
+            "BEGIN TRANSACTION",
+            "BEGIN DEFERRED",
+            "BEGIN DEFERRED TRANSACTION",
+            "BEGIN IMMEDIATE",
+            "BEGIN IMMEDIATE TRANSACTION",
+            "BEGIN EXCLUSIVE",
+            "BEGIN EXCLUSIVE TRANSACTION",
+            "COMMIT",
+            "COMMIT TRANSACTION",
+            "END",
+            "END TRANSACTION",
+            "ROLLBACK",
+            "ROLLBACK TRANSACTION",
+        }
+
+    def execute(self, sql, *args, **kwargs):
+        if self._is_transaction_control(sql):
+            return self._connection.cursor()
+        return self._connection.execute(sql, *args, **kwargs)
+
+    def commit(self) -> None:
+        """Defers commit to the outer MemoryPack transaction."""
+
+    def rollback(self) -> None:
+        """Defers rollback to the outer MemoryPack transaction."""
+
+    def close(self) -> None:
+        """Keeps the shared connection open for later payload batches."""
+
+    def __getattr__(self, name: str):
+        return getattr(self._connection, name)
+
+
 class SQLiteStorage(BaseStorage):
     """SQLite-backed memory storage driver."""
 
@@ -112,6 +166,7 @@ class SQLiteStorage(BaseStorage):
         """
         super().__init__()
         self.db_path = db_path
+        self._memory_pack_write_local = threading.local()
         schema_version = read_sqlite_schema_version(self.db_path, immutable=False)
         if (
             schema_version is not None
@@ -124,7 +179,7 @@ class SQLiteStorage(BaseStorage):
             )
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    def _open_connection(self) -> sqlite3.Connection:
         db_dir = os.path.dirname(os.path.abspath(self.db_path))
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
@@ -134,6 +189,82 @@ class SQLiteStorage(BaseStorage):
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         return conn
+
+    def _get_connection(self):
+        transaction_connection = getattr(
+            self._memory_pack_write_local,
+            "connection",
+            None,
+        )
+        if transaction_connection is not None:
+            return transaction_connection
+        return self._open_connection()
+
+    def atomic_memory_pack_write_store_v1(
+        self,
+    ) -> AtomicMemoryPackWriteStoreV1:
+        """Returns the SQLite whole-pack single-transaction capability."""
+        return self
+
+    def execute_memory_pack_write(
+        self,
+        target_agent: str,
+        target_user: str,
+        relationship_id: Optional[str],
+        operation: Callable[[Any], _MemoryPackResultT],
+    ) -> _MemoryPackResultT:
+        """Runs every payload method through one BEGIN IMMEDIATE transaction."""
+        if getattr(self._memory_pack_write_local, "connection", None) is not None:
+            raise RuntimeError("nested MemoryPack write transactions are invalid")
+        clean_agent = SecuritySanitizer.validate_key(target_agent, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(target_user, "user_id")
+        lock_key = os.path.realpath(os.path.abspath(self.db_path))
+        lock_keys = [
+            ("__memory_pack_write__", lock_key),
+            (clean_agent, clean_user),
+        ]
+        if relationship_id is not None:
+            lock_keys.extend(
+                (
+                    ("__turn_records__", relationship_id),
+                    ("__relationship_events__", relationship_id),
+                    ("__relationship_adjudication__", relationship_id),
+                    ("__relationship_history__", relationship_id),
+                    ("__persona_growth__", relationship_id),
+                )
+            )
+
+        with ExitStack() as lock_stack:
+            for first_key, second_key in lock_keys:
+                lock_stack.enter_context(
+                    self.lock_manager.lock(first_key, second_key)
+                )
+            with closing(self._open_connection()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                self._memory_pack_write_local.connection = (
+                    _SQLiteMemoryPackTransactionConnection(connection)
+                )
+                try:
+                    try:
+                        result = operation(self)
+                    except BaseException:
+                        connection.rollback()
+                        raise
+
+                    try:
+                        connection.commit()
+                    except BaseException:
+                        if connection.in_transaction:
+                            connection.rollback()
+                        # If SQLite already left transactional mode, commit
+                        # success and automatic rollback cannot be told apart
+                        # without a witness in the main database.  Preserve
+                        # whichever all-or-nothing state SQLite published and
+                        # propagate the indeterminate outcome to the caller.
+                        raise
+                    return result
+                finally:
+                    del self._memory_pack_write_local.connection
 
     def _get_relationship_processing_lock_path(self, relationship_id: str) -> str:
         digest = hashlib.sha256(relationship_id.encode("utf-8")).hexdigest()
@@ -1181,7 +1312,6 @@ class SQLiteStorage(BaseStorage):
         clean_agent = SecuritySanitizer.validate_key(agent_id, "agent_id")
         clean_user = SecuritySanitizer.validate_key(user_id, "user_id")
         ts = timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        entry_id = str(uuid.uuid4())
         sort_key = timeline_timestamp_sort_key(ts)
 
         with self.lock_manager.lock(clean_agent, clean_user):
@@ -1194,7 +1324,27 @@ class SQLiteStorage(BaseStorage):
                         timeline_entry_id, sort_key
                     ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (clean_agent, clean_user, entry, ts, entry_id, sort_key),
+                    (clean_agent, clean_user, entry, ts, None, sort_key),
+                )
+                # Legacy Timeline calls do not supply a durable identity. Bind
+                # one to the transactional row ID instead of uuid4 so a failed
+                # whole-pack attempt and its retry produce the same snapshot.
+                entry_id = str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        (
+                            f"erii:legacy-timeline:{clean_agent}:"
+                            f"{clean_user}:{cursor.lastrowid}"
+                        ),
+                    )
+                )
+                cursor.execute(
+                    """
+                    UPDATE timeline_entries
+                    SET timeline_entry_id = ?
+                    WHERE id = ?
+                    """,
+                    (entry_id, cursor.lastrowid),
                 )
                 conn.commit()
 
@@ -1512,6 +1662,50 @@ class SQLiteStorage(BaseStorage):
                 relationship_id,
                 tombstones,
                 existing=tuple(
+                    ArchivalTombstone.from_dict(json.loads(row["data"]))
+                    for row in existing_rows
+                ),
+                live_records=tuple(
+                    self._archival_record_from_row(row)
+                    for row in live_rows
+                ),
+            )
+
+    def capture_archival_tombstone_validation_source(
+        self,
+        relationship_id: str,
+        archival_ids: List[str],
+    ) -> ArchivalTombstoneValidationSource:
+        """Captures the relevant archival ledger in one read transaction."""
+        relevant_ids = tuple(sorted(set(archival_ids)))
+        where_clause = "relationship_id = ?"
+        parameters: List[str] = [relationship_id]
+        if relevant_ids:
+            placeholders = ", ".join("?" for _ in relevant_ids)
+            where_clause += f" OR archival_id IN ({placeholders})"
+            parameters.extend(relevant_ids)
+        with closing(self._get_connection()) as conn:
+            conn.execute("BEGIN")
+            existing_rows = conn.execute(
+                f"""
+                SELECT data FROM archival_tombstones
+                WHERE {where_clause}
+                ORDER BY terminal_at
+                """,
+                parameters,
+            ).fetchall()
+            live_rows = conn.execute(
+                f"""
+                SELECT data FROM archival_records
+                WHERE {where_clause}
+                ORDER BY sequence
+                """,
+                parameters,
+            ).fetchall()
+            return ArchivalTombstoneValidationSource(
+                relationship_id=relationship_id,
+                archival_ids=relevant_ids,
+                tombstones=tuple(
                     ArchivalTombstone.from_dict(json.loads(row["data"]))
                     for row in existing_rows
                 ),

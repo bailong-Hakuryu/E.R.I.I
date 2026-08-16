@@ -162,6 +162,7 @@ claim. See the
 
 ## Reference
 
+- [Project Status](docs/PROJECT_STATUS.md)
 - [Getting Started: one-command isolation and restart proof](docs/getting-started.md)
 - [0.4.0 stable source milestone notes](docs/release-notes-0.4.0.md)
 - [Host Integration: the canonical real-chat path](docs/host-integration.md)

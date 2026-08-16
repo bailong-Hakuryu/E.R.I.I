@@ -59,6 +59,14 @@ class SourceMilestoneWorkflowContractTests(unittest.TestCase):
         self.assertIn("MemoryPack.from_json", ci)
         self.assertIn("MemoryPack.from_json", source_verification)
 
+    def test_ci_rejects_a_stale_project_status_dashboard(self) -> None:
+        ci = (REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("python scripts/project_status.py --check", ci)
+        self.assertIn("python scripts/refactoring_inventory.py --check", ci)
+
     def test_exact_sha_verification_includes_longitudinal_continuity(self) -> None:
         source_verification = (
             REPOSITORY_ROOT / ".github" / "workflows" / "release.yml"

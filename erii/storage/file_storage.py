@@ -6,6 +6,7 @@ core persona impressions, and experiential timeline events.
 Follows Google Python Style Guide.
 """
 
+import base64
 from dataclasses import replace
 from datetime import datetime
 from contextlib import contextmanager
@@ -14,8 +15,9 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
 import uuid
 
 from erii.models.adjudication import (
@@ -76,14 +78,19 @@ from erii.models.turn import (
 )
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.security.sanitizer import SecuritySanitizer
+from erii.storage.archival import ArchivalTombstoneValidationSource
 from erii.storage.base import BaseStorage, cross_process_file_lock
 from erii.storage.errors import StorageIntegrityError, StorageWriteError
+from erii.storage.memory_pack import AtomicMemoryPackWriteStoreV1
 from erii.storage.timeline_order import timeline_entry_order_key
 from erii.storage.turn_context import (
     TurnContextSourceSnapshot,
     validate_turn_context_baseline_authority,
 )
 from erii.models.turn_context import TurnContextBaseline
+
+
+_MemoryPackResultT = TypeVar("_MemoryPackResultT")
 
 
 def _windows_extended_path(path: str) -> str:
@@ -96,6 +103,17 @@ def _windows_extended_path(path: str) -> str:
     if absolute.startswith("\\\\"):
         return "\\\\?\\UNC\\" + absolute[2:]
     return "\\\\?\\" + absolute
+
+
+def _memory_pack_write_barrier(method):
+    """Serializes one FileStorage writer with whole-pack transactions."""
+
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._memory_pack_write_barrier_guard():
+            return method(self, *args, **kwargs)
+
+    return wrapped
 
 
 def _turn_context_snapshot_writer(method):
@@ -122,6 +140,9 @@ class FileStorage(BaseStorage):
         self.root_dir = os.path.abspath(root_dir)
         self._io_root_dir = _windows_extended_path(self.root_dir)
         os.makedirs(self._io_root_dir, exist_ok=True)
+        self._memory_pack_write_local = threading.local()
+        with self._memory_pack_write_barrier_guard():
+            pass
         self._recover_persona_approval_transactions()
 
     def _get_user_dir(self, agent_id: str, user_id: str) -> str:
@@ -235,6 +256,37 @@ class FileStorage(BaseStorage):
         os.makedirs(directory, exist_ok=True)
         return os.path.join(directory, f"{digest}.lock")
 
+    def _get_memory_pack_write_lock_path(self) -> str:
+        """Returns the stable root-wide whole-pack writer lock path."""
+        # Reuse the pre-existing root-wide snapshot lock. This keeps the flat-v2
+        # control-file vocabulary unchanged, remains compatible with older
+        # history writers, and avoids a nested long-path lock directory.
+        return self._get_turn_context_snapshot_lock_path()
+
+    def _get_memory_pack_write_journal_path(self) -> str:
+        """Returns the flat-v2 before-image transaction journal path."""
+        return os.path.join(self._io_root_dir, "_memory_pack_write_transaction.json")
+
+    @contextmanager
+    def _memory_pack_write_barrier_guard(self):
+        """Places public RMW operations outside a whole-pack callback."""
+        depth = getattr(self._memory_pack_write_local, "barrier_depth", 0)
+        if depth:
+            self._memory_pack_write_local.barrier_depth = depth + 1
+            try:
+                yield
+            finally:
+                self._memory_pack_write_local.barrier_depth -= 1
+            return
+
+        with self._turn_context_snapshot_guard():
+            self._memory_pack_write_local.barrier_depth = 1
+            try:
+                self._recover_memory_pack_write_transaction_locked()
+                yield
+            finally:
+                del self._memory_pack_write_local.barrier_depth
+
     @contextmanager
     def relationship_processing_guard(self, relationship_id: str):
         """Serializes host model calls before their decisions become durable."""
@@ -329,17 +381,190 @@ class FileStorage(BaseStorage):
         ).hexdigest()
         return os.path.join(self._get_persona_approval_journal_dir(), f"{digest}.json")
 
+    def atomic_memory_pack_write_store_v1(
+        self,
+    ) -> AtomicMemoryPackWriteStoreV1:
+        """Returns this adapter's flat-v2 whole-pack write capability."""
+        return self
+
+    def execute_memory_pack_write(
+        self,
+        target_agent: str,
+        target_user: str,
+        relationship_id: Optional[str],
+        operation: Callable[[Any], _MemoryPackResultT],
+    ) -> _MemoryPackResultT:
+        """Runs one payload callback with durable before-image rollback."""
+        if getattr(self._memory_pack_write_local, "transaction", None) is not None:
+            raise RuntimeError("nested MemoryPack write transactions are invalid")
+
+        with self._memory_pack_write_barrier_guard():
+            journal = {
+                "version": 1,
+                "state": "active",
+                "transaction_id": uuid.uuid4().hex,
+                "target_agent": target_agent,
+                "target_user": target_user,
+                "relationship_id": relationship_id,
+                "entries": [],
+            }
+            self._write_memory_pack_journal_raw(journal)
+            self._memory_pack_write_local.transaction = journal
+            try:
+                try:
+                    result = operation(self)
+                except BaseException as operation_error:
+                    self._rollback_memory_pack_write_after_failure(
+                        journal,
+                        operation_error,
+                    )
+                    raise
+
+                journal["state"] = "committed"
+                try:
+                    self._write_memory_pack_journal_raw(journal)
+                except BaseException as publish_error:
+                    try:
+                        durable_journal = self._load_memory_pack_write_journal()
+                    except BaseException as verification_error:
+                        if hasattr(publish_error, "add_note"):
+                            publish_error.add_note(
+                                "FileStorage could not resolve whether its "
+                                "MemoryPack commit marker became durable"
+                            )
+                        raise publish_error from verification_error
+                    expected_active = dict(journal)
+                    expected_active["state"] = "active"
+                    if durable_journal == expected_active:
+                        self._rollback_memory_pack_write_after_failure(
+                            journal,
+                            publish_error,
+                        )
+                        raise
+                    if durable_journal != journal:
+                        integrity_error = StorageIntegrityError(
+                            "MemoryPack transaction commit state is ambiguous"
+                        )
+                        if hasattr(publish_error, "add_note"):
+                            publish_error.add_note(str(integrity_error))
+                        raise publish_error from integrity_error
+
+                # Success is reported only after the final absence of the
+                # journal is directory-durable.  A committed journal remains
+                # restart-safe if unlink itself fails; an unlink fsync failure
+                # is an indeterminate commit and must reach the caller.
+                self._remove_memory_pack_write_journal()
+                return result
+            finally:
+                del self._memory_pack_write_local.transaction
+
+    def _rollback_memory_pack_write_after_failure(
+        self,
+        journal: Dict[str, Any],
+        operation_error: BaseException,
+    ) -> None:
+        """Restores the baseline or preserves an active recovery journal."""
+        try:
+            self._rollback_memory_pack_write_journal(journal)
+            self._remove_memory_pack_write_journal()
+        except BaseException as rollback_error:
+            if hasattr(operation_error, "add_note"):
+                operation_error.add_note(
+                    "FileStorage rollback remains recoverable from its "
+                    "active MemoryPack journal"
+                )
+            raise operation_error from rollback_error
+
+    def _root_relative_memory_pack_path(self, file_path: str) -> str:
+        """Returns a journal-safe root-relative path for one target file."""
+        lexical_root = os.path.normpath(os.path.abspath(self._io_root_dir))
+        lexical_path = os.path.normpath(os.path.abspath(file_path))
+        resolved_root = os.path.realpath(lexical_root)
+        resolved_path = os.path.realpath(lexical_path)
+        try:
+            lexical_common = os.path.commonpath((lexical_root, lexical_path))
+            resolved_common = os.path.commonpath((resolved_root, resolved_path))
+        except ValueError as exc:
+            raise StorageWriteError(
+                "MemoryPack transaction target escapes the FileStorage root"
+            ) from exc
+        if (
+            os.path.normcase(lexical_common) != os.path.normcase(lexical_root)
+            or os.path.normcase(resolved_common) != os.path.normcase(resolved_root)
+        ):
+            raise StorageWriteError(
+                "MemoryPack transaction target escapes the FileStorage root"
+            )
+        relative_path = os.path.relpath(lexical_path, lexical_root)
+        if relative_path in {"", os.curdir}:
+            raise StorageWriteError("MemoryPack transaction target must be a file")
+        return relative_path.replace(os.sep, "/")
+
+    def _resolve_memory_pack_journal_path(self, relative_path: str) -> str:
+        """Resolves one untrusted journal path without leaving the storage root."""
+        if not isinstance(relative_path, str) or "\\" in relative_path:
+            raise StorageIntegrityError("MemoryPack transaction path is invalid")
+        parts = relative_path.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise StorageIntegrityError("MemoryPack transaction path is invalid")
+        candidate = os.path.join(self._io_root_dir, *parts)
+        try:
+            checked = self._root_relative_memory_pack_path(candidate)
+        except StorageWriteError as exc:
+            raise StorageIntegrityError(
+                "MemoryPack transaction path escapes the FileStorage root"
+            ) from exc
+        if checked != relative_path:
+            raise StorageIntegrityError("MemoryPack transaction path is not canonical")
+        control_paths = {
+            os.path.normcase(os.path.realpath(self._get_memory_pack_write_lock_path())),
+            os.path.normcase(
+                os.path.realpath(self._get_memory_pack_write_journal_path())
+            ),
+        }
+        if os.path.normcase(os.path.realpath(candidate)) in control_paths:
+            raise StorageIntegrityError("MemoryPack transaction targets control state")
+        return candidate
+
     @staticmethod
-    def _write_json_atomic(file_path: str, data: Any) -> None:
-        """Writes JSON via replace so readers never observe a partial document."""
+    def _fsync_parent_directory(file_path: str) -> None:
+        """Durably records directory-entry changes where the platform allows."""
+        if os.name == "nt":
+            return
+        directory = os.path.dirname(file_path) or os.curdir
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_fd = os.open(directory, flags)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+    @classmethod
+    def _write_bytes_atomic_raw(
+        cls,
+        file_path: str,
+        payload: bytes,
+        *,
+        accept_replace_as_commit: bool = False,
+    ) -> None:
+        """Atomically writes raw bytes without entering the undo journal."""
         temp_path = f"{file_path}.{uuid.uuid4().hex}.tmp"
         temp_io_path = _windows_extended_path(temp_path)
         try:
-            with open(temp_io_path, "w", encoding="utf-8") as file_obj:
-                json.dump(data, file_obj, ensure_ascii=False, indent=2)
+            with open(temp_io_path, "wb") as file_obj:
+                file_obj.write(payload)
                 file_obj.flush()
                 os.fsync(file_obj.fileno())
             os.replace(temp_io_path, file_path)
+            try:
+                cls._fsync_parent_directory(file_path)
+            except BaseException:
+                if not accept_replace_as_commit:
+                    raise
+                # The committed journal marker is the one deliberate exception:
+                # after replace succeeds it is the transaction commit point.
+                # Starting rollback here could leave a durable "committed"
+                # marker beside partially restored baseline files.
         except Exception as exc:
             raise StorageWriteError(
                 f"failed to atomically write {os.path.basename(file_path)}"
@@ -350,6 +575,165 @@ class FileStorage(BaseStorage):
                     os.remove(temp_io_path)
                 except OSError:
                     pass
+
+    @classmethod
+    def _write_json_atomic_raw(
+        cls,
+        file_path: str,
+        data: Any,
+        *,
+        accept_replace_as_commit: bool = False,
+    ) -> None:
+        """Writes JSON without recursively journaling transaction control data."""
+        payload = json.dumps(
+            data,
+            ensure_ascii=False,
+            indent=2,
+        ).encode("utf-8")
+        cls._write_bytes_atomic_raw(
+            file_path,
+            payload,
+            accept_replace_as_commit=accept_replace_as_commit,
+        )
+
+    def _write_memory_pack_journal_raw(self, journal: Dict[str, Any]) -> None:
+        """Durably replaces the transaction journal outside normal writes."""
+        self._write_json_atomic_raw(
+            self._get_memory_pack_write_journal_path(),
+            journal,
+            accept_replace_as_commit=journal.get("state") == "committed",
+        )
+
+    def _remove_memory_pack_write_journal(self) -> None:
+        """Deletes only the stable whole-pack journal path."""
+        journal_path = self._get_memory_pack_write_journal_path()
+        if not os.path.exists(journal_path):
+            return
+        os.remove(journal_path)
+        self._fsync_parent_directory(journal_path)
+
+    def _record_memory_pack_before_image(self, file_path: str) -> None:
+        """Persists one target's original bytes before its first replacement."""
+        journal = getattr(self._memory_pack_write_local, "transaction", None)
+        if journal is None:
+            return
+        relative_path = self._root_relative_memory_pack_path(file_path)
+        if any(
+            entry.get("path") == relative_path
+            for entry in journal["entries"]
+        ):
+            return
+
+        target_path = self._resolve_memory_pack_journal_path(relative_path)
+        existed = os.path.lexists(target_path)
+        before_image = None
+        if existed:
+            if os.path.islink(target_path) or not os.path.isfile(target_path):
+                raise StorageIntegrityError(
+                    "MemoryPack transaction target must be a regular file"
+                )
+            with open(target_path, "rb") as file_obj:
+                before_image = base64.b64encode(file_obj.read()).decode("ascii")
+        journal["entries"].append(
+            {
+                "path": relative_path,
+                "existed": existed,
+                "before_image": before_image,
+            }
+        )
+        self._write_memory_pack_journal_raw(journal)
+
+    def _validate_memory_pack_write_journal(
+        self,
+        journal: Any,
+    ) -> Dict[str, Any]:
+        """Validates recovery input before touching any recorded target."""
+        if (
+            not isinstance(journal, dict)
+            or journal.get("version") != 1
+            or journal.get("state") not in {"active", "committed"}
+            or not isinstance(journal.get("entries"), list)
+        ):
+            raise StorageIntegrityError("MemoryPack transaction journal is invalid")
+        seen_paths = set()
+        for entry in journal["entries"]:
+            if not isinstance(entry, dict):
+                raise StorageIntegrityError(
+                    "MemoryPack transaction journal entry is invalid"
+                )
+            relative_path = entry.get("path")
+            existed = entry.get("existed")
+            before_image = entry.get("before_image")
+            self._resolve_memory_pack_journal_path(relative_path)
+            if relative_path in seen_paths or not isinstance(existed, bool):
+                raise StorageIntegrityError(
+                    "MemoryPack transaction journal entry is invalid"
+                )
+            seen_paths.add(relative_path)
+            if existed:
+                if not isinstance(before_image, str):
+                    raise StorageIntegrityError(
+                        "MemoryPack transaction before-image is invalid"
+                    )
+                try:
+                    base64.b64decode(before_image.encode("ascii"), validate=True)
+                except (UnicodeEncodeError, ValueError) as exc:
+                    raise StorageIntegrityError(
+                        "MemoryPack transaction before-image is invalid"
+                    ) from exc
+            elif before_image is not None:
+                raise StorageIntegrityError(
+                    "MemoryPack transaction before-image is invalid"
+                )
+        return journal
+
+    def _load_memory_pack_write_journal(self) -> Dict[str, Any]:
+        """Loads and validates the stable transaction journal."""
+        journal_path = self._get_memory_pack_write_journal_path()
+        if not os.path.exists(journal_path):
+            raise StorageIntegrityError(
+                "MemoryPack transaction journal disappeared during commit"
+            )
+        return self._validate_memory_pack_write_journal(
+            self._read_json(journal_path, "MemoryPack transaction journal")
+        )
+
+    def _rollback_memory_pack_write_journal(
+        self,
+        journal: Dict[str, Any],
+    ) -> None:
+        """Restores exact original bytes and removes only recorded new files."""
+        validated = self._validate_memory_pack_write_journal(journal)
+        for entry in reversed(validated["entries"]):
+            target_path = self._resolve_memory_pack_journal_path(entry["path"])
+            if entry["existed"]:
+                before_image = base64.b64decode(
+                    entry["before_image"].encode("ascii"),
+                    validate=True,
+                )
+                self._write_bytes_atomic_raw(target_path, before_image)
+            elif os.path.lexists(target_path):
+                if os.path.islink(target_path) or not os.path.isfile(target_path):
+                    raise StorageIntegrityError(
+                        "MemoryPack rollback target must be a regular file"
+                    )
+                os.remove(target_path)
+                self._fsync_parent_directory(target_path)
+
+    def _recover_memory_pack_write_transaction_locked(self) -> None:
+        """Rolls active work back and only cleans a committed journal."""
+        journal_path = self._get_memory_pack_write_journal_path()
+        if not os.path.exists(journal_path):
+            return
+        journal = self._load_memory_pack_write_journal()
+        if journal["state"] == "active":
+            self._rollback_memory_pack_write_journal(journal)
+        self._remove_memory_pack_write_journal()
+
+    def _write_json_atomic(self, file_path: str, data: Any) -> None:
+        """Writes JSON atomically after preserving its first before-image."""
+        self._record_memory_pack_before_image(file_path)
+        self._write_json_atomic_raw(file_path, data)
 
     @staticmethod
     def _read_json(file_path: str, description: str) -> Any:
@@ -417,6 +801,7 @@ class FileStorage(BaseStorage):
             raise StorageIntegrityError("Timeline document contains an invalid record")
         return entries
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def _recover_persona_approval_transactions(self) -> None:
         """Rolls prepared cross-file approvals forward after an interrupted write."""
@@ -507,6 +892,7 @@ class FileStorage(BaseStorage):
             raise ArchivalConflictError("invalid archival artifact aggregate")
         return data
 
+    @_memory_pack_write_barrier
     def save_nodes(
         self, agent_id: str, user_id: str, nodes: List[MemoryNode]
     ) -> None:
@@ -559,6 +945,7 @@ class FileStorage(BaseStorage):
                 return ""
             return self._read_legacy_core(file_path)["content"]
 
+    @_memory_pack_write_barrier
     def save_core_memory(self, agent_id: str, user_id: str, content: str) -> None:
         """Saves core persona memory to core_memory.json file."""
         with self.lock_manager.lock(agent_id, user_id):
@@ -571,6 +958,7 @@ class FileStorage(BaseStorage):
             }
             self._write_json_atomic(file_path, data)
 
+    @_memory_pack_write_barrier
     def add_timeline_entry(
         self, agent_id: str, user_id: str, entry: str, timestamp: Optional[str] = None
     ) -> None:
@@ -672,6 +1060,7 @@ class FileStorage(BaseStorage):
             return []
         return self.list_timeline_entries(agent_id, user_id)[-limit:]
 
+    @_memory_pack_write_barrier
     def import_timeline_entries(
         self,
         agent_id: str,
@@ -726,6 +1115,7 @@ class FileStorage(BaseStorage):
                     by_id[tombstone.archival_id] = tombstone
         return list(by_id.values())
 
+    @_memory_pack_write_barrier
     def import_archival_tombstones(
         self,
         relationship_id: str,
@@ -770,10 +1160,32 @@ class FileStorage(BaseStorage):
                 ),
             )
 
+    def capture_archival_tombstone_validation_source(
+        self,
+        relationship_id: str,
+        archival_ids: List[str],
+    ) -> ArchivalTombstoneValidationSource:
+        """Captures the relevant archival ledger under one file lock."""
+        with self._turn_guard("__archival_global__"):
+            state = self._load_archival_state()
+            return ArchivalTombstoneValidationSource(
+                relationship_id=relationship_id,
+                archival_ids=tuple(archival_ids),
+                tombstones=tuple(
+                    ArchivalTombstone.from_dict(item)
+                    for item in state["tombstones"]
+                ),
+                live_records=tuple(
+                    ArchivalRecord.from_dict(item)
+                    for item in state["records"]
+                ),
+            )
+
     def atomic_archival_store_v1(self):
         """Returns this adapter's atomic archival capability."""
         return self
 
+    @_memory_pack_write_barrier
     def create_archival_record(
         self,
         record: ArchivalRecord,
@@ -830,6 +1242,7 @@ class FileStorage(BaseStorage):
             self._write_json_atomic(self._get_archival_state_path(), state)
             return record
 
+    @_memory_pack_write_barrier
     def compact_archival_records(self, *, before: str) -> int:
         """Replaces expired terminal receipts with minimal durable tombstones."""
         cutoff = datetime.fromisoformat(before.replace("Z", "+00:00"))
@@ -937,6 +1350,7 @@ class FileStorage(BaseStorage):
             and record.lease_expires_at <= now
         )
 
+    @_memory_pack_write_barrier
     def claim_next_archival_record(
         self,
         *,
@@ -1006,6 +1420,7 @@ class FileStorage(BaseStorage):
                 return claimed
         return None
 
+    @_memory_pack_write_barrier
     def renew_archival_lease(
         self,
         *,
@@ -1091,6 +1506,7 @@ class FileStorage(BaseStorage):
         ):
             raise ArchivalConflictError("archival commit authority is no longer valid")
 
+    @_memory_pack_write_barrier
     def bind_prepared_archival_batch(
         self,
         record: ArchivalRecord,
@@ -1121,6 +1537,7 @@ class FileStorage(BaseStorage):
                 return record
         raise ArchivalNotFoundError("archival was not found")
 
+    @_memory_pack_write_barrier
     def commit_archival_batch(self, record: ArchivalRecord) -> ArchivalRecord:
         """Publishes artifacts and the terminal receipt at one JSON replace."""
         with self._turn_guard("__archival_global__"):
@@ -1157,6 +1574,7 @@ class FileStorage(BaseStorage):
                 return stored
         raise ArchivalNotFoundError("archival was not found")
 
+    @_memory_pack_write_barrier
     def acquire_archival_consumer(
         self,
         consumer_id: str,
@@ -1182,6 +1600,7 @@ class FileStorage(BaseStorage):
             self._write_json_atomic(self._get_archival_state_path(), state)
             return True
 
+    @_memory_pack_write_barrier
     def release_archival_consumer(self, consumer_id: str) -> None:
         """Releases the consumer lease only when still owned by this caller."""
         with self._turn_guard("__archival_global__"):
@@ -1191,6 +1610,7 @@ class FileStorage(BaseStorage):
                 state["consumer_lease"] = None
                 self._write_json_atomic(self._get_archival_state_path(), state)
 
+    @_memory_pack_write_barrier
     def update_archival_record(self, record: ArchivalRecord) -> ArchivalRecord:
         """Persists a lease-fenced retry or terminal failure."""
         with self._turn_guard("__archival_global__"):
@@ -1213,6 +1633,7 @@ class FileStorage(BaseStorage):
                 return stored
         raise ArchivalNotFoundError("archival was not found")
 
+    @_memory_pack_write_barrier
     def get_or_create_identity(self, kind: IdentityKind, external_id: str) -> str:
         """Resolves an external key to a stable ID in the file registry."""
         if isinstance(kind, str):
@@ -1228,6 +1649,7 @@ class FileStorage(BaseStorage):
             self._write_json_atomic(self._get_identity_registry_path(), registry)
             return identity_id
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def create_relationship(self, profile: RelationshipProfile) -> RelationshipProfile:
         """Creates a profile once while preserving imported stable IDs."""
@@ -1392,6 +1814,7 @@ class FileStorage(BaseStorage):
                 adjudications=adjudications,
             )
 
+    @_memory_pack_write_barrier
     def create_turn_record(self, record: TurnRecord) -> TurnRecord:
         """Creates one exact turn identity without overwriting prior content."""
         with self._turn_guard(record.relationship_id):
@@ -1464,6 +1887,7 @@ class FileStorage(BaseStorage):
             with open(file_path, "r", encoding="utf-8") as file_obj:
                 return [TurnRecord.from_dict(item) for item in json.load(file_obj)]
 
+    @_memory_pack_write_barrier
     def transition_turn_record(
         self,
         record: TurnRecord,
@@ -1520,6 +1944,7 @@ class FileStorage(BaseStorage):
                 expected_record_version,
             )
 
+    @_memory_pack_write_barrier
     def append_reply_attempt(self, attempt: ReplyAttemptRecord) -> ReplyAttemptRecord:
         """Appends safe failure metadata only while its turn remains open."""
         with self._turn_guard(attempt.relationship_id):
@@ -1581,6 +2006,7 @@ class FileStorage(BaseStorage):
                 ]
             return sorted(attempts, key=lambda item: item.attempt_number)
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def append_relationship_event(self, event: RelationshipEvent) -> RelationshipEvent:
         """Appends an event once, rejecting conflicting reuse of an event ID."""
@@ -1630,6 +2056,7 @@ class FileStorage(BaseStorage):
             with open(file_path, "r", encoding="utf-8") as file_obj:
                 return [RelationshipEvent.from_dict(item) for item in json.load(file_obj)]
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def commit_relationship_adjudication(
         self,
@@ -1698,6 +2125,7 @@ class FileStorage(BaseStorage):
             with open(file_path, "r", encoding="utf-8") as file_obj:
                 return [AdjudicationRecord.from_dict(item) for item in json.load(file_obj)]
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def append_relationship_consequence(
         self,
@@ -1747,6 +2175,7 @@ class FileStorage(BaseStorage):
                     for item in json.load(file_obj)
                 ]
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def append_narrative_tension_link(
         self,
@@ -1858,6 +2287,7 @@ class FileStorage(BaseStorage):
             "relationship processing requires the exact completed Source Turn"
         )
 
+    @_memory_pack_write_barrier
     def create_relationship_processing_run(
         self,
         run: RelationshipProcessingRun,
@@ -1920,6 +2350,7 @@ class FileStorage(BaseStorage):
                 for item in state["runs"]
             ]
 
+    @_memory_pack_write_barrier
     def update_relationship_processing_run(
         self,
         run: RelationshipProcessingRun,
@@ -2048,6 +2479,7 @@ class FileStorage(BaseStorage):
                 "reflection provenance is not bound to its decision evidence"
             )
 
+    @_memory_pack_write_barrier
     def commit_persona_reflection_decision(
         self,
         decision: PersonaReflectionDecisionRecord,
@@ -2142,6 +2574,7 @@ class FileStorage(BaseStorage):
                 for item in state["reflections"]
             ]
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def save_persona_growth_proposal(
         self,
@@ -2215,6 +2648,7 @@ class FileStorage(BaseStorage):
                     return proposal
         return None
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def save_persona_compilation_proposal(
         self,
@@ -2297,6 +2731,7 @@ class FileStorage(BaseStorage):
                 for item in aggregate.get("proposals", [])
             ]
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def approve_persona_manifest(
         self,
@@ -2349,6 +2784,7 @@ class FileStorage(BaseStorage):
             self._write_json_atomic(file_path, aggregate)
             return manifest
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def approve_and_bind_persona_manifest(
         self,
@@ -2507,6 +2943,7 @@ class FileStorage(BaseStorage):
                 for item in aggregate.get("manifests", [])
             ]
 
+    @_memory_pack_write_barrier
     @_turn_context_snapshot_writer
     def bind_relationship_manifest(
         self,

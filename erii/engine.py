@@ -6,9 +6,6 @@ Follows Google Python Style Guide.
 
 from collections import OrderedDict
 from concurrent.futures import Future
-from dataclasses import replace
-import hashlib
-import json
 import os
 import threading
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
@@ -17,6 +14,31 @@ import warnings
 
 from erii.adapters.base import BaseLLMAdapter
 from erii.adapters.custom_adapter import CallableLLMAdapter
+from erii._engine.memory_pack_analysis import (
+    analyze_relationship_processing_pack_structure,
+    analyze_relationship_processing_reflection_context,
+    resolve_relationship_processing_profile,
+    validate_relationship_processing_reflections,
+    validate_relationship_processing_runs,
+    validate_memory_pack_persisted_turn_adjudications,
+    validate_memory_pack_node_types,
+    validate_memory_pack_relationship_consequences,
+    validate_memory_pack_turn_records,
+)
+from erii._engine.memory_pack_transfer import (
+    MemoryPackExportSnapshot,
+    MemoryPackTargetReadRecorder,
+    analyze_memory_pack_source,
+    assemble_memory_pack_export,
+    bind_memory_pack_transfer_plan,
+    execute_memory_pack_persona_compilation,
+    execute_memory_pack_writes,
+    plan_memory_pack_persona_compilation_writes,
+    plan_memory_pack_persona_growth_writes,
+    plan_memory_pack_writes,
+    replay_memory_pack_target_read_set,
+    require_memory_pack_transfer_plan_current,
+)
 from erii.core.archiver import AsyncArchiverWorker
 from erii.core.archival import ArchivalCoordinator
 from erii.core.budget import MemoryBudgetManager
@@ -24,12 +46,9 @@ from erii.core.decay import MemoryDecayEvaluator
 from erii.core.retriever import MemoryRetriever
 from erii.core.adjudication import (
     PERSISTED_TURN_CONTRACT_VERSION,
-    RULE_VERSION as RELATIONSHIP_ADJUDICATION_RULE_VERSION,
     RelationshipAdjudicator,
     list_complete_relationship_events,
-    relationship_adjudication_baseline_fingerprint,
     relationship_events_from_journals,
-    relationship_occurrence_fingerprint,
 )
 from erii.core.consolidation import RelationshipConsolidator
 from erii.core.consequence import (
@@ -49,9 +68,6 @@ from erii.core.continuity_evidence import (
 )
 from erii.core.evidence_authority import quarantined_agent_source_ids
 from erii.core.memory_pack_evidence import validate_memory_pack_archival_evidence
-from erii.core.memory_pack_import_compatibility import (
-    has_legacy_persona_decision_reason_loss,
-)
 from erii.core.persona_context import (
     PersonaManifestRequiredError,
     validate_persona_premise_binding,
@@ -82,11 +98,9 @@ from erii.models.archival import (
 from erii.models.adjudication import (
     AdjudicationBatchResult,
     AdjudicationRecord,
-    DecisionOutcome,
     PersonaGrowthDecision,
     PersonaGrowthIntentCandidate,
     PersonaGrowthProposal,
-    PersonaGrowthStatus,
     RelationshipCandidateBatch,
     RelationshipEventCandidate,
     SourceProcessingMode,
@@ -99,9 +113,7 @@ from erii.models.consolidation import (
     PersonaReflectionInterpreterV1,
     PersonaReflectionRecord,
     PersonaReflectionRecordKind,
-    ReflectionProvenanceState,
     RelationshipConsolidation,
-    RelationshipEventCandidatesDecision,
     RelationshipEventExtractorV1,
     RelationshipProcessingOutcome,
     RelationshipProcessingRun,
@@ -2655,46 +2667,41 @@ class ERIIEngine:
                 except NotImplementedError:
                     pass
 
-        raw_timeline = []
-        for line in timeline:
-            if line.startswith("[") and "]" in line:
-                idx = line.index("]")
-                ts = line[1:idx]
-                content = line[idx + 2 :]
-                raw_timeline.append({"timestamp": ts, "content": content})
-            else:
-                raw_timeline.append({"timestamp": "", "content": line})
-
-        pack = MemoryPack(
+        pack = assemble_memory_pack_export(
+            MemoryPackExportSnapshot(
             agent_id=clean_agent,
             user_id=clean_user,
             core_memory=core_mem,
-            nodes=nodes,
-            timeline=raw_timeline,
-            timeline_entries=timeline_entries,
-            archival_ledger=archival_ledger,
+                nodes=tuple(nodes),
+                legacy_timeline=tuple(timeline),
+                timeline_entries=tuple(timeline_entries),
+                archival_tombstones=tuple(archival_ledger),
             relationship=relationship,
-            relationship_events=relationship_events,
-            relationship_direct_event_ids=relationship_direct_event_ids,
-            relationship_adjudications=relationship_adjudications,
-            relationship_consequences=relationship_consequences,
-            narrative_tension_links=narrative_tension_links,
-            persona_growth_proposals=persona_growth_proposals,
-            persona_compilation_proposals=persona_compilation_proposals,
-            persona_manifests=persona_manifests,
-            turn_records=turn_records,
-            relationship_processing_runs=relationship_processing_runs,
-            persona_reflection_decisions=persona_reflection_decisions,
+                relationship_events=tuple(relationship_events),
+                relationship_direct_event_ids=tuple(
+                    relationship_direct_event_ids
+                ),
+                relationship_adjudications=tuple(
+                    relationship_adjudications
+                ),
+                relationship_consequences=tuple(
+                    relationship_consequences
+                ),
+                narrative_tension_links=tuple(narrative_tension_links),
+                persona_growth_proposals=tuple(persona_growth_proposals),
+                persona_compilation_proposals=tuple(
+                    persona_compilation_proposals
+                ),
+                persona_manifests=tuple(persona_manifests),
+                turn_records=tuple(turn_records),
+                relationship_processing_runs=tuple(
+                    relationship_processing_runs
+                ),
+                persona_reflection_decisions=tuple(
+                    persona_reflection_decisions
+                ),
+            )
         )
-
-        validate_memory_pack_archival_evidence(pack)
-        self._validate_persisted_turn_adjudication_pack(
-            pack,
-            clean_agent,
-            clean_user,
-            relationship,
-        )
-        self._validate_relationship_consequence_pack(pack)
 
         if export_path:
             with open(export_path, "w", encoding="utf-8") as f:
@@ -2718,7 +2725,7 @@ class ERIIEngine:
         else:
             pack = pack_or_path
 
-        self._validate_memory_pack_node_types(pack)
+        validate_memory_pack_node_types(pack)
 
         target_agent = agent_id or pack.agent_id
         target_user = user_id or pack.user_id
@@ -2802,31 +2809,17 @@ class ERIIEngine:
         else:
             pack = pack_or_path
 
-        self._validate_memory_pack_node_types(pack)
-        self._validate_temporal_pack(pack)
-        self._validate_persona_growth_pack(pack)
+        transfer_source = analyze_memory_pack_source(pack)
+        pack_analysis = transfer_source.analysis
 
         target_agent = agent_id or pack.agent_id
         target_user = user_id or pack.user_id
 
         clean_agent = SecuritySanitizer.validate_key(target_agent, "agent_id")
         clean_user = SecuritySanitizer.validate_key(target_user, "user_id")
-        has_bound_archival_history = bool(
-            pack.timeline_entries
-            or pack.archival_ledger
-            or pack.turn_records
-            or pack.relationship_processing_runs
-            or pack.persona_reflection_decisions
-            or pack.relationship_consequences
-            or pack.narrative_tension_links
-            or any(
-                node.source_turn_id is not None
-                or node.source_archival_id is not None
-                for node in pack.nodes
-            )
-        )
-        requires_exact_relationship_restore = bool(
-            has_bound_archival_history and pack.relationship is not None
+        has_bound_archival_history = pack_analysis.has_bound_archival_history
+        requires_exact_relationship_restore = (
+            pack_analysis.requires_exact_relationship_restore
         )
         if has_bound_archival_history and (
             clean_agent != pack.agent_id or clean_user != pack.user_id
@@ -2837,11 +2830,12 @@ class ERIIEngine:
             )
         self._validate_turn_pack(pack, clean_agent, clean_user)
         validate_memory_pack_archival_evidence(pack)
-        self._validate_relationship_consequence_pack(pack)
+        validate_memory_pack_relationship_consequences(pack)
         existing_target_profile = self.storage.get_relationship(
             clean_agent,
             clean_user,
         )
+        target_reads = MemoryPackTargetReadRecorder(self.storage)
         if (
             pack.relationship is not None
             and existing_target_profile is not None
@@ -2863,28 +2857,34 @@ class ERIIEngine:
             clean_agent,
             clean_user,
             existing_target_profile,
+            storage=target_reads,
         )
         self._validate_relationship_adjudication_import_conflicts(
             pack,
             existing_target_profile,
+            storage=target_reads,
         )
         self._validate_relationship_consequence_import_conflicts(
             pack,
             existing_target_profile,
+            storage=target_reads,
         )
-        self._validate_persisted_turn_adjudication_pack(
+        validate_memory_pack_persisted_turn_adjudications(
             pack,
             clean_agent,
             clean_user,
-            existing_target_profile,
+            (
+                existing_target_profile.relationship_id
+                if existing_target_profile is not None
+                else None
+            ),
         )
         self._validate_relationship_processing_pack(
             pack,
             clean_agent,
             clean_user,
             existing_target_profile,
-            storage=self.storage,
-            relationship_adjudicator=self.relationship_adjudicator,
+            storage=target_reads,
         )
         has_persona_compilation_payload = bool(
             pack.relationship is not None
@@ -2903,8 +2903,14 @@ class ERIIEngine:
         ):
             preflight_profile = pack.relationship
         if has_persona_compilation_payload and preflight_profile is not None:
-            self._import_persona_compilation(
+            compilation_plan = plan_memory_pack_persona_compilation_writes(
                 pack,
+                preflight_profile,
+            )
+            assert compilation_plan is not None
+            execute_memory_pack_persona_compilation(
+                target_reads,
+                compilation_plan,
                 preflight_profile,
                 validate_only=True,
             )
@@ -2921,7 +2927,7 @@ class ERIIEngine:
                 raise ValueError(
                     "MemoryPack archival provenance requires exact relationship restore"
                 )
-            self.storage.validate_archival_tombstones(
+            target_reads.validate_archival_tombstones(
                 pack.relationship.relationship_id,
                 pack.archival_ledger,
             )
@@ -2939,14 +2945,56 @@ class ERIIEngine:
             self._validate_turn_import_conflicts(
                 pack,
                 existing_turn_profile,
+                storage=target_reads,
+            )
+        persona_growth_preflighted = bool(
+            pack.persona_growth_proposals and preflight_profile is not None
+        )
+        if persona_growth_preflighted:
+            preflight_growth_proposals = plan_memory_pack_persona_growth_writes(
+                pack,
+                preflight_profile.relationship_id,
+            )
+            self._validate_persona_growth_import_conflicts(
+                preflight_growth_proposals,
+                preflight_profile.relationship_id,
+                storage=target_reads,
             )
 
+        frozen_target_reads = target_reads.freeze()
+        transfer_plan = bind_memory_pack_transfer_plan(
+            transfer_source,
+            pack,
+            clean_agent,
+            clean_user,
+            existing_target_profile,
+            overwrite=overwrite,
+            target_reads=frozen_target_reads,
+        )
+        current_target_profile = self.storage.get_relationship(
+            clean_agent,
+            clean_user,
+        )
+        require_memory_pack_transfer_plan_current(
+            transfer_plan,
+            pack,
+            current_target_profile,
+        )
+        replay_memory_pack_target_read_set(self.storage, frozen_target_reads)
+        current_target_profile = self.storage.get_relationship(
+            clean_agent,
+            clean_user,
+        )
+        require_memory_pack_transfer_plan_current(
+            transfer_plan,
+            pack,
+            current_target_profile,
+        )
+
         target_profile: Optional[RelationshipProfile] = None
+        write_plan = None
         if pack.relationship is not None:
-            existing_profile = self.storage.get_relationship(
-                clean_agent,
-                clean_user,
-            )
+            existing_profile = current_target_profile
             if existing_profile is not None:
                 if requires_exact_relationship_restore:
                     self._ensure_bound_relationship_matches(
@@ -3025,502 +3073,42 @@ class ERIIEngine:
                     pack.relationship,
                 )
 
-            self._validate_persona_growth_import_conflicts(
-                pack,
-                target_profile,
-            )
-            if has_persona_compilation_payload:
-                target_profile = self._import_persona_compilation(
+            if not persona_growth_preflighted:
+                growth_proposals = plan_memory_pack_persona_growth_writes(
                     pack,
+                    target_profile.relationship_id,
+                )
+                self._validate_persona_growth_import_conflicts(
+                    growth_proposals,
+                    target_profile.relationship_id,
+                )
+            write_plan = plan_memory_pack_writes(
+                pack,
+                clean_agent,
+                clean_user,
+                target_profile,
+                overwrite=overwrite,
+            )
+            assert write_plan.relationship is not None
+            if write_plan.persona_compilation is not None:
+                target_profile = execute_memory_pack_persona_compilation(
+                    self.storage,
+                    write_plan.persona_compilation,
                     target_profile,
                 )
 
-        if overwrite:
-            existing_nodes = []
-        else:
-            existing_nodes = self.storage.load_nodes(clean_agent, clean_user)
-
-        node_map = {n.node_id: n for n in existing_nodes}
-        for n in pack.nodes:
-            node_map[n.node_id] = n
-
-        self.storage.save_nodes(clean_agent, clean_user, list(node_map.values()))
-
-        if pack.core_memory and (overwrite or not self.storage.get_core_memory(clean_agent, clean_user)):
-            self.storage.save_core_memory(clean_agent, clean_user, pack.core_memory)
-
-        if not pack.timeline_entries:
-            for entry in pack.timeline:
-                self.storage.add_timeline_entry(
-                    clean_agent,
-                    clean_user,
-                    entry.get("content", ""),
-                    entry.get("timestamp"),
-                )
-
-        if pack.relationship is not None:
-            assert target_profile is not None
-            source_relationship_id = pack.relationship.relationship_id
-            target_relationship_id = target_profile.relationship_id
-            if pack.turn_records:
-                if source_relationship_id != target_relationship_id:
-                    raise ValueError(
-                        "MemoryPack source transcripts require exact relationship restore"
-                    )
-                for turn_record in pack.turn_records:
-                    self.storage.create_turn_record(turn_record)
-
-            if pack.timeline_entries:
-                self.storage.import_timeline_entries(
-                    clean_agent,
-                    clean_user,
-                    pack.timeline_entries,
-                )
-            if pack.archival_ledger:
-                self.storage.import_archival_tombstones(
-                    target_relationship_id,
-                    pack.archival_ledger,
-                )
-
-            decision_id_map = {}
-            for record in pack.relationship_adjudications:
-                receipt = record.receipt
-                if source_relationship_id == target_relationship_id:
-                    mapped_decision_id = receipt.decision_id
-                else:
-                    processing_identity = (
-                        f"{receipt.processing_mode.value}:{receipt.reprocessing_id or ''}"
-                    )
-                    mapped_decision_id = str(
-                        uuid.uuid5(
-                            uuid.NAMESPACE_URL,
-                            (
-                                f"erii:{target_relationship_id}:decision:"
-                                f"{receipt.source_turn_id}:{receipt.source_revision}:"
-                                f"{processing_identity}:{receipt.candidate_key}"
-                            ),
-                        )
-                    )
-                decision_id_map[receipt.decision_id] = mapped_decision_id
-
-            source_event_ids = {
-                event.event_id for event in pack.relationship_events
-            } | {
-                event.event_id
-                for record in pack.relationship_adjudications
-                for event in record.events
-            }
-            event_id_map = {
-                event_id: (
-                    event_id
-                    if source_relationship_id == target_relationship_id
-                    else str(
-                        uuid.uuid5(
-                            uuid.NAMESPACE_URL,
-                            f"erii:{target_relationship_id}:{event_id}",
-                        )
-                    )
-                )
-                for event_id in source_event_ids
-            }
-            if source_relationship_id != target_relationship_id:
-                for record in pack.relationship_adjudications:
-                    mapped_decision_id = decision_id_map[record.receipt.decision_id]
-                    for index, event in enumerate(record.events):
-                        event_suffix = "event" if index == 0 else f"event:{index}"
-                        event_id_map[event.event_id] = str(
-                            uuid.uuid5(
-                                uuid.NAMESPACE_URL,
-                                f"{mapped_decision_id}:{event_suffix}",
-                            )
-                        )
-
-            def remap_event(source_event: RelationshipEvent) -> RelationshipEvent:
-                if source_relationship_id == target_relationship_id:
-                    return source_event
-                metadata = source_event.to_dict().get("metadata", {})
-                temporal_payload = self._remap_temporal_payload(
-                    source_event.temporal_payload,
-                    event_id_map,
-                )
-                adjudication = metadata.get("adjudication")
-                if isinstance(adjudication, dict):
-                    if adjudication.get("decision_id"):
-                        adjudication["decision_id"] = decision_id_map.get(
-                            adjudication["decision_id"],
-                            adjudication["decision_id"],
-                        )
-                    adjudication["references"] = [
-                        event_id_map.get(item, item)
-                        for item in adjudication.get("references", [])
-                    ]
-                    adjudication["occurrence_fingerprint"] = (
-                        relationship_occurrence_fingerprint(
-                            relationship_id=target_relationship_id,
-                            event_type=source_event.event_type.value,
-                            summary=source_event.content,
-                            occurred_at=source_event.occurred_at,
-                            occurrence_key=adjudication.get("occurrence_key"),
-                            temporal_payload=(
-                                temporal_payload.to_dict()
-                                if temporal_payload is not None
-                                else None
-                            ),
-                        )
-                    )
-                return replace(
-                    source_event,
-                    event_id=event_id_map[source_event.event_id],
-                    relationship_id=target_relationship_id,
-                    metadata=metadata,
-                    temporal_payload=temporal_payload,
-                )
-
-            if source_relationship_id != target_relationship_id:
-                remapped_history = []
-                seen_remapped_source_ids = set()
-                for source_event in [
-                    *pack.relationship_events,
-                    *(
-                        event
-                        for record in pack.relationship_adjudications
-                        for event in record.events
-                    ),
-                ]:
-                    if source_event.event_id in seen_remapped_source_ids:
-                        continue
-                    seen_remapped_source_ids.add(source_event.event_id)
-                    remapped_history.append(remap_event(source_event))
-                TemporalHistoryValidator.validate_complete_history(remapped_history)
-
-            top_level_source_by_id = {
-                event.event_id: event
-                for event in pack.relationship_events
-            }
-            if pack.relationship_direct_event_ids:
-                ordered_ids = tuple(pack.relationship_direct_event_ids)
-                if (
-                    len(ordered_ids) != len(set(ordered_ids))
-                    or any(
-                        event_id not in top_level_source_by_id
-                        for event_id in ordered_ids
-                    )
-                ):
-                    raise ValueError(
-                        "MemoryPack direct-event journal order does not match "
-                        "its direct events"
-                    )
-                direct_source_events = [
-                    top_level_source_by_id[event_id]
-                    for event_id in ordered_ids
-                ]
-            else:
-                adjudicated_event_ids = {
-                    event.event_id
-                    for record in pack.relationship_adjudications
-                    for event in record.events
-                }
-                direct_source_events = [
-                    source_event
-                    for source_event in pack.relationship_events
-                    if source_event.event_id not in adjudicated_event_ids
-                ]
-            imported_direct_events = [
-                remap_event(source_event)
-                for source_event in direct_source_events
-            ]
-            imported_records: List[AdjudicationRecord] = []
-            for source_record in pack.relationship_adjudications:
-                if source_relationship_id == target_relationship_id:
-                    imported_record = source_record
-                else:
-                    imported_events = tuple(remap_event(event) for event in source_record.events)
-                    old_receipt = source_record.receipt
-                    mapped_decision_id = decision_id_map[old_receipt.decision_id]
-                    mapped_occurrence = (
-                        imported_events[0].metadata["adjudication"][
-                            "occurrence_fingerprint"
-                        ]
-                        if imported_events
-                        else hashlib.sha256(
-                            (
-                                f"{target_relationship_id}:"
-                                f"{old_receipt.occurrence_fingerprint}"
-                            ).encode("utf-8")
-                        ).hexdigest()
-                    )
-                    imported_receipt = replace(
-                        old_receipt,
-                        decision_id=mapped_decision_id,
-                        relationship_id=target_relationship_id,
-                        occurrence_fingerprint=mapped_occurrence,
-                        event_ids=tuple(event.event_id for event in imported_events),
-                        related_event_id=(
-                            event_id_map.get(old_receipt.related_event_id)
-                            if old_receipt.related_event_id
-                            else None
-                        ),
-                    )
-                    imported_record = replace(
-                        source_record,
-                        receipt=imported_receipt,
-                        events=imported_events,
-                    )
-                imported_records.append(imported_record)
-
-            self._commit_relationship_import_history(
-                target_relationship_id,
-                imported_direct_events,
-                imported_records,
-            )
-
-            if (
-                pack.relationship_consequences
-                or pack.narrative_tension_links
-            ) and source_relationship_id != target_relationship_id:
-                raise ValueError(
-                    "MemoryPack relationship consequences require exact "
-                    "relationship restore"
-                )
-            for consequence in pack.relationship_consequences:
-                stored_consequence = (
-                    self.storage.append_relationship_consequence(consequence)
-                )
-                if not stored_consequence.same_payload_as(consequence):
-                    raise ValueError(
-                        "persisted relationship consequence differs from "
-                        "the imported journal entry"
-                    )
-            for link in pack.narrative_tension_links:
-                stored_link = self.storage.append_narrative_tension_link(link)
-                if not stored_link.same_payload_as(link):
-                    raise ValueError(
-                        "persisted Narrative Tension link differs from "
-                        "the imported journal entry"
-                    )
-
-            for source_proposal in pack.persona_growth_proposals:
-                imported_proposal = (
-                    self._remap_persona_growth_proposal_for_import(
-                        pack,
-                        source_proposal,
-                        target_relationship_id,
-                    )
-                )
-                self.storage.save_persona_growth_proposal(imported_proposal)
-
-            if (
-                pack.relationship_processing_runs
-                or pack.persona_reflection_decisions
-            ) and source_relationship_id != target_relationship_id:
-                raise ValueError(
-                    "MemoryPack relationship processing requires exact "
-                    "relationship restore"
-                )
-            for reflection_decision in pack.persona_reflection_decisions:
-                self.storage.commit_persona_reflection_decision(
-                    reflection_decision
-                )
-            for processing_run in pack.relationship_processing_runs:
-                self.storage.create_relationship_processing_run(processing_run)
-
-        elif pack.timeline_entries:
-            self.storage.import_timeline_entries(
+        if write_plan is None:
+            write_plan = plan_memory_pack_writes(
+                pack,
                 clean_agent,
                 clean_user,
-                pack.timeline_entries,
+                target_profile,
+                overwrite=overwrite,
             )
+
+        execute_memory_pack_writes(self.storage, write_plan)
 
         return pack
-
-    def _commit_relationship_import_history(
-        self,
-        relationship_id: str,
-        direct_events: Sequence[RelationshipEvent],
-        adjudications: Sequence[AdjudicationRecord],
-    ) -> None:
-        """Imports both journals in a stable order that satisfies temporal references.
-
-        Direct events and adjudicated events are stored in separate append-only
-        journals. A trusted resolution may therefore depend on an adjudicated
-        Promise (or the reverse). Importing one whole journal before the other
-        would reject a valid pack even though its causal target is present.
-        """
-        try:
-            existing = list_complete_relationship_events(self.storage, relationship_id)
-        except NotImplementedError:
-            existing = []
-        available_ids = {event.event_id for event in existing}
-        direct_queue = list(direct_events)
-        adjudication_queue = list(adjudications)
-        imported_events = [
-            event
-            for unit in [*direct_queue, *adjudication_queue]
-            for event in (
-                (unit,)
-                if isinstance(unit, RelationshipEvent)
-                else unit.events
-            )
-        ]
-        prerequisites = TemporalHistoryValidator.causal_prerequisites(imported_events)
-        direct_index = 0
-        adjudication_index = 0
-
-        while (
-            direct_index < len(direct_queue)
-            or adjudication_index < len(adjudication_queue)
-        ):
-            journal_heads = []
-            if direct_index < len(direct_queue):
-                journal_heads.append(("event", direct_queue[direct_index]))
-            if adjudication_index < len(adjudication_queue):
-                journal_heads.append(
-                    (
-                        "adjudication",
-                        adjudication_queue[adjudication_index],
-                    )
-                )
-            for unit_kind, unit in journal_heads:
-                unit_events = (
-                    (unit,)
-                    if isinstance(unit, RelationshipEvent)
-                    else unit.events
-                )
-                causal_ids = set(available_ids)
-                ready = True
-                for event in unit_events:
-                    references = prerequisites[event.event_id]
-                    if not references.issubset(causal_ids):
-                        ready = False
-                        break
-                    causal_ids.add(event.event_id)
-                if not ready:
-                    continue
-
-                if unit_kind == "event":
-                    stored_event = self.storage.append_relationship_event(unit)
-                    if not stored_event.same_payload_as(unit):
-                        raise ValueError(
-                            "persisted relationship event differs from "
-                            "the imported journal entry"
-                        )
-                    direct_index += 1
-                else:
-                    stored_record = (
-                        self.storage.commit_relationship_adjudication(unit)
-                    )
-                    if stored_record.to_dict() != unit.to_dict():
-                        raise ValueError(
-                            "persisted relationship adjudication differs from "
-                            "the imported journal entry"
-                        )
-                    adjudication_index += 1
-                available_ids.update(event.event_id for event in unit_events)
-                break
-            else:
-                remaining_units = [
-                    *direct_queue[direct_index:],
-                    *adjudication_queue[adjudication_index:],
-                ]
-                unresolved = sorted(
-                    {
-                        reference
-                        for unit in remaining_units
-                        for event in (
-                            (unit,)
-                            if isinstance(unit, RelationshipEvent)
-                            else unit.events
-                        )
-                        for reference in prerequisites[event.event_id]
-                        if reference not in available_ids
-                    }
-                )
-                raise ValueError(
-                    "MemoryPack relationship history has unresolved causal ordering"
-                    + (f": {', '.join(unresolved)}" if unresolved else "")
-                )
-
-    @staticmethod
-    def _temporal_reference_ids(event: RelationshipEvent) -> Sequence[str]:
-        payload = event.temporal_payload
-        if isinstance(payload, PromiseConditionConfirmation):
-            return (payload.promise_event_id,)
-        if isinstance(payload, PromiseResolution):
-            references = [payload.promise_event_id]
-            if payload.superseding_promise_event_id is not None:
-                references.append(payload.superseding_promise_event_id)
-            return tuple(references)
-        if isinstance(payload, OpenLoopResolution):
-            references = [payload.open_loop_event_id]
-            if payload.superseding_open_loop_event_id is not None:
-                references.append(payload.superseding_open_loop_event_id)
-            return tuple(references)
-        return ()
-
-    @staticmethod
-    def _validate_memory_pack_node_types(pack: MemoryPack) -> None:
-        """Rejects non-persistable command directives before import writes."""
-        if any(node.node_type == MemoryType.INSTRUCTION for node in pack.nodes):
-            raise ValueError(
-                "MemoryPack instruction nodes cannot be imported into long-term memory"
-            )
-
-    @classmethod
-    def _validate_temporal_pack(cls, pack: MemoryPack) -> None:
-        """Rejects incomplete or cross-relationship temporal graphs before import writes."""
-        ordered_events = []
-        by_id: Dict[str, RelationshipEvent] = {}
-        for event in [
-            *pack.relationship_events,
-            *(
-                accepted
-                for record in pack.relationship_adjudications
-                for accepted in record.events
-            ),
-        ]:
-            existing = by_id.get(event.event_id)
-            if existing is not None:
-                if not existing.same_payload_as(event):
-                    raise ValueError(
-                        f"MemoryPack event_id {event.event_id!r} has conflicting payloads"
-                    )
-                continue
-            by_id[event.event_id] = event
-            ordered_events.append(event)
-
-        temporal_events = [
-            event for event in ordered_events if event.temporal_payload is not None
-        ]
-        if not temporal_events:
-            return
-        if pack.relationship is None:
-            raise ValueError("MemoryPack temporal history requires a relationship profile")
-        relationship_id = pack.relationship.relationship_id
-        if any(event.relationship_id != relationship_id for event in ordered_events):
-            raise ValueError("MemoryPack relationship history crosses relationship boundaries")
-        all_ids = set(by_id)
-        memory_node_ids = {node.node_id for node in pack.nodes}
-        for event in temporal_events:
-            missing = set(cls._temporal_reference_ids(event)).difference(all_ids)
-            if missing:
-                raise ValueError(
-                    "MemoryPack temporal event references missing source events: "
-                    + ", ".join(sorted(missing))
-                )
-            payload = event.temporal_payload
-            if (
-                isinstance(payload, OpenLoopSpec)
-                and payload.origin_memory_node_id is not None
-                and payload.origin_memory_node_id not in memory_node_ids
-            ):
-                # Existence is the portability invariant. The legacy node may
-                # legitimately have been resolved or superseded after the formal
-                # Open Loop captured its historical provenance.
-                raise ValueError(
-                    "MemoryPack Open Loop references a missing origin memory node: "
-                    + payload.origin_memory_node_id
-                )
-        TemporalHistoryValidator.validate_complete_history(ordered_events)
 
     @staticmethod
     def _validate_turn_pack(
@@ -3531,40 +3119,34 @@ class ERIIEngine:
         """Rejects transcript remapping before import performs any writes."""
         if not pack.turn_records:
             return
-        if pack.relationship is None:
-            raise ValueError("MemoryPack turn records require a relationship profile")
         if (
-            pack.agent_id != target_agent
-            or pack.user_id != target_user
-            or pack.relationship.agent_id != target_agent
-            or pack.relationship.user_id != target_user
+            pack.relationship is not None
+            and (
+                pack.agent_id != target_agent
+                or pack.user_id != target_user
+                or pack.relationship.agent_id != target_agent
+                or pack.relationship.user_id != target_user
+            )
         ):
             raise ValueError(
                 "MemoryPack source transcripts cannot be copied to another Agent x User"
             )
-        seen_turn_ids = set()
-        for record in pack.turn_records:
-            if record.relationship_id != pack.relationship.relationship_id:
-                raise ValueError(
-                    "MemoryPack turn record belongs to a different relationship"
-                )
-            if record.turn_id in seen_turn_ids:
-                raise ValueError(
-                    f"MemoryPack contains duplicate turn_id {record.turn_id!r}"
-                )
-            seen_turn_ids.add(record.turn_id)
+        validate_memory_pack_turn_records(pack)
 
     def _validate_turn_import_conflicts(
         self,
         pack: MemoryPack,
         existing_profile: Optional[RelationshipProfile],
+        *,
+        storage: Optional[BaseStorage] = None,
     ) -> None:
         """Preflights turn identities before legacy memory fields are written."""
         if not pack.turn_records or existing_profile is None:
             return
+        target_storage = storage or self.storage
         existing_by_id = {
             record.turn_id: record
-            for record in self.storage.list_turn_records(
+            for record in target_storage.list_turn_records(
                 existing_profile.relationship_id
             )
         }
@@ -3597,69 +3179,12 @@ class ERIIEngine:
                 f"turn_id {incoming.turn_id!r} already has different content"
             )
 
-    @staticmethod
-    def _validate_relationship_consequence_pack(pack: MemoryPack) -> None:
-        """Preflights the complete consequence causal graph without writes."""
-        if not (
-            pack.relationship_consequences
-            or pack.narrative_tension_links
-        ):
-            return
-        if pack.relationship is None:
-            raise ValueError(
-                "MemoryPack relationship consequences require a relationship profile"
-            )
-        relationship_id = pack.relationship.relationship_id
-        RelationshipConsequenceCoordinator.validate_journal(
-            relationship_id,
-            pack.relationship_consequences,
-            pack.narrative_tension_links,
-            pack.turn_records,
-            pack.relationship_adjudications,
-        )
-
-        accepted_events: Dict[str, RelationshipEvent] = {}
-        for record in pack.relationship_adjudications:
-            for event in record.events:
-                existing = accepted_events.get(event.event_id)
-                if existing is not None and not existing.same_payload_as(event):
-                    raise ValueError(
-                        "MemoryPack consequence sources contain conflicting "
-                        "accepted event identities"
-                    )
-                accepted_events[event.event_id] = event
-        complete_events: Dict[str, RelationshipEvent] = {}
-        for event in pack.relationship_events:
-            existing = complete_events.get(event.event_id)
-            if existing is not None and not existing.same_payload_as(event):
-                raise ValueError(
-                    "MemoryPack relationship history contains conflicting "
-                    "event identities"
-                )
-            complete_events[event.event_id] = event
-        source_event_ids = {
-            item.source_event_id for item in pack.relationship_consequences
-        } | {
-            item.source_event_id for item in pack.narrative_tension_links
-        }
-        for event_id in source_event_ids:
-            accepted = accepted_events.get(event_id)
-            complete = complete_events.get(event_id)
-            if accepted is None or complete is None:
-                raise ValueError(
-                    "MemoryPack relationship consequence source event is missing "
-                    "from accepted complete history"
-                )
-            if not accepted.same_payload_as(complete):
-                raise ValueError(
-                    "MemoryPack relationship consequence source event conflicts "
-                    "with complete history"
-                )
-
     def _validate_relationship_consequence_import_conflicts(
         self,
         pack: MemoryPack,
         existing_profile: Optional[RelationshipProfile],
+        *,
+        storage: Optional[BaseStorage] = None,
     ) -> None:
         """Preflights target consequence identities before any import writes."""
         if not (
@@ -3677,11 +3202,12 @@ class ERIIEngine:
                 "relationship restore"
             )
         relationship_id = existing_profile.relationship_id
+        target_storage = storage or self.storage
         try:
             existing_consequences = (
-                self.storage.list_relationship_consequences(relationship_id)
+                target_storage.list_relationship_consequences(relationship_id)
             )
-            existing_links = self.storage.list_narrative_tension_links(
+            existing_links = target_storage.list_narrative_tension_links(
                 relationship_id
             )
         except NotImplementedError as exc:
@@ -3747,6 +3273,8 @@ class ERIIEngine:
         target_agent: str,
         target_user: str,
         existing_profile: Optional[RelationshipProfile],
+        *,
+        storage: Optional[BaseStorage] = None,
     ) -> None:
         """Preflights stable Timeline identities and relationship provenance."""
         if not pack.timeline_entries:
@@ -3790,8 +3318,9 @@ class ERIIEngine:
                 )
             incoming_by_id[entry.timeline_entry_id] = entry
 
+        target_storage = storage or self.storage
         try:
-            target_entries = self.storage.list_timeline_entries(
+            target_entries = target_storage.list_timeline_entries(
                 target_agent,
                 target_user,
             )
@@ -3812,131 +3341,15 @@ class ERIIEngine:
                     "MemoryPack Timeline entry conflicts with target history"
                 )
 
-    @staticmethod
-    def _validate_persona_growth_pack(pack: MemoryPack) -> None:
-        """Validates portable growth history independently of a7 run ledgers."""
-        if not pack.persona_growth_proposals:
-            return
-        if pack.relationship is None:
-            raise ValueError(
-                "MemoryPack Persona Growth requires a relationship profile"
-            )
-        relationship_id = pack.relationship.relationship_id
-        event_ids = {
-            event.event_id for event in pack.relationship_events
-        } | {
-            event.event_id
-            for record in pack.relationship_adjudications
-            for event in record.events
-        }
-        identities = set()
-        proposal_ids = set()
-        for proposal in pack.persona_growth_proposals:
-            identity = (proposal.proposal_id, proposal.revision)
-            if (
-                identity in identities
-                or proposal.proposal_id in proposal_ids
-            ):
-                raise ValueError(
-                    "MemoryPack contains duplicate Persona Growth identities"
-                )
-            if proposal.relationship_id != relationship_id:
-                raise ValueError(
-                    "MemoryPack Persona Growth crosses relationship boundaries"
-                )
-            if not set(proposal.supporting_event_ids).issubset(event_ids):
-                raise ValueError(
-                    "MemoryPack Persona Growth references events outside the pack"
-                )
-            identities.add(identity)
-            proposal_ids.add(proposal.proposal_id)
-
-    @staticmethod
-    def _remap_persona_growth_proposal_for_import(
-        pack: MemoryPack,
-        source_proposal: PersonaGrowthProposal,
-        target_relationship_id: str,
-    ) -> PersonaGrowthProposal:
-        """Applies the same stable legacy-remap identities used by import."""
-        if pack.relationship is None:
-            raise ValueError(
-                "MemoryPack Persona Growth requires a relationship profile"
-            )
-        source_relationship_id = pack.relationship.relationship_id
-        if source_relationship_id == target_relationship_id:
-            return source_proposal
-
-        decision_id_map = {}
-        for record in pack.relationship_adjudications:
-            receipt = record.receipt
-            processing_identity = (
-                f"{receipt.processing_mode.value}:"
-                f"{receipt.reprocessing_id or ''}"
-            )
-            decision_id_map[receipt.decision_id] = str(
-                uuid.uuid5(
-                    uuid.NAMESPACE_URL,
-                    (
-                        f"erii:{target_relationship_id}:decision:"
-                        f"{receipt.source_turn_id}:{receipt.source_revision}:"
-                        f"{processing_identity}:{receipt.candidate_key}"
-                    ),
-                )
-            )
-        source_event_ids = {
-            event.event_id for event in pack.relationship_events
-        } | {
-            event.event_id
-            for record in pack.relationship_adjudications
-            for event in record.events
-        }
-        event_id_map = {
-            event_id: str(
-                uuid.uuid5(
-                    uuid.NAMESPACE_URL,
-                    f"erii:{target_relationship_id}:{event_id}",
-                )
-            )
-            for event_id in source_event_ids
-        }
-        for record in pack.relationship_adjudications:
-            mapped_decision_id = decision_id_map[
-                record.receipt.decision_id
-            ]
-            for index, event in enumerate(record.events):
-                event_suffix = "event" if index == 0 else f"event:{index}"
-                event_id_map[event.event_id] = str(
-                    uuid.uuid5(
-                        uuid.NAMESPACE_URL,
-                        f"{mapped_decision_id}:{event_suffix}",
-                    )
-                )
-        return replace(
-            source_proposal,
-            proposal_id=str(
-                uuid.uuid5(
-                    uuid.NAMESPACE_URL,
-                    (
-                        f"erii:{target_relationship_id}:growth:"
-                        f"{source_proposal.review_id}:"
-                        f"{source_proposal.intent_key}"
-                    ),
-                )
-            ),
-            relationship_id=target_relationship_id,
-            supporting_event_ids=tuple(
-                event_id_map[event_id]
-                for event_id in source_proposal.supporting_event_ids
-            ),
-        )
-
     def _validate_persona_growth_import_conflicts(
         self,
-        pack: MemoryPack,
-        target_profile: RelationshipProfile,
+        incoming_proposals: Sequence[PersonaGrowthProposal],
+        target_relationship_id: str,
+        *,
+        storage: Optional[BaseStorage] = None,
     ) -> None:
-        """Preflights exact or remapped proposal identities before payload writes."""
-        if not pack.persona_growth_proposals:
+        """Preflights planned proposal identities before payload writes."""
+        if not incoming_proposals:
             return
 
         def immutable_content(
@@ -3961,14 +3374,10 @@ class ERIIEngine:
                 proposal.decision_reason,
             )
 
-        for source_proposal in pack.persona_growth_proposals:
-            incoming = self._remap_persona_growth_proposal_for_import(
-                pack,
-                source_proposal,
-                target_profile.relationship_id,
-            )
+        target_storage = storage or self.storage
+        for incoming in incoming_proposals:
             try:
-                existing = self.storage.get_persona_growth_proposal(
+                existing = target_storage.get_persona_growth_proposal(
                     incoming.proposal_id
                 )
             except NotImplementedError:
@@ -3976,8 +3385,8 @@ class ERIIEngine:
                     (
                         proposal
                         for proposal in (
-                            self.storage.list_persona_growth_proposals(
-                                target_profile.relationship_id
+                            target_storage.list_persona_growth_proposals(
+                                target_relationship_id
                             )
                         )
                         if proposal.proposal_id == incoming.proposal_id
@@ -3999,6 +3408,8 @@ class ERIIEngine:
         self,
         pack: MemoryPack,
         existing_profile: Optional[RelationshipProfile],
+        *,
+        storage: Optional[BaseStorage] = None,
     ) -> None:
         """Rejects exact-identity adjudication conflicts before import writes."""
         if (
@@ -4009,8 +3420,9 @@ class ERIIEngine:
             != pack.relationship.relationship_id
         ):
             return
+        target_storage = storage or self.storage
         try:
-            existing_records = self.storage.list_relationship_adjudications(
+            existing_records = target_storage.list_relationship_adjudications(
                 existing_profile.relationship_id
             )
         except NotImplementedError:
@@ -4031,156 +3443,6 @@ class ERIIEngine:
                 )
 
     @staticmethod
-    def _validate_persisted_turn_adjudication_pack(
-        pack: MemoryPack,
-        target_agent: str,
-        target_user: str,
-        existing_profile: Optional[RelationshipProfile],
-    ) -> None:
-        """Revalidates a8 direct adjudications against their portable Source Turns."""
-        turns = {
-            (turn.turn_id, turn.source_revision): turn
-            for turn in pack.turn_records
-        }
-        if len(turns) != len(pack.turn_records):
-            raise ValueError(
-                "MemoryPack persisted-Turn adjudications contain duplicate Source Turns"
-            )
-        records = tuple(
-            record
-            for record in pack.relationship_adjudications
-            if (
-                record.receipt.contract_version
-                == PERSISTED_TURN_CONTRACT_VERSION
-                or (
-                    record.receipt.contract_version
-                    != "relationship-processing-v1"
-                    and (
-                        record.receipt.source_turn_id,
-                        record.receipt.source_revision,
-                    )
-                    in turns
-                )
-            )
-        )
-        if not records:
-            return
-        relationship = pack.relationship
-        if relationship is None:
-            raise ValueError(
-                "MemoryPack persisted-Turn adjudications require a relationship profile"
-            )
-        if (
-            pack.agent_id != target_agent
-            or pack.user_id != target_user
-            or relationship.agent_id != target_agent
-            or relationship.user_id != target_user
-            or (
-                existing_profile is not None
-                and existing_profile.relationship_id
-                != relationship.relationship_id
-            )
-        ):
-            raise ValueError(
-                "MemoryPack persisted-Turn adjudications require exact relationship restore"
-            )
-
-        quarantine_reason = (
-            "continuity_exception_agent_evidence_quarantined",
-        )
-        for record in records:
-            receipt = record.receipt
-            if receipt.relationship_id != relationship.relationship_id:
-                raise ValueError(
-                    "MemoryPack persisted-Turn adjudication crosses relationship boundaries"
-                )
-            turn = turns.get((receipt.source_turn_id, receipt.source_revision))
-            if turn is None or turn.status != TurnStatus.COMPLETED:
-                raise ValueError(
-                    "MemoryPack persisted-Turn adjudication requires its exact "
-                    "completed Source Turn"
-                )
-            messages = [turn.transcript.user_message]
-            if turn.transcript.agent_message is not None:
-                messages.append(turn.transcript.agent_message)
-            messages_by_id = {message.message_id: message for message in messages}
-            if len(messages_by_id) != len(messages):
-                raise ValueError(
-                    "MemoryPack persisted-Turn adjudication has ambiguous source messages"
-                )
-
-            evidence_ids = set()
-            for evidence in receipt.evidence:
-                message = messages_by_id.get(evidence.source_id)
-                if (
-                    message is None
-                    or evidence.source_revision != turn.source_revision
-                    or evidence.role.value != message.role.value
-                    or evidence.message_sha256
-                    != hashlib.sha256(message.content.encode("utf-8")).hexdigest()
-                    or not 0 <= evidence.start < evidence.end <= len(message.content)
-                    or message.content[evidence.start : evidence.end]
-                    != evidence.quote
-                    or evidence.occurred_at != message.recorded_at
-                ):
-                    raise ValueError(
-                        "MemoryPack persisted-Turn adjudication evidence does not "
-                        "match its Source Turn"
-                    )
-                expected_evidence_id = str(
-                    uuid.uuid5(
-                        uuid.NAMESPACE_URL,
-                        (
-                            f"erii:{relationship.relationship_id}:evidence:"
-                            f"{evidence.source_id}:{evidence.source_revision}:"
-                            f"{evidence.message_sha256}:{evidence.start}:{evidence.end}"
-                        ),
-                    )
-                )
-                if (
-                    evidence.evidence_id != expected_evidence_id
-                    or evidence.evidence_id in evidence_ids
-                ):
-                    raise ValueError(
-                        "MemoryPack persisted-Turn adjudication evidence identity "
-                        "is invalid"
-                    )
-                evidence_ids.add(evidence.evidence_id)
-
-            if (
-                receipt.outcome
-                in (DecisionOutcome.ACCEPTED, DecisionOutcome.CORROBORATED)
-                and not receipt.evidence
-            ):
-                raise ValueError(
-                    "MemoryPack accepted persisted-Turn adjudication requires evidence"
-                )
-            quarantined_ids = quarantined_agent_source_ids(turn)
-            cites_quarantined_agent = any(
-                evidence.source_id in quarantined_ids
-                for evidence in receipt.evidence
-            )
-            if cites_quarantined_agent and not (
-                receipt.outcome == DecisionOutcome.REJECTED
-                and tuple(receipt.reason_codes) == quarantine_reason
-                and not receipt.event_ids
-                and not record.events
-                and not receipt.pivotal_eligible
-            ):
-                raise ValueError(
-                    "MemoryPack persisted-Turn adjudication with quarantined Agent "
-                    "evidence must retain its a8 rejection"
-                )
-            if (
-                tuple(receipt.reason_codes) == quarantine_reason
-                and not cites_quarantined_agent
-            ):
-                raise ValueError(
-                    "MemoryPack persisted-Turn adjudication quarantine reason lacks "
-                    "quarantined Agent evidence"
-                )
-
-    @staticmethod
     def _validate_relationship_processing_pack(
         pack: MemoryPack,
         target_agent: str,
@@ -4188,34 +3450,13 @@ class ERIIEngine:
         existing_profile: Optional[RelationshipProfile],
         *,
         storage: Optional[BaseStorage] = None,
-        relationship_adjudicator: Optional[RelationshipAdjudicator] = None,
     ) -> None:
         """Preflights a7 ledgers before any legacy memory field is written."""
-        if relationship_adjudicator is None:
-            # `_reconstruct_batch_records` is a pure replay routine; bypassing
-            # its storage-binding constructor keeps standalone pack validation
-            # zero-write while using the exact production adjudication rules.
-            relationship_adjudicator = object.__new__(RelationshipAdjudicator)
         runs = pack.relationship_processing_runs
         decisions = pack.persona_reflection_decisions
-        processing_receipt_ids = {
-            record.receipt.decision_id
-            for record in pack.relationship_adjudications
-            if record.receipt.contract_version
-            == "relationship-processing-v1"
-        }
-        if processing_receipt_ids and not runs:
-            raise ValueError(
-                "MemoryPack relationship-processing-v1 adjudications require "
-                "their processing runs"
-            )
-        if not runs and not decisions:
+        relationship = resolve_relationship_processing_profile(pack)
+        if relationship is None:
             return
-        if pack.relationship is None:
-            raise ValueError(
-                "MemoryPack relationship processing requires a relationship profile"
-            )
-        relationship = pack.relationship
         if (
             pack.agent_id != target_agent
             or pack.user_id != target_user
@@ -4235,102 +3476,15 @@ class ERIIEngine:
                 "MemoryPack relationship processing requires exact relationship restore"
             )
 
-        turns = {
-            (record.turn_id, record.source_revision): record
-            for record in pack.turn_records
-        }
-        if len(turns) != len(pack.turn_records):
-            raise ValueError(
-                "MemoryPack relationship processing contains duplicate Source Turns"
-            )
-        events_by_id: Dict[str, RelationshipEvent] = {}
-        adjudications_by_event: Dict[str, List[AdjudicationRecord]] = {}
-        adjudications_by_id: Dict[str, AdjudicationRecord] = {}
-        for event in [
-            *pack.relationship_events,
-            *(
-                event
-                for record in pack.relationship_adjudications
-                for event in record.events
-            ),
-        ]:
-            if event.relationship_id != relationship_id:
-                raise ValueError(
-                    "MemoryPack relationship processing event crosses "
-                    "relationship boundaries"
-                )
-            existing_event = events_by_id.get(event.event_id)
-            if (
-                existing_event is not None
-                and not existing_event.same_payload_as(event)
-            ):
-                raise ValueError(
-                    "MemoryPack relationship processing contains conflicting "
-                    "event payloads"
-                )
-            events_by_id[event.event_id] = event
-        for record in pack.relationship_adjudications:
-            receipt = record.receipt
-            if receipt.relationship_id != relationship_id:
-                raise ValueError(
-                    "MemoryPack relationship adjudication crosses "
-                    "relationship boundaries"
-                )
-            existing_record = adjudications_by_id.get(receipt.decision_id)
-            if existing_record is not None and existing_record != record:
-                raise ValueError(
-                    "MemoryPack contains conflicting relationship "
-                    "adjudication decisions"
-                )
-            if existing_record is not None:
-                raise ValueError(
-                    "MemoryPack contains duplicate relationship "
-                    "adjudication decisions"
-                )
-            adjudications_by_id[receipt.decision_id] = record
-            for event in record.events:
-                adjudications_by_event.setdefault(event.event_id, []).append(
-                    record
-                )
+        structure = analyze_relationship_processing_pack_structure(
+            pack,
+            relationship_id,
+        )
+        events_by_id = structure.events_by_id
+        adjudications_by_event = structure.adjudications_by_event
         adjudications_for_reflection_by_event = adjudications_by_event
-        event_ids = set(events_by_id)
-        adjudication_ids = set(adjudications_by_id)
-        reflection_decisions_by_id = {
-            decision.decision_id: decision for decision in decisions
-        }
-        reflection_decision_ids = set(reflection_decisions_by_id)
-        if len(reflection_decisions_by_id) != len(decisions):
-            raise ValueError(
-                "MemoryPack contains duplicate persona reflection decision IDs"
-            )
-
-        adjudicated_event_ids = set(adjudications_by_event)
-        top_level_events_by_id = {
-            event.event_id: event
-            for event in pack.relationship_events
-        }
-        direct_event_order = tuple(pack.relationship_direct_event_ids)
-        if runs:
-            if (
-                len(direct_event_order) != len(set(direct_event_order))
-                or any(
-                    event_id not in top_level_events_by_id
-                    for event_id in direct_event_order
-                )
-                or (
-                    set(top_level_events_by_id)
-                    - adjudicated_event_ids
-                    - set(direct_event_order)
-                )
-            ):
-                raise ValueError(
-                    "MemoryPack relationship processing requires the exact "
-                    "direct-event journal order"
-                )
-        direct_events_by_id = {
-            event_id: top_level_events_by_id[event_id]
-            for event_id in direct_event_order
-        }
+        direct_event_order = structure.direct_event_order
+        direct_events_by_id = structure.direct_events_by_id
         if existing_profile is not None:
             if storage is None:
                 raise ValueError(
@@ -4547,606 +3701,18 @@ class ERIIEngine:
                         "the target proposal history"
                     )
 
-        manifests_by_id: Dict[str, PersonaManifest] = {}
-        for manifest in pack.persona_manifests:
-            if manifest.manifest_id in manifests_by_id:
-                raise ValueError(
-                    "MemoryPack contains duplicate Persona Manifest IDs"
-                )
-            manifests_by_id[manifest.manifest_id] = manifest
-        growth_by_identity = {}
-        growth_proposal_ids = set()
-        for proposal in pack.persona_growth_proposals:
-            identity = (proposal.proposal_id, proposal.revision)
-            if (
-                identity in growth_by_identity
-                or proposal.proposal_id in growth_proposal_ids
-            ):
-                raise ValueError(
-                    "MemoryPack contains duplicate Persona Growth identities"
-                )
-            if proposal.relationship_id != relationship_id:
-                raise ValueError(
-                    "MemoryPack Persona Growth crosses relationship boundaries"
-                )
-            if not set(proposal.supporting_event_ids).issubset(event_ids):
-                raise ValueError(
-                    "MemoryPack Persona Growth references events outside the pack"
-                )
-            growth_by_identity[identity] = proposal
-            growth_proposal_ids.add(proposal.proposal_id)
-
-        def portable_fingerprint(value: object) -> str:
-            encoded = json.dumps(
-                value,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-            return hashlib.sha256(encoded).hexdigest()
-
-        run_ids = set()
-        run_identities = set()
-        original_reflection_decision_ids = set()
-        attached_processing_receipt_ids = set()
-        for run in runs:
-            if run.relationship_id != relationship_id:
-                raise ValueError(
-                    "MemoryPack relationship processing crosses relationship boundaries"
-                )
-            source_key = (run.source_turn_id, run.source_revision)
-            source_turn = turns.get(source_key)
-            if source_turn is None or source_turn.status != TurnStatus.COMPLETED:
-                raise ValueError(
-                    "MemoryPack relationship processing requires its exact completed "
-                    "Source Turn"
-                )
-            expected_processing_id = (
-                RelationshipProcessingCoordinator.processing_id(
-                    relationship,
-                    source_turn,
-                    processing_mode=run.processing_mode,
-                    reprocessing_id=run.reprocessing_id,
-                )
-            )
-            if run.processing_id != expected_processing_id:
-                raise ValueError(
-                    "MemoryPack relationship processing ID does not match "
-                    "its relationship, Source Turn, and processing identity"
-                )
-            if (
-                run.rule_version
-                != RELATIONSHIP_ADJUDICATION_RULE_VERSION
-                or run.contract_version
-                != "relationship-processing-v1"
-            ):
-                raise ValueError(
-                    "MemoryPack relationship processing uses an unsupported "
-                    "rule or contract version"
-                )
-            if not set(run.event_ids).issubset(event_ids):
-                raise ValueError(
-                    "MemoryPack processing run references relationship events "
-                    "outside the pack"
-                )
-            if not set(run.decision_ids).issubset(adjudication_ids):
-                raise ValueError(
-                    "MemoryPack processing run references adjudications outside the pack"
-                )
-            if not set(run.reflection_outcome_ids).issubset(
-                reflection_decision_ids
-            ):
-                raise ValueError(
-                    "MemoryPack processing run references reflection outcomes "
-                    "outside the pack"
-                )
-            if (
-                run.adjudication_base_direct_event_count
-                > len(direct_event_order)
-                or run.adjudication_base_decision_count
-                > len(pack.relationship_adjudications)
-            ):
-                raise ValueError(
-                    "MemoryPack processing run adjudication baseline exceeds "
-                    "its append-only journals"
-                )
-            baseline_direct_events = tuple(
-                direct_events_by_id[event_id]
-                for event_id in direct_event_order[
-                    : run.adjudication_base_direct_event_count
-                ]
-            )
-            baseline_adjudications = tuple(
-                pack.relationship_adjudications[
-                    : run.adjudication_base_decision_count
-                ]
-            )
-            expected_baseline_fingerprint = (
-                relationship_adjudication_baseline_fingerprint(
-                    baseline_direct_events,
-                    baseline_adjudications,
-                )
-            )
-            if (
-                run.adjudication_base_fingerprint
-                != expected_baseline_fingerprint
-            ):
-                raise ValueError(
-                    "MemoryPack processing run adjudication baseline does not "
-                    "match its frozen journal prefixes"
-                )
-            if isinstance(
-                run.frozen_decision,
-                RelationshipEventCandidatesDecision,
-            ):
-                source = RelationshipProcessingCoordinator._source_turn(
-                    source_turn,
-                    run,
-                )
-                candidates = RelationshipCandidateBatch(
-                    candidates=list(run.frozen_decision.candidates),
-                )
-                expected_decision_by_candidate = {
-                    candidate.candidate_key: (
-                        RelationshipAdjudicator._decision_id(
-                            relationship,
-                            source,
-                            candidate,
-                        )
-                    )
-                    for candidate in run.frozen_decision.candidates
-                }
-                expected_decision_ids = list(
-                    expected_decision_by_candidate.values()
-                )
-                actual_records = {
-                    decision_id: adjudications_by_id[decision_id]
-                    for decision_id in expected_decision_ids
-                    if decision_id in adjudications_by_id
-                }
-                if actual_records:
-                    try:
-                        canonical, resolution_order = (
-                            relationship_adjudicator
-                            ._reconstruct_batch_records(
-                                relationship,
-                                source,
-                                candidates,
-                                baseline_direct_events=(
-                                    baseline_direct_events
-                                ),
-                                baseline_adjudications=(
-                                    baseline_adjudications
-                                ),
-                                timestamp_hints=actual_records,
-                                quarantined_source_ids=(
-                                    quarantined_agent_source_ids(source_turn)
-                                ),
-                            )
-                        )
-                    except ValueError as exc:
-                        raise ValueError(
-                            "MemoryPack processing adjudication cannot be "
-                            "replayed from its frozen candidate and baseline"
-                        ) from exc
-                    canonical_by_id = {
-                        record.receipt.decision_id: record
-                        for record in canonical.records
-                    }
-                    present_resolution_order = tuple(
-                        decision_id
-                        for decision_id in resolution_order
-                        if decision_id in actual_records
-                    )
-                    if (
-                        present_resolution_order
-                        != resolution_order[: len(actual_records)]
-                    ):
-                        raise ValueError(
-                            "MemoryPack partial processing adjudications are "
-                            "not a committed decision-journal prefix"
-                        )
-                    for decision_id, actual_record in actual_records.items():
-                        expected_record = canonical_by_id[decision_id]
-                        if (
-                            expected_record.to_dict()
-                            != actual_record.to_dict()
-                        ):
-                            raise ValueError(
-                                "MemoryPack relationship adjudication does "
-                                "not match its frozen candidate and baseline"
-                            )
-                    attached_processing_receipt_ids.update(
-                        set(actual_records) & processing_receipt_ids
-                    )
-                if run.decision_ids:
-                    if tuple(run.decision_ids) != tuple(expected_decision_ids):
-                        raise ValueError(
-                            "MemoryPack processing run does not contain exactly "
-                            "one adjudication for each frozen candidate"
-                        )
-                    expected_event_ids = []
-                    for expected_record in canonical.records:
-                        if (
-                            expected_record.receipt.outcome
-                            == DecisionOutcome.ACCEPTED
-                        ):
-                            expected_event_ids.extend(
-                                event.event_id
-                                for event in expected_record.events
-                            )
-                    if tuple(run.event_ids) != tuple(expected_event_ids):
-                        raise ValueError(
-                            "MemoryPack processing run event IDs do not match "
-                            "its accepted adjudications"
-                        )
-                elif run.status not in {
-                    RelationshipProcessingStatus.EXTRACTED,
-                    RelationshipProcessingStatus.FAILED,
-                }:
-                    raise ValueError(
-                        "MemoryPack advanced processing run is missing "
-                        "adjudication decisions"
-                    )
-            for reflection_outcome_id in run.reflection_outcome_ids:
-                reflection_outcome = reflection_decisions_by_id[
-                    reflection_outcome_id
-                ]
-                expected_reflection_outcome_id = (
-                    RelationshipProcessingCoordinator._reflection_decision_id(
-                        run,
-                        reflection_outcome.event_id,
-                        PersonaReflectionRecordKind.REFLECTION,
-                        None,
-                    )
-                )
-                if (
-                    reflection_outcome_id
-                    != expected_reflection_outcome_id
-                    or
-                    reflection_outcome.source_turn_id != run.source_turn_id
-                    or reflection_outcome.source_revision != run.source_revision
-                    or reflection_outcome.event_id not in run.event_ids
-                    or reflection_outcome.record_kind
-                    != PersonaReflectionRecordKind.REFLECTION
-                    or reflection_outcome.target_reflection_id is not None
-                ):
-                    raise ValueError(
-                        "MemoryPack processing run reflection outcome does not "
-                        "belong to that run"
-                    )
-                original_reflection_decision_ids.add(reflection_outcome_id)
-            if (
-                run.status == RelationshipProcessingStatus.COMPLETED
-                and run.reflection_planned
-                and {
-                    reflection_decisions_by_id[item].event_id
-                    for item in run.reflection_outcome_ids
-                }
-                != set(run.event_ids)
-            ):
-                raise ValueError(
-                    "MemoryPack completed processing run is missing a "
-                    "reflection outcome for an accepted event"
-                )
-            identity = (
-                run.source_turn_id,
-                run.source_revision,
-                run.processing_identity,
-            )
-            if run.processing_id in run_ids or identity in run_identities:
-                raise ValueError(
-                    "MemoryPack contains duplicate relationship processing identities"
-                )
-            run_ids.add(run.processing_id)
-            run_identities.add(identity)
-
-        if processing_receipt_ids != attached_processing_receipt_ids:
-            raise ValueError(
-                "MemoryPack relationship-processing-v1 adjudications are not "
-                "attached to their exact processing runs"
-            )
-
-        reflection_identities = set()
-        seen_reflection_ids = set()
-        seen_reflections_by_id: Dict[str, PersonaReflectionRecord] = {}
-        for decision in decisions:
-            if decision.relationship_id != relationship_id:
-                raise ValueError(
-                    "MemoryPack persona reflections cross relationship boundaries"
-                )
-            source_turn = turns.get(
-                (decision.source_turn_id, decision.source_revision)
-            )
-            if source_turn is None or source_turn.status != TurnStatus.COMPLETED:
-                raise ValueError(
-                    "MemoryPack persona reflection requires its exact completed "
-                    "Source Turn"
-                )
-            if decision.event_id not in event_ids:
-                raise ValueError(
-                    "MemoryPack persona reflection references an event outside the pack"
-                )
-            if (
-                decision.record_kind
-                == PersonaReflectionRecordKind.REFLECTION
-                and decision.decision_id
-                not in original_reflection_decision_ids
-            ):
-                raise ValueError(
-                    "MemoryPack original persona reflection is not attached "
-                    "to its processing run"
-                )
-            if decision.record_kind in {
-                PersonaReflectionRecordKind.CORRECTION,
-                PersonaReflectionRecordKind.REINTERPRETATION,
-            }:
-                expected_decision_id = (
-                    RelationshipProcessingCoordinator
-                    ._explicit_interpretation_decision_id(
-                        relationship_id,
-                        decision.target_reflection_id,
-                        decision.interpretation_id,
-                        decision.record_kind,
-                    )
-                )
-                if decision.decision_id != expected_decision_id:
-                    raise ValueError(
-                        "MemoryPack reflection interpretation ID does not "
-                        "match its stable identity"
-                    )
-            if (
-                decision.reflection_record is not None
-                and decision.record_kind
-                != PersonaReflectionRecordKind.LEGACY
-            ):
-                expected_reflection_id = str(
-                    uuid.uuid5(
-                        uuid.NAMESPACE_URL,
-                        f"erii:{decision.decision_id}:persona-reflection",
-                    )
-                )
-                if (
-                    decision.reflection_record.reflection_id
-                    != expected_reflection_id
-                ):
-                    raise ValueError(
-                        "MemoryPack persona reflection ID does not match "
-                        "its decision"
-                    )
-            provenance = decision.context_provenance
-            if not set(provenance.prior_event_ids).issubset(event_ids):
-                raise ValueError(
-                    "MemoryPack persona reflection provenance references a "
-                    "missing relationship event"
-                )
-            if decision.event_id in provenance.prior_event_ids:
-                raise ValueError(
-                    "MemoryPack persona reflection provenance cannot list its "
-                    "current event as prior context"
-                )
-            if provenance.provenance_state == ReflectionProvenanceState.COMPLETE:
-                if (
-                    provenance.source_turn_id != decision.source_turn_id
-                    or provenance.source_revision != decision.source_revision
-                ):
-                    raise ValueError(
-                        "MemoryPack persona reflection provenance does not match "
-                        "its Source Turn"
-                    )
-
-                matching_adjudications = adjudications_for_reflection_by_event.get(
-                    decision.event_id,
-                    [],
-                )
-                if len(matching_adjudications) != 1:
-                    raise ValueError(
-                        "MemoryPack complete persona reflection requires exactly "
-                        "one accepted adjudication"
-                    )
-                adjudication = matching_adjudications[0]
-                receipt = adjudication.receipt
-                if (
-                    receipt.outcome != DecisionOutcome.ACCEPTED
-                    or provenance.decision_id != receipt.decision_id
-                    or receipt.source_turn_id != decision.source_turn_id
-                    or receipt.source_revision != decision.source_revision
-                ):
-                    raise ValueError(
-                        "MemoryPack persona reflection provenance is not bound "
-                        "to its accepted adjudication"
-                    )
-
-                evidence_by_id = {
-                    item.evidence_id: item for item in receipt.evidence
-                }
-                if len(evidence_by_id) != len(receipt.evidence):
-                    raise ValueError(
-                        "MemoryPack adjudication contains duplicate evidence IDs"
-                    )
-                if (
-                    not provenance.evidence_ids
-                    or not set(provenance.evidence_ids).issubset(
-                        evidence_by_id
-                    )
-                ):
-                    raise ValueError(
-                        "MemoryPack persona reflection provenance is not bound "
-                        "to its adjudication evidence"
-                    )
-
-                transcript_messages = [
-                    source_turn.transcript.user_message,
-                    source_turn.transcript.agent_message,
-                ]
-                source_messages = {
-                    item.message_id: item
-                    for item in transcript_messages
-                    if item is not None
-                }
-                for evidence_id in provenance.evidence_ids:
-                    evidence = evidence_by_id[evidence_id]
-                    source_message = source_messages.get(evidence.source_id)
-                    expected_message_hash = (
-                        hashlib.sha256(
-                            source_message.content.encode("utf-8")
-                        ).hexdigest()
-                        if source_message is not None
-                        else None
-                    )
-                    expected_evidence_id = (
-                        str(
-                            uuid.uuid5(
-                                uuid.NAMESPACE_URL,
-                                (
-                                    f"erii:{relationship_id}:evidence:"
-                                    f"{evidence.source_id}:"
-                                    f"{evidence.source_revision}:"
-                                    f"{expected_message_hash}:"
-                                    f"{evidence.start}:{evidence.end}"
-                                ),
-                            )
-                        )
-                        if expected_message_hash is not None
-                        else None
-                    )
-                    if (
-                        source_message is None
-                        or evidence.source_revision
-                        != decision.source_revision
-                        or evidence.role.value != source_message.role.value
-                        or evidence.message_sha256 != expected_message_hash
-                        or evidence.end > len(source_message.content)
-                        or source_message.content[
-                            evidence.start : evidence.end
-                        ]
-                        != evidence.quote
-                        or evidence.occurred_at
-                        != source_message.recorded_at
-                        or evidence.evidence_id != expected_evidence_id
-                    ):
-                        raise ValueError(
-                            "MemoryPack persona reflection cites invalid Source "
-                            "Turn evidence"
-                        )
-
-                blueprint = relationship.blueprint
-                if (
-                    provenance.blueprint_id != blueprint.blueprint_id
-                    or provenance.blueprint_sha256 != blueprint.source_sha256
-                    or provenance.blueprint_revision != blueprint.revision
-                ):
-                    raise ValueError(
-                        "MemoryPack persona reflection provenance does not match "
-                        "its Character Blueprint"
-                    )
-                if provenance.baseline_fingerprint != portable_fingerprint(
-                    relationship.baseline.to_dict()
-                ):
-                    raise ValueError(
-                        "MemoryPack persona reflection provenance does not match "
-                        "its Relationship Baseline"
-                    )
-
-                if provenance.manifest_id is not None:
-                    manifest = manifests_by_id.get(provenance.manifest_id)
-                    if (
-                        manifest is None
-                        or relationship.manifest_id != provenance.manifest_id
-                        or provenance.manifest_revision
-                        != manifest.approved_revision
-                        or provenance.manifest_fingerprint
-                        != manifest.content_fingerprint
-                        or manifest.blueprint_id != blueprint.blueprint_id
-                        or manifest.blueprint_revision != blueprint.revision
-                        or manifest.source_sha256 != blueprint.source_sha256
-                    ):
-                        raise ValueError(
-                            "MemoryPack persona reflection provenance does not "
-                            "match its Persona Manifest"
-                        )
-
-                for reference in provenance.approved_growth:
-                    proposal = growth_by_identity.get(
-                        (reference.proposal_id, reference.revision)
-                    )
-                    if (
-                        proposal is None
-                        or proposal.relationship_id != relationship_id
-                        or proposal.status != PersonaGrowthStatus.APPROVED
-                        or reference.content_fingerprint
-                        != portable_fingerprint(proposal.to_dict())
-                        or reference.approved_at != proposal.decided_at
-                        or not set(proposal.supporting_event_ids).issubset(
-                            event_ids
-                        )
-                    ):
-                        raise ValueError(
-                            "MemoryPack persona reflection provenance does not "
-                            "match its approved Persona Growth"
-                        )
-            if decision.target_reflection_id is not None:
-                target_reflection = seen_reflections_by_id.get(
-                    decision.target_reflection_id
-                )
-                if target_reflection is None:
-                    raise ValueError(
-                        "MemoryPack correction or reinterpretation precedes its target"
-                    )
-                target_provenance = target_reflection.context_provenance
-                if (
-                    decision.event_id != target_reflection.event_id
-                    or decision.source_turn_id
-                    != target_provenance.source_turn_id
-                    or decision.source_revision
-                    != target_provenance.source_revision
-                    or provenance.decision_id
-                    != target_provenance.decision_id
-                    or provenance.evidence_ids
-                    != target_provenance.evidence_ids
-                    or provenance.blueprint_id
-                    != target_provenance.blueprint_id
-                    or provenance.blueprint_sha256
-                    != target_provenance.blueprint_sha256
-                    or provenance.blueprint_revision
-                    != target_provenance.blueprint_revision
-                    or provenance.manifest_id
-                    != target_provenance.manifest_id
-                    or provenance.manifest_revision
-                    != target_provenance.manifest_revision
-                    or provenance.manifest_fingerprint
-                    != target_provenance.manifest_fingerprint
-                    or provenance.baseline_fingerprint
-                    != target_provenance.baseline_fingerprint
-                    or decision.target_reflection_id
-                    not in provenance.prior_reflection_ids
-                ):
-                    raise ValueError(
-                        "MemoryPack correction or reinterpretation does not "
-                        "share its target reflection's event and source binding"
-                    )
-            if not set(
-                decision.context_provenance.prior_reflection_ids
-            ).issubset(seen_reflection_ids):
-                raise ValueError(
-                    "MemoryPack persona reflection provenance references a later "
-                    "or missing reflection"
-                )
-            if decision.interpretation_identity in reflection_identities:
-                raise ValueError(
-                    "MemoryPack contains duplicate persona reflection identities"
-                )
-            reflection_identities.add(decision.interpretation_identity)
-            if decision.reflection_record is not None:
-                reflection_id = decision.reflection_record.reflection_id
-                if reflection_id in seen_reflection_ids:
-                    raise ValueError(
-                        "MemoryPack contains duplicate persona reflection records"
-                    )
-                seen_reflection_ids.add(reflection_id)
-                seen_reflections_by_id[reflection_id] = (
-                    decision.reflection_record
-                )
+        reflection_context = analyze_relationship_processing_reflection_context(
+            pack,
+            structure,
+            adjudications_for_reflection_by_event,
+        )
+        run_analysis = validate_relationship_processing_runs(pack, structure)
+        validate_relationship_processing_reflections(
+            pack,
+            structure,
+            run_analysis,
+            reflection_context,
+        )
 
         if storage is None:
             return
@@ -5208,466 +3774,6 @@ class ERIIEngine:
                     "persona reflection identity already has different content"
                 )
 
-    @staticmethod
-    def _remap_temporal_payload(payload, event_id_map: Mapping[str, str]):
-        """Remaps every relationship-event reference in one temporal payload."""
-        if payload is None or isinstance(payload, (PromiseSpec, OpenLoopSpec)):
-            return payload
-
-        def mapped(source_id: str) -> str:
-            try:
-                return event_id_map[source_id]
-            except KeyError as exc:
-                raise ValueError(
-                    "MemoryPack temporal payload references an event outside the pack"
-                ) from exc
-
-        if isinstance(payload, PromiseConditionConfirmation):
-            return replace(payload, promise_event_id=mapped(payload.promise_event_id))
-        if isinstance(payload, PromiseResolution):
-            return replace(
-                payload,
-                promise_event_id=mapped(payload.promise_event_id),
-                superseding_promise_event_id=(
-                    mapped(payload.superseding_promise_event_id)
-                    if payload.superseding_promise_event_id is not None
-                    else None
-                ),
-            )
-        if isinstance(payload, OpenLoopResolution):
-            return replace(
-                payload,
-                open_loop_event_id=mapped(payload.open_loop_event_id),
-                superseding_open_loop_event_id=(
-                    mapped(payload.superseding_open_loop_event_id)
-                    if payload.superseding_open_loop_event_id is not None
-                    else None
-                ),
-            )
-        raise ValueError("unsupported temporal payload in MemoryPack")
-
-    def _import_persona_compilation(
-        self,
-        pack: MemoryPack,
-        target_profile: RelationshipProfile,
-        *,
-        validate_only: bool = False,
-    ) -> RelationshipProfile:
-        """Validates, remaps, then imports one Blueprint's compilation history."""
-        if pack.relationship is None:
-            return target_profile
-        source_blueprint = pack.relationship.blueprint
-        target_blueprint = target_profile.blueprint
-        source_blueprint_id = source_blueprint.blueprint_id
-        target_blueprint_id = target_blueprint.blueprint_id
-        remapped = source_blueprint_id != target_blueprint_id
-
-        if source_blueprint.source_text != target_blueprint.source_text:
-            raise ValueError(
-                "MemoryPack Persona Compilation cannot be remapped to different source text"
-            )
-
-        def immutable_proposal_content(
-            proposal: PersonaCompilationProposal,
-        ) -> Dict[str, Any]:
-            data = proposal.to_dict()
-            for key in (
-                "status",
-                "created_at",
-                "created_by",
-                "decided_by",
-                "decided_at",
-                "decision_reason",
-            ):
-                data.pop(key, None)
-            return data
-
-        def proposal_lifecycle(proposal: PersonaCompilationProposal):
-            return (
-                proposal.status,
-                proposal.decided_by,
-                proposal.decided_at,
-                proposal.decision_reason,
-            )
-
-        source_proposals: Dict[
-            tuple[str, int], PersonaCompilationProposal
-        ] = {}
-        validated_source_candidates = {}
-        for source_proposal in pack.persona_compilation_proposals:
-            source_key = (source_proposal.proposal_id, source_proposal.revision)
-            if source_key in source_proposals:
-                raise ValueError("MemoryPack contains a duplicate Persona proposal revision")
-            if (
-                source_proposal.blueprint_id != source_blueprint_id
-                or source_proposal.blueprint_revision != source_blueprint.revision
-                or source_proposal.source_sha256 != source_blueprint.source_sha256
-            ):
-                raise ValueError(
-                    "MemoryPack Persona proposal belongs to a different Blueprint revision"
-                )
-            validated_source = PersonaCompiler._validate_against_source(
-                source_proposal.candidate,
-                source_blueprint.source_text,
-            )
-            if validated_source.model_dump(mode="json") != source_proposal.candidate.model_dump(
-                mode="json"
-            ):
-                raise ValueError(
-                    "MemoryPack Persona proposal lacks canonical source-span hashes"
-                )
-            expected_fingerprint = PersonaCompiler.content_fingerprint(
-                source_blueprint_id,
-                source_blueprint.revision,
-                source_blueprint.source_sha256,
-                validated_source,
-            )
-            if source_proposal.content_fingerprint != expected_fingerprint:
-                raise ValueError("MemoryPack Persona proposal fingerprint is invalid")
-            if source_proposal.status == PersonaCompilationStatus.PENDING:
-                if any(
-                    value is not None
-                    for value in (
-                        source_proposal.decided_by,
-                        source_proposal.decided_at,
-                        source_proposal.decision_reason,
-                    )
-                ):
-                    raise ValueError("pending MemoryPack Persona proposal has decision state")
-            elif source_proposal.decided_by is None or source_proposal.decided_at is None:
-                raise ValueError("decided MemoryPack Persona proposal lacks provenance")
-            source_proposals[source_key] = source_proposal
-            validated_source_candidates[source_key] = validated_source
-
-        for source_proposal in source_proposals.values():
-            if source_proposal.revision > 1 and (
-                source_proposal.proposal_id,
-                source_proposal.parent_revision,
-            ) not in source_proposals:
-                raise ValueError("MemoryPack Persona proposal parent revision is missing")
-
-        source_manifests_by_id: Dict[str, PersonaManifest] = {}
-        source_manifests_by_revision: Dict[tuple[str, int], PersonaManifest] = {}
-        for source_manifest in pack.persona_manifests:
-            manifest_key = (
-                source_manifest.approved_proposal_id,
-                source_manifest.approved_revision,
-            )
-            if (
-                source_manifest.manifest_id in source_manifests_by_id
-                or manifest_key in source_manifests_by_revision
-            ):
-                raise ValueError("MemoryPack contains a duplicate Persona Manifest")
-            if (
-                source_manifest.blueprint_id != source_blueprint_id
-                or source_manifest.blueprint_revision != source_blueprint.revision
-                or source_manifest.source_sha256 != source_blueprint.source_sha256
-            ):
-                raise ValueError(
-                    "MemoryPack Persona Manifest belongs to a different Blueprint revision"
-                )
-            source_proposal = source_proposals.get(manifest_key)
-            if source_proposal is None:
-                raise ValueError("MemoryPack Manifest references a missing proposal revision")
-            if source_proposal.status not in (
-                PersonaCompilationStatus.APPROVED,
-                PersonaCompilationStatus.REVOKED,
-            ):
-                raise ValueError("MemoryPack Manifest references an unapproved proposal")
-            validated_manifest_candidate = PersonaCompiler._validate_against_source(
-                source_manifest.candidate,
-                source_blueprint.source_text,
-            )
-            if validated_manifest_candidate.model_dump(
-                mode="json"
-            ) != source_manifest.candidate.model_dump(mode="json"):
-                raise ValueError(
-                    "MemoryPack Persona Manifest lacks canonical source-span hashes"
-                )
-            source_approval = replace(
-                source_proposal,
-                status=PersonaCompilationStatus.APPROVED,
-                decided_by=source_manifest.approved_by,
-                decided_at=source_manifest.approved_at,
-                decision_reason=source_proposal.decision_reason,
-            )
-            expected_source_manifest = PersonaCompiler.manifest_from_approved(
-                source_approval
-            )
-            if expected_source_manifest.to_dict() != source_manifest.to_dict():
-                raise ValueError(
-                    "MemoryPack Persona Manifest does not match its approved proposal"
-                )
-            if source_proposal.status == PersonaCompilationStatus.APPROVED and (
-                source_proposal.decided_by != source_manifest.approved_by
-                or source_proposal.decided_at != source_manifest.approved_at
-            ):
-                raise ValueError(
-                    "approved MemoryPack Persona proposal has different Manifest provenance"
-                )
-            source_manifests_by_id[source_manifest.manifest_id] = source_manifest
-            source_manifests_by_revision[manifest_key] = source_manifest
-
-        for source_proposal in source_proposals.values():
-            if source_proposal.status in (
-                PersonaCompilationStatus.APPROVED,
-                PersonaCompilationStatus.REVOKED,
-            ) and (
-                source_proposal.proposal_id,
-                source_proposal.revision,
-            ) not in source_manifests_by_revision:
-                raise ValueError("approved MemoryPack proposal is missing its Manifest")
-
-        proposal_id_map: Dict[str, str] = {}
-        mapped_proposals: List[PersonaCompilationProposal] = []
-        for source_proposal in sorted(
-            source_proposals.values(),
-            key=lambda item: (item.proposal_id, item.revision),
-        ):
-            proposal_id_map.setdefault(
-                source_proposal.proposal_id,
-                (
-                    str(
-                        uuid.uuid5(
-                            uuid.NAMESPACE_URL,
-                            (
-                                f"erii:{target_blueprint_id}:persona-compilation:"
-                                f"{source_proposal.proposal_id}"
-                            ),
-                        )
-                    )
-                    if remapped
-                    else source_proposal.proposal_id
-                ),
-            )
-            source_key = (source_proposal.proposal_id, source_proposal.revision)
-            validated_target = PersonaCompiler._validate_against_source(
-                validated_source_candidates[source_key],
-                target_blueprint.source_text,
-            )
-            fingerprint = PersonaCompiler.content_fingerprint(
-                target_blueprint_id,
-                target_blueprint.revision,
-                target_blueprint.source_sha256,
-                validated_target,
-            )
-            mapped = replace(
-                source_proposal,
-                proposal_id=proposal_id_map[source_proposal.proposal_id],
-                blueprint_id=target_blueprint_id,
-                blueprint_revision=target_blueprint.revision,
-                source_sha256=target_blueprint.source_sha256,
-                candidate=validated_target,
-                content_fingerprint=fingerprint,
-            )
-            mapped_proposals.append(mapped)
-
-        mapped_manifest_by_source_id: Dict[str, PersonaManifest] = {}
-        proposal_by_key = {
-            (item.proposal_id, item.revision): item for item in mapped_proposals
-        }
-        for source_manifest in source_manifests_by_id.values():
-            mapped_proposal_id = proposal_id_map.get(source_manifest.approved_proposal_id)
-            if mapped_proposal_id is None:
-                raise ValueError("MemoryPack manifest references a missing proposal revision")
-            mapped_proposal = proposal_by_key.get(
-                (mapped_proposal_id, source_manifest.approved_revision)
-            )
-            if mapped_proposal is None:
-                raise ValueError("MemoryPack manifest references a missing proposal revision")
-            mapped_approval = replace(
-                mapped_proposal,
-                status=PersonaCompilationStatus.APPROVED,
-                decided_by=source_manifest.approved_by,
-                decided_at=source_manifest.approved_at,
-                decision_reason=mapped_proposal.decision_reason,
-            )
-            mapped_manifest_by_source_id[
-                source_manifest.manifest_id
-            ] = PersonaCompiler.manifest_from_approved(mapped_approval)
-
-        selected_source_manifest_id = pack.relationship.manifest_id
-        selected_manifest = None
-        selected_proposal_key = None
-        if selected_source_manifest_id is not None:
-            selected_manifest = mapped_manifest_by_source_id.get(
-                selected_source_manifest_id
-            )
-            if selected_manifest is None:
-                raise ValueError("relationship references a Manifest missing from MemoryPack")
-            selected_proposal_key = (
-                selected_manifest.approved_proposal_id,
-                selected_manifest.approved_revision,
-            )
-            if target_profile.manifest_id not in (None, selected_manifest.manifest_id):
-                raise ValueError("target relationship is pinned to a different Manifest")
-            validate_persona_premise_binding(
-                target_profile.premise,
-                selected_manifest.candidate,
-            )
-
-        existing_compilations = {
-            (item.proposal_id, item.revision): item
-            for item in self.storage.list_persona_compilation_proposals(target_blueprint_id)
-        }
-        existing_manifests = self.storage.list_persona_manifests(target_blueprint_id)
-        existing_manifest_by_id = {item.manifest_id: item for item in existing_manifests}
-        existing_manifest_by_revision = {
-            (item.approved_proposal_id, item.approved_revision): item
-            for item in existing_manifests
-        }
-        legacy_reason_loss_keys = set()
-        for mapped in mapped_proposals:
-            key = (mapped.proposal_id, mapped.revision)
-            existing = existing_compilations.get(key)
-            if existing is None:
-                continue
-            if immutable_proposal_content(existing) != immutable_proposal_content(mapped):
-                raise ValueError("MemoryPack proposal identity conflicts with stored content")
-            if existing.status == mapped.status:
-                if proposal_lifecycle(existing) != proposal_lifecycle(mapped):
-                    if not has_legacy_persona_decision_reason_loss(
-                        existing,
-                        mapped,
-                    ):
-                        raise ValueError(
-                            "MemoryPack proposal lifecycle conflicts with storage"
-                        )
-                    legacy_reason_loss_keys.add(key)
-            elif not (
-                existing.status == PersonaCompilationStatus.PENDING
-                or (
-                    existing.status == PersonaCompilationStatus.APPROVED
-                    and mapped.status == PersonaCompilationStatus.REVOKED
-                )
-            ):
-                raise ValueError("MemoryPack proposal status conflicts with storage")
-
-        for mapped_manifest in mapped_manifest_by_source_id.values():
-            existing = existing_manifest_by_id.get(mapped_manifest.manifest_id)
-            by_revision = existing_manifest_by_revision.get(
-                (
-                    mapped_manifest.approved_proposal_id,
-                    mapped_manifest.approved_revision,
-                )
-            )
-            for candidate in (existing, by_revision):
-                if candidate is not None and candidate.to_dict() != mapped_manifest.to_dict():
-                    raise ValueError("MemoryPack Manifest identity conflicts with storage")
-
-        # No writes occur until the complete source graph and every target
-        # conflict have been validated.
-        if validate_only:
-            return target_profile
-
-        for mapped in mapped_proposals:
-            key = (mapped.proposal_id, mapped.revision)
-            if key in existing_compilations:
-                continue
-            pending = replace(
-                mapped,
-                status=PersonaCompilationStatus.PENDING,
-                decided_by=None,
-                decided_at=None,
-                decision_reason=None,
-            )
-            self.storage.save_persona_compilation_proposal(pending)
-            existing_compilations[key] = pending
-
-        for mapped in mapped_proposals:
-            key = (mapped.proposal_id, mapped.revision)
-            current = existing_compilations[key]
-            applied_mapped = (
-                current
-                if key in legacy_reason_loss_keys
-                else mapped
-            )
-            if mapped.status == PersonaCompilationStatus.PENDING:
-                continue
-            matching_manifest = next(
-                (
-                    item
-                    for item in mapped_manifest_by_source_id.values()
-                    if (
-                        item.approved_proposal_id,
-                        item.approved_revision,
-                    )
-                    == key
-                ),
-                None,
-            )
-            if mapped.status in (
-                PersonaCompilationStatus.APPROVED,
-                PersonaCompilationStatus.REVOKED,
-            ):
-                if matching_manifest is None:
-                    raise ValueError("approved MemoryPack proposal is missing its Manifest")
-                approved = replace(
-                    applied_mapped,
-                    status=PersonaCompilationStatus.APPROVED,
-                    decided_by=matching_manifest.approved_by,
-                    decided_at=matching_manifest.approved_at,
-                    decision_reason=applied_mapped.decision_reason,
-                )
-                manifest_already_exists = (
-                    matching_manifest.manifest_id in existing_manifest_by_id
-                )
-                if key == selected_proposal_key and mapped.status == PersonaCompilationStatus.APPROVED:
-                    expected = current.status
-                    self.storage.approve_and_bind_persona_manifest(
-                        target_profile,
-                        approved,
-                        matching_manifest,
-                        expected,
-                    )
-                    target_profile = self.storage.get_relationship(
-                        target_profile.agent_id,
-                        target_profile.user_id,
-                    ) or target_profile
-                elif current.status == PersonaCompilationStatus.PENDING:
-                    self.storage.approve_persona_manifest(
-                        approved,
-                        matching_manifest,
-                        PersonaCompilationStatus.PENDING,
-                    )
-                elif (
-                    current.status == PersonaCompilationStatus.APPROVED
-                    and not manifest_already_exists
-                ):
-                    self.storage.approve_persona_manifest(
-                        approved,
-                        matching_manifest,
-                        PersonaCompilationStatus.APPROVED,
-                    )
-                elif current.status == PersonaCompilationStatus.REVOKED and not manifest_already_exists:
-                    raise ValueError("revoked stored proposal is missing its Persona Manifest")
-
-                if (
-                    mapped.status == PersonaCompilationStatus.REVOKED
-                    and current.status != PersonaCompilationStatus.REVOKED
-                ):
-                    self.storage.save_persona_compilation_proposal(
-                        mapped,
-                        PersonaCompilationStatus.APPROVED,
-                    )
-                existing_compilations[key] = applied_mapped
-                existing_manifest_by_id[matching_manifest.manifest_id] = matching_manifest
-            elif (
-                mapped.status == PersonaCompilationStatus.REJECTED
-                and current.status == PersonaCompilationStatus.PENDING
-            ):
-                self.storage.save_persona_compilation_proposal(
-                    mapped,
-                    PersonaCompilationStatus.PENDING,
-                )
-                existing_compilations[key] = mapped
-
-        if selected_manifest is not None and target_profile.manifest_id is None:
-            target_profile = self.storage.bind_relationship_manifest(
-                target_profile,
-                selected_manifest.manifest_id,
-            )
-        return target_profile
 
     def start(self) -> "ERIIEngine":
         """Starts only the legacy ``remember()`` worker and returns this engine."""

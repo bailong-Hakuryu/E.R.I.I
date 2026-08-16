@@ -39,6 +39,10 @@ jobs:
         run: python scripts/check_secrets.py
       - name: Verify repository-local documentation links
         run: python scripts/check_docs.py
+      - name: Verify project status catalog and dashboard
+        run: python scripts/project_status.py --check
+      - name: Verify refactoring inventory
+        run: python scripts/refactoring_inventory.py --check
       - name: Static checks
         run: ruff check erii tests examples benchmarks scripts clients/typescript/scripts experiments/deepseek-continuity-review
       - name: Verify frozen source contracts
