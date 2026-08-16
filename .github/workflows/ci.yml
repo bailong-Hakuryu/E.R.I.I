@@ -49,10 +49,33 @@ jobs:
         run: python scripts/freeze_contracts.py --check
       - name: Root test suite
         run: python -m pytest -q tests
+      - name: Compare refactoring benchmark when interpreter matches frozen baseline
+        if: matrix.python-version == '3.12'
+        run: >-
+          python benchmarks/run_refactoring_baseline.py
+          --iterations 5
+          --compare benchmarks/baselines/v0.5.0a3-refactoring-r0.json
       - name: Offline DeepSeek experiment tests
         run: python -m pytest -q experiments/deepseek-continuity-review/tests
       - name: Compile sources
         run: python -m compileall -q erii examples tests benchmarks scripts clients/typescript/scripts experiments/deepseek-continuity-review
+
+  refactoring-benchmark:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install package and benchmark dependencies
+        run: python -m pip install --no-cache-dir -e ".[dev]"
+      - name: Enforce refactoring performance gate
+        run: >-
+          python benchmarks/run_refactoring_baseline.py
+          --iterations 5
+          --compare benchmarks/baselines/v0.5.0a3-refactoring-r0.json
 
   typescript-client:
     runs-on: ubuntu-latest

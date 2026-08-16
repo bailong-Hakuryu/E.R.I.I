@@ -8,7 +8,7 @@ This inventory records the structural and caller baseline used by R1. It is gene
 
 | Surface | Lines or symbols | Public methods | Private methods |
 | --- | ---: | ---: | ---: |
-| `erii/engine.py` | 3825 lines | 71 | 24 |
+| `erii/engine.py` | 3934 lines | 71 | 25 |
 | `erii/__init__.py` | 330 exports | n/a | n/a |
 | `BaseStorage` | 56 methods | 55 | 1 |
 | `erii/data_lifecycle.py` | 4283 lines | 3 coordinator | 12 coordinator |
@@ -21,16 +21,16 @@ Counts locate risk; they are not completion targets. R1 succeeds only when Memor
 
 | Method | Start line | Span |
 | --- | ---: | ---: |
-| `export_memory` | 2546 | 165 |
-| `import_memory` | 2712 | 82 |
-| `_import_memory_unlocked` | 2795 | 317 |
-| `_validate_turn_pack` | 3114 | 21 |
-| `_validate_turn_import_conflicts` | 3136 | 45 |
-| `_validate_relationship_consequence_import_conflicts` | 3182 | 87 |
-| `_validate_timeline_import_conflicts` | 3270 | 73 |
-| `_validate_persona_growth_import_conflicts` | 3344 | 62 |
-| `_validate_relationship_adjudication_import_conflicts` | 3407 | 37 |
-| `_validate_relationship_processing_pack` | 3446 | 330 |
+| `export_memory` | 2570 | 165 |
+| `import_memory` | 2736 | 82 |
+| `_import_memory_unlocked` | 2819 | 403 |
+| `_validate_turn_pack` | 3224 | 21 |
+| `_validate_turn_import_conflicts` | 3246 | 45 |
+| `_validate_relationship_consequence_import_conflicts` | 3292 | 87 |
+| `_validate_timeline_import_conflicts` | 3380 | 73 |
+| `_validate_persona_growth_import_conflicts` | 3454 | 62 |
+| `_validate_relationship_adjudication_import_conflicts` | 3517 | 37 |
+| `_validate_relationship_processing_pack` | 3556 | 330 |
 
 The remaining cluster includes the public export/import entry points, guarded import execution, target conflict helper Implementation, Persona target-state transitions, causal history commit, and real Storage writes. R1B now routes first-write preflight reads through the private transfer Recorder and consumes its deterministic zero-write payload plan; locking, transactions, conflict enforcement, execution order, and writes remain in Engine.
 
@@ -99,12 +99,12 @@ This private Module freezes the portable source, target relationship, overwrite 
 
 ## MemoryPack Callers
 
-Tracked call sites: 187 across 30 files; 20 runtime/example/benchmark call sites and 167 test call sites.
+Tracked call sites: 188 across 30 files; 20 runtime/example/benchmark call sites and 168 test call sites.
 
 | Path | Method | Calls | Lines |
 | --- | --- | ---: | --- |
-| `benchmarks/run_refactoring_baseline.py` | `export_memory` | 2 | 127, 137 |
-| `benchmarks/run_refactoring_baseline.py` | `import_memory` | 1 | 163 |
+| `benchmarks/run_refactoring_baseline.py` | `export_memory` | 2 | 366, 376 |
+| `benchmarks/run_refactoring_baseline.py` | `import_memory` | 1 | 402 |
 | `erii/demo.py` | `export_memory` | 2 | 458, 503 |
 | `erii/evaluation/longitudinal.py` | `export_memory` | 2 | 1108, 1208 |
 | `erii/evaluation/longitudinal.py` | `import_memory` | 3 | 1119, 1124, 1250 |
@@ -134,7 +134,7 @@ Tracked call sites: 187 across 30 files; 20 runtime/example/benchmark call sites
 | `tests/test_lifecycle_memory_pack_import_coordinator.py` | `export_memory` | 1 | 252 |
 | `tests/test_lifecycle_memory_pack_staging_import.py` | `export_memory` | 2 | 129, 185 |
 | `tests/test_memory_pack_analysis.py` | `export_memory` | 1 | 86 |
-| `tests/test_memory_pack_transfer.py` | `import_memory` | 7 | 2327, 2773, 2793, 2830, 2856, 2911, 2939 |
+| `tests/test_memory_pack_transfer.py` | `import_memory` | 8 | 2335, 2778, 2798, 2835, 2861, 2916, 2956, 3013 |
 | `tests/test_persona_storage_integrity.py` | `import_memory` | 1 | 162 |
 | `tests/test_relationship_adjudication.py` | `export_memory` | 3 | 137, 168, 646 |
 | `tests/test_relationship_adjudication.py` | `import_memory` | 2 | 651, 652 |

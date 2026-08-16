@@ -383,8 +383,10 @@ class FileStorage(BaseStorage):
 
     def atomic_memory_pack_write_store_v1(
         self,
-    ) -> AtomicMemoryPackWriteStoreV1:
+    ) -> Optional[AtomicMemoryPackWriteStoreV1]:
         """Returns this adapter's flat-v2 whole-pack write capability."""
+        if getattr(self._memory_pack_write_local, "transaction", None) is not None:
+            return None
         return self
 
     def execute_memory_pack_write(

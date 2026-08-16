@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Callable
+from typing import Any, Callable, Mapping
 
 from erii import (
     BackupRequest,
@@ -31,6 +31,8 @@ from erii import (
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITE_VERSION = "refactoring-r0-baseline/v1"
+REGRESSION_THRESHOLD_PCT = 10.0
+BASELINE_JITTER_THRESHOLD_PCT = 5.0
 AGENT_ID = "baseline-agent"
 USER_ID = "baseline-user"
 BLUEPRINT = "An original synthetic character who values precise continuity."
@@ -44,11 +46,248 @@ class Measurement:
     samples_ms: tuple[float, ...]
 
 
+@dataclass(frozen=True)
+class MetricComparison:
+    """The median comparison for one benchmark metric."""
+
+    name: str
+    baseline_ms: float
+    current_ms: float
+    delta_pct: float
+    baseline_jitter_pct: float
+
+    @property
+    def is_regression(self) -> bool:
+        return self.delta_pct > REGRESSION_THRESHOLD_PCT
+
+    @property
+    def baseline_is_unstable(self) -> bool:
+        return self.baseline_jitter_pct > BASELINE_JITTER_THRESHOLD_PCT
+
+
+@dataclass(frozen=True)
+class BaselineComparison:
+    """A validated comparison, or an explicit environment-incompatible skip."""
+
+    compatible: bool
+    environment_reason: str | None
+    metrics: tuple[MetricComparison, ...]
+
+    @property
+    def regressions(self) -> tuple[MetricComparison, ...]:
+        return tuple(metric for metric in self.metrics if metric.is_regression)
+
+    @property
+    def blocking_regressions(self) -> tuple[MetricComparison, ...]:
+        """Regressions backed by a stable enough frozen measurement."""
+        return tuple(
+            metric
+            for metric in self.regressions
+            if not metric.baseline_is_unstable
+        )
+
+    @property
+    def inconclusive_regressions(self) -> tuple[MetricComparison, ...]:
+        """Large deltas that cannot be judged because the baseline is noisy."""
+        return tuple(
+            metric
+            for metric in self.regressions
+            if metric.baseline_is_unstable
+        )
+
+    @property
+    def unstable_baseline_metrics(self) -> tuple[MetricComparison, ...]:
+        return tuple(metric for metric in self.metrics if metric.baseline_is_unstable)
+
+
 def _arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--compare",
+        type=Path,
+        help="compare medians with a frozen baseline JSON report",
+    )
     return parser.parse_args(argv)
+
+
+def _load_json_report(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read benchmark report {path}: {exc}") from exc
+    if type(value) is not dict:
+        raise ValueError(f"benchmark report {path} must contain a JSON object")
+    return value
+
+
+def _platform_family(value: object) -> str:
+    if type(value) is not str or not value.strip():
+        raise ValueError("benchmark environment platform must be a non-empty string")
+    normalized = value.strip().lower()
+    if normalized.startswith("windows"):
+        return "windows"
+    if normalized.startswith("linux"):
+        return "linux"
+    if normalized.startswith(("macos", "darwin")):
+        return "macos"
+    return normalized.split("-", 1)[0]
+
+
+def _python_major_minor(value: object) -> tuple[int, int]:
+    if type(value) is not str:
+        raise ValueError("benchmark environment python must be a version string")
+    pieces = value.split(".")
+    if len(pieces) < 2:
+        raise ValueError("benchmark environment python must include major and minor")
+    try:
+        return int(pieces[0]), int(pieces[1])
+    except ValueError as exc:
+        raise ValueError("benchmark environment python is invalid") from exc
+
+
+def _validate_report(report: Mapping[str, Any], label: str) -> None:
+    if type(report) is not dict:
+        raise ValueError(f"{label} report must contain a JSON object")
+    if report.get("suite_version") != SUITE_VERSION:
+        raise ValueError(f"{label} suite_version does not match {SUITE_VERSION}")
+    fixture = report.get("fixture")
+    expected_fixture = {
+        "nodes": 64,
+        "timeline_entries": 32,
+        "relationship": True,
+        "content": "original-synthetic",
+    }
+    if fixture != expected_fixture:
+        raise ValueError(f"{label} fixture does not match the frozen benchmark fixture")
+    environment = report.get("environment")
+    if type(environment) is not dict:
+        raise ValueError(f"{label} environment is missing or invalid")
+    _python_major_minor(environment.get("python"))
+    _platform_family(environment.get("platform"))
+    if type(environment.get("implementation")) is not str:
+        raise ValueError(f"{label} environment implementation is missing or invalid")
+    metrics = report.get("metrics")
+    if type(metrics) is not dict or not metrics:
+        raise ValueError(f"{label} metrics are missing or invalid")
+    for name, measurement in metrics.items():
+        if type(name) is not str or type(measurement) is not dict:
+            raise ValueError(f"{label} metric {name!r} is invalid")
+        median = measurement.get("median_ms")
+        samples = measurement.get("samples_ms")
+        if type(median) not in (int, float) or median <= 0:
+            raise ValueError(f"{label} metric {name!r} has an invalid median")
+        if type(samples) not in (list, tuple) or len(samples) < 2:
+            raise ValueError(f"{label} metric {name!r} needs at least two samples")
+        if any(type(sample) not in (int, float) or sample <= 0 for sample in samples):
+            raise ValueError(f"{label} metric {name!r} has invalid samples")
+
+
+def _environment_mismatch(
+    current: Mapping[str, Any], baseline: Mapping[str, Any]
+) -> str | None:
+    current_environment = current["environment"]
+    baseline_environment = baseline["environment"]
+    if current_environment["implementation"] != baseline_environment["implementation"]:
+        return (
+            "implementation differs "
+            f"({current_environment['implementation']} vs {baseline_environment['implementation']})"
+        )
+    current_python = _python_major_minor(current_environment["python"])
+    baseline_python = _python_major_minor(baseline_environment["python"])
+    if current_python != baseline_python:
+        return f"Python major/minor differs ({current_python[0]}.{current_python[1]} vs {baseline_python[0]}.{baseline_python[1]})"
+    current_platform = _platform_family(current_environment["platform"])
+    baseline_platform = _platform_family(baseline_environment["platform"])
+    if current_platform != baseline_platform:
+        return f"platform family differs ({current_platform} vs {baseline_platform})"
+    return None
+
+
+def _jitter_pct(measurement: Mapping[str, Any]) -> float:
+    samples = [float(sample) for sample in measurement["samples_ms"]]
+    return (max(samples) - min(samples)) / float(measurement["median_ms"]) * 100.0
+
+
+def compare_reports(
+    current: Mapping[str, Any], baseline: Mapping[str, Any]
+) -> BaselineComparison:
+    """Validate and compare two reports using median latency.
+
+    An interpreter or OS mismatch is an explicit skip because benchmark numbers
+    from different execution environments are not an actionable regression.
+    Contract and fixture mismatches remain hard errors.
+    """
+
+    _validate_report(current, "current")
+    _validate_report(baseline, "baseline")
+    mismatch = _environment_mismatch(current, baseline)
+    if mismatch is not None:
+        return BaselineComparison(False, mismatch, ())
+    current_metrics = current["metrics"]
+    baseline_metrics = baseline["metrics"]
+    if set(current_metrics) != set(baseline_metrics):
+        missing = sorted(set(baseline_metrics) - set(current_metrics))
+        extra = sorted(set(current_metrics) - set(baseline_metrics))
+        raise ValueError(
+            "current and baseline metric sets differ "
+            f"(missing={missing}, extra={extra})"
+        )
+    comparisons = []
+    for name in sorted(baseline_metrics):
+        baseline_measurement = baseline_metrics[name]
+        current_measurement = current_metrics[name]
+        baseline_median = float(baseline_measurement["median_ms"])
+        current_median = float(current_measurement["median_ms"])
+        comparisons.append(
+            MetricComparison(
+                name=name,
+                baseline_ms=baseline_median,
+                current_ms=current_median,
+                delta_pct=(current_median - baseline_median) / baseline_median * 100.0,
+                baseline_jitter_pct=_jitter_pct(baseline_measurement),
+            )
+        )
+    return BaselineComparison(True, None, tuple(comparisons))
+
+
+def render_comparison(comparison: BaselineComparison) -> str:
+    """Render a concise, CI-friendly comparison summary."""
+
+    if not comparison.compatible:
+        return f"Performance comparison skipped: {comparison.environment_reason}."
+    lines = ["Performance comparison (median latency):"]
+    for metric in comparison.metrics:
+        marker = " REGRESSION" if metric.is_regression else ""
+        lines.append(
+            f"  {metric.name}: baseline={metric.baseline_ms:.3f} ms "
+            f"current={metric.current_ms:.3f} ms delta={metric.delta_pct:+.1f}%{marker}"
+        )
+    if comparison.unstable_baseline_metrics:
+        names = ", ".join(metric.name for metric in comparison.unstable_baseline_metrics)
+        lines.append(
+            "Baseline unstable (>5% sample spread): "
+            f"{names}. Re-record the frozen baseline before using it for a release decision."
+        )
+    if comparison.blocking_regressions:
+        names = ", ".join(metric.name for metric in comparison.blocking_regressions)
+        lines.append(
+            f"Performance regression gate failed (>{REGRESSION_THRESHOLD_PCT:.0f}%): {names}"
+        )
+    elif comparison.inconclusive_regressions:
+        names = ", ".join(metric.name for metric in comparison.inconclusive_regressions)
+        lines.append(
+            "Performance regression gate inconclusive: >10% deltas rely on "
+            f"an unstable baseline ({names})."
+        )
+    elif comparison.unstable_baseline_metrics:
+        lines.append(
+            "Performance regression gate inconclusive: baseline unstable."
+        )
+    else:
+        lines.append("Performance regression gate passed.")
+    return "\n".join(lines)
 
 
 def _full_sha() -> str:
@@ -277,11 +516,16 @@ def run(iterations: int) -> dict[str, object]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    if hasattr(sys.stdout, "reconfigure"):
+    # Pytest and other embedders replace stdout with a capture stream whose
+    # reconfigure() implementation may close the stream during teardown.
+    if sys.stdout is sys.__stdout__ and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     args = _arguments(argv)
     try:
         report = run(args.iterations)
+        comparison: BaselineComparison | None = None
+        if args.compare is not None:
+            comparison = compare_reports(report, _load_json_report(args.compare))
         payload = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         if args.output is None:
             print(payload, end="")
@@ -289,6 +533,10 @@ def main(argv: list[str] | None = None) -> int:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(payload, encoding="utf-8", newline="\n")
             print(f"Wrote refactoring baseline to {args.output}")
+        if comparison is not None:
+            print(render_comparison(comparison))
+            if comparison.blocking_regressions:
+                return 1
         return 0
     except Exception as exc:
         print(f"Refactoring baseline failed: {exc}")

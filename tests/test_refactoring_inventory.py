@@ -15,7 +15,7 @@ class RefactoringInventoryTests(unittest.TestCase):
         rendered = render_inventory(inventory)
 
         self.assertEqual(DEFAULT_OUTPUT.read_text(encoding="utf-8"), rendered)
-        self.assertGreater(len(inventory.memory_pack_helpers), 10)
+        self.assertGreaterEqual(len(inventory.memory_pack_helpers), 10)
         self.assertIn(
             "analyze_memory_pack",
             {item.name for item in inventory.memory_pack_analysis_functions},

@@ -544,7 +544,31 @@ class ERIIEngine:
             )
         )
 
-        existing = self.storage.get_relationship(clean_agent, clean_user)
+        return self._initialize_relationship_on_storage(
+            self.storage,
+            clean_agent,
+            clean_user,
+            source_text,
+            compiled_persona,
+            premise=premise,
+            source_format=source_format,
+            source_name=source_name,
+        )
+
+    def _initialize_relationship_on_storage(
+        self,
+        storage: BaseStorage,
+        agent_id: str,
+        user_id: str,
+        source_text: str,
+        compiled_persona: Optional[Mapping[str, Any]],
+        *,
+        premise: RelationshipPremise,
+        source_format: str,
+        source_name: Optional[str],
+    ) -> RelationshipProfile:
+        """Initializes a relationship through an optional transaction view."""
+        existing = storage.get_relationship(agent_id, user_id)
         if existing is not None:
             self._ensure_persona_matches(
                 existing,
@@ -554,21 +578,21 @@ class ERIIEngine:
             )
             return existing
 
-        agent_identity_id = self.storage.get_or_create_identity(
+        agent_identity_id = storage.get_or_create_identity(
             IdentityKind.AGENT,
-            clean_agent,
+            agent_id,
         )
-        user_identity_id = self.storage.get_or_create_identity(
+        user_identity_id = storage.get_or_create_identity(
             IdentityKind.USER,
-            clean_user,
+            user_id,
         )
         profile = RelationshipProfile(
             relationship_id=str(uuid.uuid4()),
             persona_id=str(uuid.uuid4()),
             agent_identity_id=agent_identity_id,
             user_identity_id=user_identity_id,
-            agent_id=clean_agent,
-            user_id=clean_user,
+            agent_id=agent_id,
+            user_id=user_id,
             blueprint=CharacterBlueprint(
                 blueprint_id=str(uuid.uuid4()),
                 source_text=source_text,
@@ -578,7 +602,7 @@ class ERIIEngine:
             ),
             premise=premise,
         )
-        stored = self.storage.create_relationship(profile)
+        stored = storage.create_relationship(profile)
         self._ensure_persona_matches(stored, source_text, compiled_persona, premise)
         return stored
 
@@ -2971,144 +2995,230 @@ class ERIIEngine:
             overwrite=overwrite,
             target_reads=frozen_target_reads,
         )
-        current_target_profile = self.storage.get_relationship(
-            clean_agent,
-            clean_user,
-        )
-        require_memory_pack_transfer_plan_current(
-            transfer_plan,
-            pack,
-            current_target_profile,
-        )
-        replay_memory_pack_target_read_set(self.storage, frozen_target_reads)
-        current_target_profile = self.storage.get_relationship(
-            clean_agent,
-            clean_user,
-        )
-        require_memory_pack_transfer_plan_current(
-            transfer_plan,
-            pack,
-            current_target_profile,
-        )
+        atomic_relationship_id = transfer_plan.target.relationship_id
+        if (
+            atomic_relationship_id is None
+            and pack.relationship is not None
+            and clean_agent == pack.relationship.agent_id
+            and clean_user == pack.relationship.user_id
+        ):
+            atomic_relationship_id = pack.relationship.relationship_id
 
-        target_profile: Optional[RelationshipProfile] = None
-        write_plan = None
-        if pack.relationship is not None:
-            existing_profile = current_target_profile
-            if existing_profile is not None:
-                if requires_exact_relationship_restore:
-                    self._ensure_bound_relationship_matches(
-                        existing_profile,
-                        pack.relationship,
-                    )
-                else:
-                    self._ensure_persona_matches(
-                        existing_profile,
-                        pack.relationship.blueprint.source_text,
-                        pack.relationship.blueprint.compiled,
-                        pack.relationship.premise,
-                    )
-                target_profile = existing_profile
-            elif (
-                clean_agent == pack.relationship.agent_id
-                and clean_user == pack.relationship.user_id
-            ):
-                try:
-                    target_profile = self.storage.create_relationship(
-                        pack.relationship
-                    )
-                except (RuntimeError, ValueError) as exc:
-                    raced_profile = self.storage.get_relationship(
-                        clean_agent,
-                        clean_user,
-                    )
-                    if raced_profile is not None:
-                        target_profile = raced_profile
-                    elif requires_exact_relationship_restore:
-                        raise ValueError(
-                            "MemoryPack exact relationship identity conflicts "
-                            "with the target storage"
-                        ) from exc
+        preserve_remapped_persona_rejection = False
+
+        def execute_import(transactional_storage: BaseStorage) -> MemoryPack:
+            """Revalidate and execute the complete import atomically."""
+            nonlocal preserve_remapped_persona_rejection
+            current_target_profile = transactional_storage.get_relationship(
+                clean_agent,
+                clean_user,
+            )
+            require_memory_pack_transfer_plan_current(
+                transfer_plan,
+                pack,
+                current_target_profile,
+            )
+            replay_memory_pack_target_read_set(
+                transactional_storage,
+                frozen_target_reads,
+            )
+            current_target_profile = transactional_storage.get_relationship(
+                clean_agent,
+                clean_user,
+            )
+            require_memory_pack_transfer_plan_current(
+                transfer_plan,
+                pack,
+                current_target_profile,
+            )
+
+            target_profile: Optional[RelationshipProfile] = None
+            created_target_profile = False
+            if pack.relationship is not None:
+                existing_profile = current_target_profile
+                if existing_profile is not None:
+                    if requires_exact_relationship_restore:
+                        self._ensure_bound_relationship_matches(
+                            existing_profile,
+                            pack.relationship,
+                        )
                     else:
-                        target_profile = self.initialize_relationship(
-                            clean_agent,
-                            clean_user,
+                        self._ensure_persona_matches(
+                            existing_profile,
                             pack.relationship.blueprint.source_text,
                             pack.relationship.blueprint.compiled,
-                            relationship_premise=pack.relationship.premise,
-                            source_format=(
-                                pack.relationship.blueprint.source_format
-                            ),
-                            source_name=pack.relationship.blueprint.source_name,
+                            pack.relationship.premise,
                         )
+                    target_profile = existing_profile
+                elif (
+                    clean_agent == pack.relationship.agent_id
+                    and clean_user == pack.relationship.user_id
+                ):
+                    try:
+                        target_profile = transactional_storage.create_relationship(
+                            pack.relationship
+                        )
+                        created_target_profile = True
+                    except (RuntimeError, ValueError) as exc:
+                        raced_profile = transactional_storage.get_relationship(
+                            clean_agent,
+                            clean_user,
+                        )
+                        if raced_profile is not None:
+                            target_profile = raced_profile
+                        elif requires_exact_relationship_restore:
+                            raise ValueError(
+                                "MemoryPack exact relationship identity conflicts "
+                                "with the target storage"
+                            ) from exc
+                        else:
+                            target_profile = self._initialize_relationship_on_storage(
+                                transactional_storage,
+                                clean_agent,
+                                clean_user,
+                                pack.relationship.blueprint.source_text,
+                                pack.relationship.blueprint.compiled,
+                                premise=pack.relationship.premise,
+                                source_format=pack.relationship.blueprint.source_format,
+                                source_name=pack.relationship.blueprint.source_name,
+                            )
+                            created_target_profile = True
+                else:
+                    target_profile = self._initialize_relationship_on_storage(
+                        transactional_storage,
+                        clean_agent,
+                        clean_user,
+                        pack.relationship.blueprint.source_text,
+                        pack.relationship.blueprint.compiled,
+                        premise=pack.relationship.premise,
+                        source_format=pack.relationship.blueprint.source_format,
+                        source_name=pack.relationship.blueprint.source_name,
+                    )
+                    created_target_profile = True
+
+                if (
+                    held_relationship_id is not None
+                    and target_profile.relationship_id
+                    != held_relationship_id
+                    and not created_target_profile
+                ):
+                    raise _RelationshipImportGuardChanged
+                if (
+                    requires_exact_relationship_restore
+                    and target_profile.relationship_id
+                    != pack.relationship.relationship_id
+                ):
+                    raise ValueError(
+                        "MemoryPack bound provenance requires exact relationship "
+                        "restore"
+                    )
+                if requires_exact_relationship_restore:
+                    self._ensure_bound_relationship_matches(
+                        target_profile,
+                        pack.relationship,
+                    )
+
+                if not persona_growth_preflighted:
+                    growth_proposals = plan_memory_pack_persona_growth_writes(
+                        pack,
+                        target_profile.relationship_id,
+                    )
+                    self._validate_persona_growth_import_conflicts(
+                        growth_proposals,
+                        target_profile.relationship_id,
+                        storage=transactional_storage,
+                    )
+                try:
+                    write_plan = plan_memory_pack_writes(
+                        pack,
+                        clean_agent,
+                        clean_user,
+                        target_profile,
+                        overwrite=overwrite,
+                    )
+                except ValueError:
+                    if (
+                        has_persona_compilation_payload
+                        and (
+                            clean_agent != pack.relationship.agent_id
+                            or clean_user != pack.relationship.user_id
+                        )
+                    ):
+                        preserve_remapped_persona_rejection = True
+                    raise
+                assert write_plan.relationship is not None
+                if write_plan.persona_compilation is not None:
+                    try:
+                        target_profile = execute_memory_pack_persona_compilation(
+                            transactional_storage,
+                            write_plan.persona_compilation,
+                            target_profile,
+                        )
+                    except ValueError:
+                        if (
+                            has_persona_compilation_payload
+                            and (
+                                clean_agent != pack.relationship.agent_id
+                                or clean_user != pack.relationship.user_id
+                            )
+                        ):
+                            preserve_remapped_persona_rejection = True
+                        raise
             else:
-                target_profile = self.initialize_relationship(
+                write_plan = plan_memory_pack_writes(
+                    pack,
+                    clean_agent,
+                    clean_user,
+                    target_profile,
+                    overwrite=overwrite,
+                )
+
+            execute_memory_pack_writes(transactional_storage, write_plan)
+            return pack
+
+        capability_provider = getattr(
+            self.storage,
+            "atomic_memory_pack_write_store_v1",
+            None,
+        )
+        capability = (
+            capability_provider()
+            if callable(capability_provider)
+            else None
+        )
+        try:
+            if capability is None:
+                return execute_import(self.storage)
+            return capability.execute_memory_pack_write(
+                clean_agent,
+                clean_user,
+                atomic_relationship_id,
+                execute_import,
+            )
+        except ValueError:
+            # Preserve the historical remapping contract for a rejected Persona
+            # Compilation payload: the empty target relationship is useful for
+            # a later explicit retry, while compilation and memory payloads are
+            # still rolled back by the atomic capability.
+            if (
+                existing_target_profile is None
+                and pack.relationship is not None
+                and has_persona_compilation_payload
+                and (clean_agent != pack.relationship.agent_id
+                     or clean_user != pack.relationship.user_id)
+                and preserve_remapped_persona_rejection
+            ):
+                self._initialize_relationship_on_storage(
+                    self.storage,
                     clean_agent,
                     clean_user,
                     pack.relationship.blueprint.source_text,
                     pack.relationship.blueprint.compiled,
-                    relationship_premise=pack.relationship.premise,
+                    premise=pack.relationship.premise,
                     source_format=pack.relationship.blueprint.source_format,
                     source_name=pack.relationship.blueprint.source_name,
                 )
-
-            if (
-                held_relationship_id is not None
-                and target_profile.relationship_id
-                != held_relationship_id
-            ):
-                raise _RelationshipImportGuardChanged
-            if (
-                requires_exact_relationship_restore
-                and target_profile.relationship_id
-                != pack.relationship.relationship_id
-            ):
-                raise ValueError(
-                    "MemoryPack bound provenance requires exact relationship "
-                    "restore"
-                )
-            if requires_exact_relationship_restore:
-                self._ensure_bound_relationship_matches(
-                    target_profile,
-                    pack.relationship,
-                )
-
-            if not persona_growth_preflighted:
-                growth_proposals = plan_memory_pack_persona_growth_writes(
-                    pack,
-                    target_profile.relationship_id,
-                )
-                self._validate_persona_growth_import_conflicts(
-                    growth_proposals,
-                    target_profile.relationship_id,
-                )
-            write_plan = plan_memory_pack_writes(
-                pack,
-                clean_agent,
-                clean_user,
-                target_profile,
-                overwrite=overwrite,
-            )
-            assert write_plan.relationship is not None
-            if write_plan.persona_compilation is not None:
-                target_profile = execute_memory_pack_persona_compilation(
-                    self.storage,
-                    write_plan.persona_compilation,
-                    target_profile,
-                )
-
-        if write_plan is None:
-            write_plan = plan_memory_pack_writes(
-                pack,
-                clean_agent,
-                clean_user,
-                target_profile,
-                overwrite=overwrite,
-            )
-
-        execute_memory_pack_writes(self.storage, write_plan)
-
-        return pack
+            raise
 
     @staticmethod
     def _validate_turn_pack(
@@ -3822,4 +3932,3 @@ class ERIIEngine:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit, ensures close() is called."""
         self.close()
-

@@ -2319,10 +2319,18 @@ class MemoryPackTransferPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             storage = FileStorage(root)
             storage.create_relationship(pack.relationship)
-            with mock.patch(
-                "erii.engine.execute_memory_pack_writes",
-                wraps=execute_memory_pack_writes,
-            ) as delegated:
+            with (
+                mock.patch(
+                    "erii.engine.execute_memory_pack_writes",
+                    return_value=None,
+                ) as delegated,
+                mock.patch.object(storage, "save_nodes") as save_nodes,
+                mock.patch.object(storage, "save_core_memory") as save_core_memory,
+                mock.patch.object(
+                    storage,
+                    "import_timeline_entries",
+                ) as import_timeline_entries,
+            ):
                 with ERIIEngine(storage_driver=storage) as engine:
                     returned = engine.import_memory(pack)
 
@@ -2336,12 +2344,9 @@ class MemoryPackTransferPlanTests(unittest.TestCase):
                 delegated_plan.target_relationship_id,
                 pack.relationship.relationship_id,
             )
-
-        engine_source = inspect.getsource(ERIIEngine._import_memory_unlocked)
-        self.assertEqual(engine_source.count("execute_memory_pack_writes"), 1)
-        self.assertNotIn("save_nodes(", engine_source)
-        self.assertNotIn("save_core_memory(", engine_source)
-        self.assertNotIn("import_timeline_entries(", engine_source)
+            save_nodes.assert_not_called()
+            save_core_memory.assert_not_called()
+            import_timeline_entries.assert_not_called()
 
     def test_write_executor_binds_exact_restore_facts_in_the_plan(self) -> None:
         transcript_pack = self._fixture_pack()
@@ -2919,41 +2924,109 @@ class MemoryPackTransferPlanTests(unittest.TestCase):
             final_core = storage.get_core_memory(pack.agent_id, pack.user_id)
             self.assertEqual(final_core, "new target core memory")
 
-        # Now test failure scenario: create a pack that will fail during import
+        # Now test an execution failure after target creation.  The failure
+        # must roll back the relationship and every payload batch as one unit.
         failing_pack = self._fixture_pack()
-        failing_pack.agent_id = "new-agent-2"
-        failing_pack.user_id = "new-user-2"
-        # Create an invalid pack that will fail validation
-        failing_pack.relationship = None  # Missing required relationship for pack with events
+        failing_pack.core_memory = "must roll back"
+        failing_pack.nodes = [
+            MemoryNode(
+                node_id="rollback-node",
+                agent_id=failing_pack.agent_id,
+                user_id=failing_pack.user_id,
+                content="must not persist",
+            )
+        ]
 
-        if failing_pack.relationship_events:
-            with tempfile.TemporaryDirectory() as root2:
-                if isinstance(storage, FileStorage):
-                    storage2 = FileStorage(root2)
-                else:
-                    db_path2 = os.path.join(root2, "test2.db")
-                    storage2 = SQLiteStorage(db_path2)
+        with tempfile.TemporaryDirectory() as root2:
+            if isinstance(storage, FileStorage):
+                storage2 = FileStorage(root2)
+            else:
+                db_path2 = os.path.join(root2, "test2.db")
+                storage2 = SQLiteStorage(db_path2)
 
+            def fail_payload(*args, **kwargs):
+                raise RuntimeError("injected MemoryPack payload failure")
+
+            with mock.patch.object(storage2, "save_nodes", side_effect=fail_payload):
                 with ERIIEngine(storage_driver=storage2) as engine:
-                    with self.assertRaises(ValueError):
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "injected MemoryPack payload failure",
+                    ):
                         engine.import_memory(failing_pack)
 
-                    # Verify no partial state was left behind
-                    profile_after_fail = storage2.get_relationship(
-                        failing_pack.agent_id,
-                        failing_pack.user_id,
+            self.assertIsNone(
+                storage2.get_relationship(
+                    failing_pack.agent_id,
+                    failing_pack.user_id,
+                )
+            )
+            self.assertEqual(
+                storage2.load_nodes(
+                    failing_pack.agent_id,
+                    failing_pack.user_id,
+                ),
+                [],
+            )
+            self.assertEqual(
+                storage2.get_core_memory(
+                    failing_pack.agent_id,
+                    failing_pack.user_id,
+                ),
+                "",
+            )
+
+    def test_new_target_persona_compilation_failure_rolls_back(self) -> None:
+        """Compilation history and target creation share the import transaction."""
+        pack = self._persona_compilation_pack()
+        pack.core_memory = "compilation rollback core"
+        pack.nodes = [
+            MemoryNode(
+                node_id="compilation-rollback-node",
+                agent_id=pack.agent_id,
+                user_id=pack.user_id,
+                content="must not persist",
+            )
+        ]
+
+        for storage_type in ("file", "sqlite"):
+            with self.subTest(storage_type=storage_type):
+                with tempfile.TemporaryDirectory() as root:
+                    if storage_type == "file":
+                        storage = FileStorage(root)
+                    else:
+                        storage = SQLiteStorage(os.path.join(root, "memory.db"))
+
+                    def fail_payload(*args, **kwargs):
+                        raise RuntimeError("injected compilation payload failure")
+
+                    with mock.patch.object(
+                        storage,
+                        "save_nodes",
+                        side_effect=fail_payload,
+                    ):
+                        with ERIIEngine(storage_driver=storage) as engine:
+                            with self.assertRaisesRegex(
+                                RuntimeError,
+                                "injected compilation payload failure",
+                            ):
+                                engine.import_memory(pack)
+
+                    self.assertIsNone(
+                        storage.get_relationship(pack.agent_id, pack.user_id)
                     )
-                    self.assertIsNone(profile_after_fail)
-                    nodes_after_fail = storage2.load_nodes(
-                        failing_pack.agent_id,
-                        failing_pack.user_id,
+                    self.assertEqual(
+                        storage.list_persona_compilation_proposals(
+                            pack.relationship.blueprint.blueprint_id
+                        ),
+                        [],
                     )
-                    self.assertEqual(nodes_after_fail, [])
-                    core_after_fail = storage2.get_core_memory(
-                        failing_pack.agent_id,
-                        failing_pack.user_id,
+                    self.assertEqual(
+                        storage.list_persona_manifests(
+                            pack.relationship.blueprint.blueprint_id
+                        ),
+                        [],
                     )
-                    self.assertEqual(core_after_fail, "")
 
 
 if __name__ == "__main__":

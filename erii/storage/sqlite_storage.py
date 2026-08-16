@@ -202,8 +202,10 @@ class SQLiteStorage(BaseStorage):
 
     def atomic_memory_pack_write_store_v1(
         self,
-    ) -> AtomicMemoryPackWriteStoreV1:
+    ) -> Optional[AtomicMemoryPackWriteStoreV1]:
         """Returns the SQLite whole-pack single-transaction capability."""
+        if getattr(self._memory_pack_write_local, "connection", None) is not None:
+            return None
         return self
 
     def execute_memory_pack_write(
