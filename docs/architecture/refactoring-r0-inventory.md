@@ -103,8 +103,8 @@ Tracked call sites: 188 across 30 files; 20 runtime/example/benchmark call sites
 
 | Path | Method | Calls | Lines |
 | --- | --- | ---: | --- |
-| `benchmarks/run_refactoring_baseline.py` | `export_memory` | 2 | 366, 376 |
-| `benchmarks/run_refactoring_baseline.py` | `import_memory` | 1 | 402 |
+| `benchmarks/run_refactoring_baseline.py` | `export_memory` | 2 | 377, 387 |
+| `benchmarks/run_refactoring_baseline.py` | `import_memory` | 1 | 413 |
 | `erii/demo.py` | `export_memory` | 2 | 458, 503 |
 | `erii/evaluation/longitudinal.py` | `export_memory` | 2 | 1108, 1208 |
 | `erii/evaluation/longitudinal.py` | `import_memory` | 3 | 1119, 1124, 1250 |
