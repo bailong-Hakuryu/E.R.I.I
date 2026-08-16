@@ -1,14 +1,14 @@
 {
   "schema_version": "erii-project-status/v1",
-  "as_of": "2026-08-15",
+  "as_of": "2026-08-17",
   "source_version": "0.5.0a3",
   "baseline_commit": "94a61d5c1b77b5aa8871521aa53b0dba58dedf38",
   "program": {
     "phase": "R1B",
-    "status": "in_progress",
+    "status": "complete",
     "window_start": "2026-08-13",
     "window_end": "2026-09-13",
-    "next_gate": "Extend the versioned execution boundary from an existing target's non-compilation payload to target creation, Persona Compilation and profile binding, then prove a failed public import leaves no partial new target before moving guard or conflict ownership."
+    "next_gate": "Begin R2 Lifecycle read-path extraction: move contract codecs, inspection, and planning behind private modules while preserving public interfaces, historical readers, atomicity invariants, and File/SQLite parity."
   },
   "modules": [
     {

@@ -26,7 +26,7 @@ class ProjectStatusCatalogTests(unittest.TestCase):
 
         self.assertEqual(dashboard, render_catalog(catalog))
         self.assertEqual(catalog["program"]["phase"], "R1B")
-        self.assertEqual(catalog["program"]["status"], "in_progress")
+        self.assertEqual(catalog["program"]["status"], "complete")
         self.assertIn("Character Deliberation C0/G2", dashboard)
         self.assertIn("`placeholder`", dashboard)
         self.assertIn("`planned`", dashboard)
