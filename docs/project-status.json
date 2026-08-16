@@ -5,10 +5,10 @@
   "baseline_commit": "94a61d5c1b77b5aa8871521aa53b0dba58dedf38",
   "program": {
     "phase": "R1B",
-    "status": "complete",
+    "status": "in_progress",
     "window_start": "2026-08-13",
     "window_end": "2026-09-13",
-    "next_gate": "Begin R2 Lifecycle read-path extraction: move contract codecs, inspection, and planning behind private modules while preserving public interfaces, historical readers, atomicity invariants, and File/SQLite parity."
+    "next_gate": "Finish the remaining R1B exit gates before R2: add a versioned main-database operation receipt for exactly-once SQLite commit-error recovery, and re-establish an enforcing performance comparison on a stable same-environment baseline."
   },
   "modules": [
     {
@@ -33,7 +33,7 @@
       "persistence_impact": "orchestrates-current-formats",
       "ci": ["python-matrix", "windows-smoke", "contract-snapshots"],
       "summary": "Primary host facade plus private MemoryPack analysis, export assembly, snapshot-bound transfer planning, and a preflighted executor whose existing-target non-compilation payload is exception-atomic on built-in Storage adapters; SQLite post-commit errors are surfaced as indeterminate rather than reported as success, while target orchestration and Persona Compilation stay in the facade.",
-      "next_gate": "Version a main-database operation receipt for exactly-once SQLite commit-error recovery, then freeze target creation, Persona Compilation and profile binding into one public-import execution contract and prove new-target failure atomicity."
+      "next_gate": "Version a main-database operation receipt for exactly-once SQLite commit-error recovery; target creation, Persona Compilation and profile binding are already inside the atomic public-import execution contract."
     },
     {
       "id": "storage-lifecycle",

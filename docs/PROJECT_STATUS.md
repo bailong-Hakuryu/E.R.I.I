@@ -6,7 +6,7 @@
 >
 > Source: `0.5.0a3` at `94a61d5c1b77b5aa8871521aa53b0dba58dedf38`
 >
-> Refactoring program: `R1B` / `complete` (`2026-08-13` to `2026-09-13`)
+> Refactoring program: `R1B` / `in_progress` (`2026-08-13` to `2026-09-13`)
 
 This dashboard separates maintained Core, active Alpha surfaces, removable experiments, honest placeholders, and planned work. Status is curated in `docs/project-status.json`; file counts or the presence of code do not promote maturity.
 
@@ -32,7 +32,7 @@ flowchart LR
     G -->|"fail"| S["stop and repair"]
 ```
 
-Current gate: Begin R2 Lifecycle read-path extraction: move contract codecs, inspection, and planning behind private modules while preserving public interfaces, historical readers, atomicity invariants, and File/SQLite parity.
+Current gate: Finish the remaining R1B exit gates before R2: add a versioned main-database operation receipt for exactly-once SQLite commit-error recovery, and re-establish an enforcing performance comparison on a stable same-environment baseline.
 
 ## Module Catalog
 
@@ -68,7 +68,7 @@ Primary host facade plus private MemoryPack analysis, export assembly, snapshot-
 
 Paths: `erii/engine.py`, `erii/_engine`, `erii/__init__.py`
 
-Next gate: Version a main-database operation receipt for exactly-once SQLite commit-error recovery, then freeze target creation, Persona Compilation and profile binding into one public-import execution contract and prove new-target failure atomicity.
+Next gate: Version a main-database operation receipt for exactly-once SQLite commit-error recovery; target creation, Persona Compilation and profile binding are already inside the atomic public-import execution contract.
 
 ### Storage and data lifecycle
 
