@@ -29,7 +29,7 @@ Source Turn 的 `adjudicate_relationship_candidates()` 在 b1 发出
 | --- | --- | --- |
 | Package metadata | `0.5.0a3` source identity | 活跃 alpha 源码线；最新上传的 alpha 包是 `0.5.0a2` |
 | Python | `>=3.11`，测试至 `3.14` | 3.11–3.14 |
-| SQLite | schema `10` | `0`–`10` 可识别；旧 schema 不由 Storage 自动升级 |
+| SQLite | schema `11` | `0`–`11` 可识别；旧 schema 不由 Storage 自动升级 |
 | FileStorage | format `2` | `legacy`, `1`, `2` |
 | MemoryPack | `0.5.0a3` | `0.1.0`, `0.2.0`, `0.4.0`, `0.4.0a2`–`0.4.0a8`, `0.5.0a1`–`0.5.0a3` |
 | Lifecycle Backup | `1` | `1` |
@@ -65,19 +65,19 @@ schema、提取器 schema、评估器或关系策略版本。
   目录校验，再按当前目录重新分类并验证 payload；这也覆盖当时的 migration-required
   来源以及 FileStorage/SQLite empty 来源。这里的 `0.5.0a1` 身份也覆盖已发布
   `0.5.0a2` 制品的实际 writer。未知 producer 目录或不匹配的 status/version 仍会失败关闭。
-- FileStorage `legacy → 2` 与 `1 → 2`、SQLite `6 → 10` 与 `9 → 10`，以及所有已声明
+- FileStorage `legacy → 2` 与 `1 → 2`、SQLite `6 | 9 | 10 → 11`，以及所有已声明
   的旧可读 MemoryPack → `0.5.0a3` 有显式 `UpgradeRequest` 路线。
 - SQLite schema `0`–`5`、`7`、`8` 虽可由 inspector 识别，但当前版本没有为它们声明经过
   fixture 验证的 lifecycle upgrade 路线；不得把“可识别”写成“可升级”。
 - 当前 Storage 构造不会把旧 SQLite 作为隐式迁移入口；需要升级的 schema 失败关闭并
   要求使用 lifecycle 流程。
 - `MemoryPackImportRequest` 可以把 current 或 declared-readable Pack 原子发布到全新
-  FileStorage v2 或 SQLite v10；已存在目标和在线 merge 不支持。
+  FileStorage v2 或 SQLite v11；已存在目标和在线 merge 不支持。
 - 当前 FileStorage v2 由规范 `.erii-store.json` 声明。没有 manifest 的历史目录会被
   lifecycle inspector 识别为 `legacy`；inspect、backup 和 restore 不会偷偷赋予新身份。
 - Backup-first erase 支持关系、Source Turn、Relationship Event 与完整用户四种范围；
   relationship rebuild 从剩余权威历史重算派生投影。两者只支持 current FileStorage v2
-  与 SQLite v10。
+  与 SQLite v11。
 
 新计划使用 contract v3，绑定策略、来源指纹、目标父目录、可选 pre-change backup 与
 selector。严格 reader 仍按原字段和摘要规则读取/执行 v1 backup/restore 与 v2 既有操作；

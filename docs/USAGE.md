@@ -1987,16 +1987,18 @@ upgrade route.
 
 On `0.4.0b1`, malformed or identity-inconsistent SQLite MemoryNode and structured Timeline rows raise `StorageIntegrityError`. A collection read never skips a damaged row and returns a misleading partial result.
 
-The current `0.5.0a3` SQLite identity is schema 10. It adds
-`relationship_consequences` and `narrative_tension_links`; schema 9 is a
-supported upgrade source, not the current write identity.
+The current `0.5.0a3` SQLite identity is schema 11. Schema 10 added
+`relationship_consequences` and `narrative_tension_links`; schema 11 adds the
+versioned, content-free main-database receipt used for exactly-once MemoryPack
+commit-error recovery. Schemas 6, 9, and 10 are supported upgrade sources, not
+the current write identity.
 
 FileStorage remains the default in the current alpha source milestone. To select SQLite, explicitly pass a `SQLiteStorage` instance. Neither storage implementation is a multi-tenant authorization boundary, and both store data in plaintext by default.
 
 ## Data Lifecycle: v0.4 Baseline and Current Alpha
 
 `0.4.0b1` introduced zero-write inspection. The current catalog retains that
-contract and recognizes current FileStorage v2, SQLite v10, and MemoryPack
+contract and recognizes current FileStorage v2, SQLite v11, and MemoryPack
 `0.5.0a3` before migration code is allowed to touch them:
 
 ```python
@@ -2142,7 +2144,7 @@ For historical reference, the accepted b1 baseline supported FileStorage
 `0.4.0a8`. The current `0.5.0a3` lifecycle targets exactly:
 
 - FileStorage `legacy | 1 → 2`;
-- SQLite schema `6 | 9 → 10`;
+- SQLite schema `6 | 9 | 10 → 11`;
 - every declared-readable older MemoryPack → `0.5.0a3`.
 
 Each upgrade requires a missing side-by-side destination and a separate missing
@@ -2152,10 +2154,10 @@ current upgrade sources.
 
 `MemoryPackImportRequest` validates a current or declared-readable Pack inside
 isolated staging and publishes it to a **missing, fresh** FileStorage v2 or
-SQLite v10 target. It is not an atomic merge into an existing store.
+SQLite v11 target. It is not an atomic merge into an existing store.
 
 `EraseRequest` supports relationship, Source Turn, Relationship Event, and
-complete-user selectors on current FileStorage v2 or SQLite v10. `RebuildRequest`
+complete-user selectors on current FileStorage v2 or SQLite v11. `RebuildRequest`
 recomputes one relationship's derived projections without deleting its
 authoritative events. Both operations are backup-first. Reports carry IDs,
 counts, digests and disposition groups, never the deleted conversation or

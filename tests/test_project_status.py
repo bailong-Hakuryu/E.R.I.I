@@ -25,7 +25,7 @@ class ProjectStatusCatalogTests(unittest.TestCase):
         dashboard = (ROOT / "docs" / "PROJECT_STATUS.md").read_text(encoding="utf-8")
 
         self.assertEqual(dashboard, render_catalog(catalog))
-        self.assertEqual(catalog["program"]["phase"], "R1B")
+        self.assertEqual(catalog["program"]["phase"], "R2")
         self.assertEqual(catalog["program"]["status"], "in_progress")
         self.assertIn("Character Deliberation C0/G2", dashboard)
         self.assertIn("`placeholder`", dashboard)

@@ -106,9 +106,9 @@ Backup v1 读取边界，不放宽 live assessment 或已冻结 plan。
 
 - FileStorage `legacy → 2`（`file-storage-legacy-to-v2`）与
   `1 → 2`（`file-storage-v1-to-v2`）；
-- SQLite schema `6 → 10`（`sqlite-schema-6-to-10`）与
-  `9 → 10`（`sqlite-schema-9-to-10`）；
-- 版本目录中所有旧的可读 MemoryPack → `0.5.0a1`。
+- SQLite schema `6 → 11`（`sqlite-schema-6-to-11`）、
+  `9 → 11`（`sqlite-schema-9-to-11`）与 `10 → 11`（`sqlite-schema-10-to-11`）；
+- 版本目录中所有旧的可读 MemoryPack → `0.5.0a3`。
 
 SQLite schema `0`–`5`、`7`、`8` 可以被 inspector 识别，但当前版本没有为它们声明经过
 fixture 验证的升级路线。不要因为 assessment 返回版本号就构造 `UpgradeRequest`，
@@ -123,7 +123,7 @@ old_target = LifecycleTarget(
 )
 new_target = LifecycleTarget(
     LifecycleTargetKind.SQLITE,
-    "./upgraded/erii-schema10.db",
+    "./upgraded/erii-schema11.db",
 )
 pre_upgrade_backup = LifecycleTarget(
     LifecycleTargetKind.BACKUP,
@@ -151,7 +151,7 @@ print(report.outcome.value)
 ## MemoryPack 原子导入到全新 Storage
 
 下面的入口与 `ERIIEngine.import_memory()` 的在线合并语义不同：它在隔离 staging 中
-调用生产导入校验，并只在完整成功后发布一个全新的 FileStorage v2 或 SQLite v10。
+调用生产导入校验，并只在完整成功后发布一个全新的 FileStorage v2 或 SQLite v11。
 
 ```python
 from erii import MemoryPackImportRequest
@@ -182,7 +182,7 @@ print(report.details.to_dict())  # 只有 ID、计数与摘要，没有记忆正
 
 ## Backup-first 删除
 
-删除只适用于当前 FileStorage v2 或 SQLite v10。下面删除整段关系：
+删除只适用于当前 FileStorage v2 或 SQLite v11。下面删除整段关系：
 
 ```python
 from erii import (
@@ -330,11 +330,11 @@ local directories.
 - Backup/restore supports FileStorage, SQLite and MemoryPack. Restore is
   byte/format preserving and only publishes to a missing destination.
 - Side-by-side upgrade supports FileStorage `legacy → 2` and `1 → 2`, SQLite
-  `6 → 10` and `9 → 10`, and every declared older readable MemoryPack →
-  `0.5.0a1`. A verified backup is published first; the source remains unchanged.
+  `6 | 9 | 10 → 11`, and every declared older readable MemoryPack →
+  `0.5.0a3`. A verified backup is published first; the source remains unchanged.
   Other identifiable historical SQLite schemas are not verified upgrade routes.
 - `MemoryPackImportRequest` atomically publishes a validated pack into a fresh,
-  missing FileStorage v2 or SQLite v10. It is not a merge into an online store.
+  missing FileStorage v2 or SQLite v11. It is not a merge into an online store.
 - `EraseRequest` covers relationship, Source Turn, Relationship Event and
   complete-user scopes. `RebuildRequest` recomputes one relationship's derived
   projections. Both are backup-first.

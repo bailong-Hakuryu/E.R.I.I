@@ -76,14 +76,26 @@ def _rewrite_backup_source_view(
     manifest_path.write_bytes(_canonical_json(manifest))
 
 
-def _copy_v10_as_schema9(source: Path, target: Path) -> None:
+def _copy_v11_as_schema9(source: Path, target: Path) -> None:
     """Builds a schema-9 source from a private current staging artifact."""
     shutil.copyfile(source, target)
     with closing(sqlite3.connect(target)) as connection:
         connection.execute("BEGIN IMMEDIATE")
+        connection.execute("DROP TABLE memory_pack_write_receipts")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 11")
         connection.execute("DROP TABLE narrative_tension_links")
         connection.execute("DROP TABLE relationship_consequences")
         connection.execute("DELETE FROM schema_migrations WHERE version = 10")
+        connection.commit()
+
+
+def _copy_v11_as_schema10(source: Path, target: Path) -> None:
+    """Builds a schema-10 source from a private current staging artifact."""
+    shutil.copyfile(source, target)
+    with closing(sqlite3.connect(target)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("DROP TABLE memory_pack_write_receipts")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 11")
         connection.commit()
 
 
@@ -113,7 +125,13 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
             current_path = root / "private-current.sqlite3"
             _migrate_sqlite_staging_copy(SQLITE_SCHEMA6_SOURCE, current_path)
             path = root / "schema9.sqlite3"
-            _copy_v10_as_schema9(current_path, path)
+            _copy_v11_as_schema9(current_path, path)
+            return _target(LifecycleTargetKind.SQLITE, path), path
+        if case == "sqlite-10":
+            current_path = root / "private-current.sqlite3"
+            _migrate_sqlite_staging_copy(SQLITE_SCHEMA6_SOURCE, current_path)
+            path = root / "schema10.sqlite3"
+            _copy_v11_as_schema10(current_path, path)
             return _target(LifecycleTargetKind.SQLITE, path), path
         if case == "sqlite-empty":
             path = root / "empty.sqlite3"
@@ -261,7 +279,7 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
                 "6",
                 "9",
                 "migration_required",
-                "10",
+                "11",
                 LifecycleStatus.MIGRATION_REQUIRED,
             ),
             (
@@ -270,7 +288,16 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
                 "9",
                 "9",
                 "current",
+                "11",
+                LifecycleStatus.MIGRATION_REQUIRED,
+            ),
+            (
+                "sqlite-10",
+                LifecycleTargetKind.SQLITE,
                 "10",
+                "10",
+                "current",
+                "11",
                 LifecycleStatus.MIGRATION_REQUIRED,
             ),
             (
@@ -279,7 +306,7 @@ class HistoricalBackupCompatibilityTests(unittest.TestCase):
                 None,
                 "9",
                 "empty",
-                "10",
+                "11",
                 LifecycleStatus.EMPTY,
             ),
             (

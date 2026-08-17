@@ -38,7 +38,7 @@ class CompatibilityCatalogTests(unittest.TestCase):
         catalog = COMPATIBILITY_CATALOG
 
         self.assertEqual(catalog.package_version, "0.5.0a3")
-        self.assertEqual(catalog.sqlite.current_version, "10")
+        self.assertEqual(catalog.sqlite.current_version, "11")
         self.assertEqual(catalog.file_storage.current_version, "2")
         self.assertEqual(catalog.memory_pack.current_version, "0.5.0a3")
         self.assertEqual(catalog.lifecycle_backup.current_version, "1")
@@ -127,7 +127,7 @@ class LifecycleInspectorTests(unittest.TestCase):
             )
 
             self.assertEqual(assessment.status, LifecycleStatus.CURRENT)
-            self.assertEqual(assessment.detected_version, "10")
+            self.assertEqual(assessment.detected_version, "11")
             self.assertEqual(file_snapshot(Path(root_dir)), before)
 
             future_path = Path(root_dir) / "future.db"
@@ -137,7 +137,7 @@ class LifecycleInspectorTests(unittest.TestCase):
                     "version INTEGER PRIMARY KEY, name TEXT, applied_at TEXT)"
                 )
                 connection.execute(
-                    "INSERT INTO schema_migrations VALUES (11, 'future', 'future')"
+                    "INSERT INTO schema_migrations VALUES (12, 'future', 'future')"
                 )
                 connection.commit()
             future_before = future_path.read_bytes()

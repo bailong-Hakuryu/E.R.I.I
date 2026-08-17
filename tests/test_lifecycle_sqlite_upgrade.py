@@ -33,8 +33,8 @@ FIXTURE_ROOT = (
 )
 FIXTURE_DATABASE = FIXTURE_ROOT / "schema6.sqlite3"
 FIXTURE_METADATA = FIXTURE_ROOT / "fixture.json"
-EXPECTED_SCHEMA6_TO_V10_DIGEST = (
-    "59951a41611b4da531d996a09d96588be44b530be577071af60f18afd6d299b3"
+EXPECTED_SCHEMA6_TO_V11_DIGEST = (
+    "0430eee39ee6d95fb102e5cdca7710b51ea26b987a33906501b404009c6f02d0"
 )
 
 
@@ -48,9 +48,21 @@ def _schema_version(path: Path) -> int:
         )
 
 
-def _copy_v10_as_schema9(source: Path, target: Path) -> None:
-    """Builds a previous-current source without mutating the v10 artifact."""
+def _copy_v11_as_schema10(source: Path, target: Path) -> None:
+    """Builds the previous-current source without mutating the v11 artifact."""
     shutil.copyfile(source, target)
+    with closing(sqlite3.connect(target)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("DROP TABLE memory_pack_write_receipts")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 11")
+        connection.commit()
+    if _schema_version(target) != 10:
+        raise AssertionError("test helper failed to build a schema-10 source")
+
+
+def _copy_v11_as_schema9(source: Path, target: Path) -> None:
+    """Builds a schema-9 source without mutating the v11 artifact."""
+    _copy_v11_as_schema10(source, target)
     with closing(sqlite3.connect(target)) as connection:
         connection.execute("BEGIN IMMEDIATE")
         connection.execute("DROP TABLE narrative_tension_links")
@@ -114,14 +126,14 @@ class SQLiteHistoricalFixtureTests(unittest.TestCase):
 
 
 class SQLiteStorageMigrationBoundaryTests(unittest.TestCase):
-    def test_new_database_initializes_at_v10_and_current_database_reopens(self) -> None:
+    def test_new_database_initializes_at_v11_and_current_database_reopens(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
             path = Path(root_dir) / "new.sqlite3"
 
             created = SQLiteStorage(str(path))
-            self.assertEqual(created.schema_version, 10)
+            self.assertEqual(created.schema_version, 11)
             reopened = SQLiteStorage(str(path))
-            self.assertEqual(reopened.schema_version, 10)
+            self.assertEqual(reopened.schema_version, 11)
 
     def test_opening_schema6_fails_closed_without_touching_source(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
@@ -148,7 +160,7 @@ class SQLiteStorageMigrationBoundaryTests(unittest.TestCase):
 
 
 class SQLiteStagingUpgradeTests(unittest.TestCase):
-    def test_preview_is_zero_write_and_repeatably_identifies_v10(self) -> None:
+    def test_preview_is_zero_write_and_repeatably_identifies_v11(self) -> None:
         before = {
             item.name: (item.read_bytes(), item.stat().st_mtime_ns)
             for item in FIXTURE_ROOT.iterdir()
@@ -166,10 +178,10 @@ class SQLiteStagingUpgradeTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(first, second)
         self.assertEqual(first.source_version, 6)
-        self.assertEqual(first.target_version, 10)
+        self.assertEqual(first.target_version, 11)
         self.assertEqual(
             first.semantic_digest,
-            EXPECTED_SCHEMA6_TO_V10_DIGEST,
+            EXPECTED_SCHEMA6_TO_V11_DIGEST,
         )
 
     def test_migration_preserves_source_and_all_historical_rows(self) -> None:
@@ -182,11 +194,11 @@ class SQLiteStagingUpgradeTests(unittest.TestCase):
             result = _migrate_sqlite_staging_copy(source, target)
 
             self.assertFalse(result.already_complete)
-            self.assertEqual(result.target_version, 10)
-            self.assertEqual(_schema_version(target), 10)
+            self.assertEqual(result.target_version, 11)
+            self.assertEqual(_schema_version(target), 11)
             self.assertEqual(
                 _semantic_digest_from_path(target),
-                EXPECTED_SCHEMA6_TO_V10_DIGEST,
+                EXPECTED_SCHEMA6_TO_V11_DIGEST,
             )
             self.assertEqual(source.read_bytes(), source_before)
             self.assertEqual(_schema_version(source), 6)
@@ -236,50 +248,65 @@ class SQLiteStagingUpgradeTests(unittest.TestCase):
             )
 
             current = SQLiteStorage(str(target))
-            self.assertEqual(current.schema_version, 10)
+            self.assertEqual(current.schema_version, 11)
 
-    def test_schema9_and_schema6_routes_have_one_v10_semantic_identity(self) -> None:
+    def test_schema10_schema9_and_schema6_routes_have_one_v11_identity(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
-            direct_target = Path(root_dir) / "direct-v10.sqlite3"
+            direct_target = Path(root_dir) / "direct-v11.sqlite3"
+            schema10_source = Path(root_dir) / "schema10.sqlite3"
             schema9_source = Path(root_dir) / "schema9.sqlite3"
+            schema10_target = Path(root_dir) / "from-v10.sqlite3"
             upgraded_target = Path(root_dir) / "from-v9.sqlite3"
 
             direct = _migrate_sqlite_staging_copy(
                 FIXTURE_DATABASE,
                 direct_target,
             )
-            _copy_v10_as_schema9(direct_target, schema9_source)
+            _copy_v11_as_schema10(direct_target, schema10_source)
+            _copy_v11_as_schema9(direct_target, schema9_source)
+            schema10_before = schema10_source.read_bytes()
             schema9_before = schema9_source.read_bytes()
+            upgraded10 = _migrate_sqlite_staging_copy(
+                schema10_source,
+                schema10_target,
+            )
             upgraded = _migrate_sqlite_staging_copy(
                 schema9_source,
                 upgraded_target,
             )
 
             self.assertEqual(direct.source_version, 6)
+            self.assertEqual(upgraded10.source_version, 10)
             self.assertEqual(upgraded.source_version, 9)
-            self.assertEqual(upgraded.target_version, 10)
+            self.assertEqual(upgraded.target_version, 11)
+            self.assertEqual(direct.semantic_digest, upgraded10.semantic_digest)
             self.assertEqual(direct.semantic_digest, upgraded.semantic_digest)
-            self.assertEqual(upgraded.semantic_digest, EXPECTED_SCHEMA6_TO_V10_DIGEST)
+            self.assertEqual(upgraded.semantic_digest, EXPECTED_SCHEMA6_TO_V11_DIGEST)
+            self.assertEqual(schema10_source.read_bytes(), schema10_before)
             self.assertEqual(schema9_source.read_bytes(), schema9_before)
+            self.assertEqual(_schema_version(schema10_source), 10)
             self.assertEqual(_schema_version(schema9_source), 9)
 
-    def test_v10_migration_failure_rolls_back_v6_and_v9_transactions(self) -> None:
+    def test_v11_migration_failure_rolls_back_all_supported_transactions(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
-            v10_path = Path(root_dir) / "current.sqlite3"
+            v11_path = Path(root_dir) / "current.sqlite3"
+            v10_path = Path(root_dir) / "schema10.sqlite3"
             v9_path = Path(root_dir) / "schema9.sqlite3"
-            _migrate_sqlite_staging_copy(FIXTURE_DATABASE, v10_path)
-            _copy_v10_as_schema9(v10_path, v9_path)
+            _migrate_sqlite_staging_copy(FIXTURE_DATABASE, v11_path)
+            _copy_v11_as_schema10(v11_path, v10_path)
+            _copy_v11_as_schema9(v11_path, v9_path)
             original_migration = (
-                SQLiteStorage._migrate_relationship_consequence_v10
+                SQLiteStorage._migrate_memory_pack_write_receipts_v11
             )
 
             def fail_after_schema(cursor: sqlite3.Cursor) -> None:
                 original_migration(cursor)
-                raise RuntimeError("injected v10 migration failure")
+                raise RuntimeError("injected v11 migration failure")
 
             for source_path, source_version in (
                 (FIXTURE_DATABASE, 6),
                 (v9_path, 9),
+                (v10_path, 10),
             ):
                 with self.subTest(source_version=source_version):
                     uri = (
@@ -292,12 +319,12 @@ class SQLiteStagingUpgradeTests(unittest.TestCase):
                             source_connection.backup(connection)
                             with mock.patch.object(
                                 SQLiteStorage,
-                                "_migrate_relationship_consequence_v10",
+                                "_migrate_memory_pack_write_receipts_v11",
                                 side_effect=fail_after_schema,
                             ):
                                 with self.assertRaisesRegex(
                                     RuntimeError,
-                                    "injected v10",
+                                    "injected v11",
                                 ):
                                     _migrate_loaded_connection(connection)
 
@@ -314,11 +341,7 @@ class SQLiteStagingUpgradeTests(unittest.TestCase):
                                 )
                             }
                             self.assertEqual(version, source_version)
-                            self.assertNotIn(
-                                "relationship_consequences",
-                                tables,
-                            )
-                            self.assertNotIn("narrative_tension_links", tables)
+                            self.assertNotIn("memory_pack_write_receipts", tables)
 
     def test_v10_validation_rejects_an_incomplete_journal_schema(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
@@ -392,7 +415,7 @@ class SQLiteStagingUpgradeTests(unittest.TestCase):
 
             with self.assertRaisesRegex(
                 LifecyclePlanError,
-                "schema 6 or 9 sources to schema 10",
+                "schema 6, 9, or 10 sources to schema 11",
             ):
                 _preview_sqlite_staging_upgrade(current)
 

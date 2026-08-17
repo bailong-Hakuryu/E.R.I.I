@@ -63,6 +63,9 @@ version = {attr = "erii._version.__version__"}
 include = ["erii*"]
 exclude = ["tests*", "examples*", "example_memory*", "example_custom_llm_memory*"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

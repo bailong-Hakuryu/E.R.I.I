@@ -82,7 +82,10 @@ from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.archival import ArchivalTombstoneValidationSource
 from erii.storage.base import BaseStorage, cross_process_file_lock
 from erii.storage.errors import StorageIntegrityError
-from erii.storage.memory_pack import AtomicMemoryPackWriteStoreV1
+from erii.storage.memory_pack import (
+    AtomicMemoryPackWriteStoreV1,
+    AtomicMemoryPackWriteStoreV2,
+)
 from erii.storage.timeline_order import timeline_timestamp_sort_key
 from erii.storage.turn_context import (
     TurnContextSourceSnapshot,
@@ -207,6 +210,219 @@ class SQLiteStorage(BaseStorage):
         if getattr(self._memory_pack_write_local, "connection", None) is not None:
             return None
         return self
+
+    def atomic_memory_pack_write_store_v2(
+        self,
+    ) -> Optional[AtomicMemoryPackWriteStoreV2]:
+        """Returns the SQLite receipt-backed whole-pack capability."""
+        if getattr(self._memory_pack_write_local, "connection", None) is not None:
+            return None
+        return self
+
+    @staticmethod
+    def _require_memory_pack_operation_id(operation_id: str) -> str:
+        if not (
+            isinstance(operation_id, str)
+            and len(operation_id) == 64
+            and all(character in "0123456789abcdef" for character in operation_id)
+        ):
+            raise ValueError("MemoryPack operation_id must be a SHA-256 digest")
+        return operation_id
+
+    @staticmethod
+    def _memory_pack_receipt_result(
+        connection: sqlite3.Connection,
+        operation_id: str,
+        target_agent: str,
+        target_user: str,
+        relationship_id: Optional[str],
+    ) -> Optional[str]:
+        row = connection.execute(
+            """
+            SELECT receipt_version, target_agent, target_user,
+                   relationship_id, result_json
+            FROM memory_pack_write_receipts
+            WHERE operation_id = ?
+            """,
+            (operation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if int(row["receipt_version"]) != 1:
+            raise StorageIntegrityError(
+                "unsupported MemoryPack write receipt version"
+            )
+        stored_relationship_id = (
+            str(row["relationship_id"])
+            if row["relationship_id"] is not None
+            else None
+        )
+        if (
+            str(row["target_agent"]) != target_agent
+            or str(row["target_user"]) != target_user
+            or stored_relationship_id != relationship_id
+        ):
+            raise StorageIntegrityError("MemoryPack write receipt scope is invalid")
+        result_json = row["result_json"]
+        if not isinstance(result_json, str):
+            raise StorageIntegrityError("MemoryPack write receipt result is invalid")
+        return result_json
+
+    def load_memory_pack_write_result(
+        self,
+        operation_id: str,
+        target_agent: str,
+        target_user: str,
+        relationship_id: Optional[str],
+        deserialize_result: Callable[[str], _MemoryPackResultT],
+    ) -> Optional[_MemoryPackResultT]:
+        """Loads one committed result before target-state preflight is repeated."""
+        clean_operation_id = self._require_memory_pack_operation_id(operation_id)
+        clean_agent = SecuritySanitizer.validate_key(target_agent, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(target_user, "user_id")
+        with closing(self._open_connection()) as connection:
+            result_json = self._memory_pack_receipt_result(
+                connection,
+                clean_operation_id,
+                clean_agent,
+                clean_user,
+                relationship_id,
+            )
+        if result_json is None:
+            return None
+        return deserialize_result(result_json)
+
+    def execute_memory_pack_write_v2(
+        self,
+        operation_id: str,
+        target_agent: str,
+        target_user: str,
+        relationship_id: Optional[str],
+        operation: Callable[[Any], _MemoryPackResultT],
+        serialize_result: Callable[[_MemoryPackResultT], str],
+        deserialize_result: Callable[[str], _MemoryPackResultT],
+        *,
+        lock_relationship_id: Optional[str],
+    ) -> _MemoryPackResultT:
+        """Commits one payload and its v1 result receipt in the same transaction."""
+        if getattr(self._memory_pack_write_local, "connection", None) is not None:
+            raise RuntimeError("nested MemoryPack write transactions are invalid")
+        clean_operation_id = self._require_memory_pack_operation_id(operation_id)
+        clean_agent = SecuritySanitizer.validate_key(target_agent, "agent_id")
+        clean_user = SecuritySanitizer.validate_key(target_user, "user_id")
+        lock_key = os.path.realpath(os.path.abspath(self.db_path))
+        lock_keys = [
+            ("__memory_pack_write__", lock_key),
+            (clean_agent, clean_user),
+        ]
+        if lock_relationship_id is not None:
+            lock_keys.extend(
+                (
+                    ("__turn_records__", lock_relationship_id),
+                    ("__relationship_events__", lock_relationship_id),
+                    ("__relationship_adjudication__", lock_relationship_id),
+                    ("__relationship_history__", lock_relationship_id),
+                    ("__persona_growth__", lock_relationship_id),
+                )
+            )
+
+        with ExitStack() as lock_stack:
+            for first_key, second_key in lock_keys:
+                lock_stack.enter_context(
+                    self.lock_manager.lock(first_key, second_key)
+                )
+            with closing(self._open_connection()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                existing_result = self._memory_pack_receipt_result(
+                    connection,
+                    clean_operation_id,
+                    clean_agent,
+                    clean_user,
+                    relationship_id,
+                )
+                if existing_result is not None:
+                    connection.rollback()
+                    return deserialize_result(existing_result)
+
+                self._memory_pack_write_local.connection = (
+                    _SQLiteMemoryPackTransactionConnection(connection)
+                )
+                try:
+                    try:
+                        result = operation(self)
+                        result_json = serialize_result(result)
+                        if not isinstance(result_json, str):
+                            raise TypeError(
+                                "MemoryPack result serializer must return JSON text"
+                            )
+                        json.loads(result_json)
+                        connection.execute(
+                            """
+                            INSERT INTO memory_pack_write_receipts (
+                                operation_id, receipt_version, target_agent,
+                                target_user, relationship_id, result_json,
+                                committed_at
+                            ) VALUES (?, 1, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                clean_operation_id,
+                                clean_agent,
+                                clean_user,
+                                relationship_id,
+                                result_json,
+                                utc_now(),
+                            ),
+                        )
+                    except BaseException:
+                        connection.rollback()
+                        raise
+
+                    try:
+                        connection.commit()
+                    except BaseException as commit_error:
+                        try:
+                            transaction_is_active = connection.in_transaction
+                        except BaseException:
+                            transaction_is_active = False
+                        if transaction_is_active:
+                            try:
+                                connection.rollback()
+                            except BaseException as rollback_error:
+                                raise commit_error from rollback_error
+                            raise
+                        try:
+                            committed_result = self._memory_pack_receipt_result(
+                                connection,
+                                clean_operation_id,
+                                clean_agent,
+                                clean_user,
+                                relationship_id,
+                            )
+                        except BaseException:
+                            committed_result = None
+                        if committed_result is None:
+                            try:
+                                with closing(self._open_connection()) as recovery:
+                                    committed_result = self._memory_pack_receipt_result(
+                                        recovery,
+                                        clean_operation_id,
+                                        clean_agent,
+                                        clean_user,
+                                        relationship_id,
+                                    )
+                            except BaseException as recovery_error:
+                                if hasattr(commit_error, "add_note"):
+                                    commit_error.add_note(
+                                        "SQLite MemoryPack receipt recovery could "
+                                        "not read the main database"
+                                    )
+                                raise commit_error from recovery_error
+                        if committed_result is None:
+                            raise commit_error
+                        return deserialize_result(committed_result)
+                    return result
+                finally:
+                    del self._memory_pack_write_local.connection
 
     def execute_memory_pack_write(
         self,
@@ -634,6 +850,13 @@ class SQLiteStorage(BaseStorage):
                     "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
                     (10, "relationship-consequence-journal-alpha1", utc_now()),
                 )
+                current_version = 10
+            if current_version < 11:
+                self._migrate_memory_pack_write_receipts_v11(cursor)
+                cursor.execute(
+                    "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                    (11, "memory-pack-write-receipts-v1", utc_now()),
+                )
             conn.commit()
 
     @staticmethod
@@ -650,6 +873,7 @@ class SQLiteStorage(BaseStorage):
             )
             """
         )
+
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS relationships (
@@ -1166,6 +1390,33 @@ class SQLiteStorage(BaseStorage):
             """
             CREATE INDEX IF NOT EXISTS idx_narrative_tension_links_consequence
             ON narrative_tension_links(consequence_id, sequence)
+            """
+        )
+
+    @staticmethod
+    def _migrate_memory_pack_write_receipts_v11(
+        cursor: sqlite3.Cursor,
+    ) -> None:
+        """Adds content-free exactly-once receipts for whole-pack writes."""
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_pack_write_receipts (
+                operation_id TEXT PRIMARY KEY,
+                receipt_version INTEGER NOT NULL CHECK (receipt_version = 1),
+                target_agent TEXT NOT NULL,
+                target_user TEXT NOT NULL,
+                relationship_id TEXT,
+                result_json JSON NOT NULL,
+                committed_at TEXT NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_memory_pack_write_receipts_scope
+            ON memory_pack_write_receipts(
+                target_agent, target_user, relationship_id
+            )
             """
         )
 

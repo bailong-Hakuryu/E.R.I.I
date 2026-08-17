@@ -1,14 +1,14 @@
 {
   "schema_version": "erii-project-status/v1",
-  "as_of": "2026-08-17",
+  "as_of": "2026-08-18",
   "source_version": "0.5.0a3",
   "baseline_commit": "94a61d5c1b77b5aa8871521aa53b0dba58dedf38",
   "program": {
-    "phase": "R1B",
+    "phase": "R2",
     "status": "in_progress",
     "window_start": "2026-08-13",
-    "window_end": "2026-09-13",
-    "next_gate": "Finish the remaining R1B exit gates before R2: add a versioned main-database operation receipt for exactly-once SQLite commit-error recovery, and re-establish an enforcing performance comparison on a stable same-environment baseline."
+    "window_end": "2026-09-27",
+    "next_gate": "Complete the R2 Lifecycle Contracts, Inspection, and Planning extraction on one authoritative implementation, then pass public/historical compatibility, Windows, and the enforced same-environment performance gate before R3."
   },
   "modules": [
     {
@@ -31,9 +31,9 @@
       "paths": ["erii/engine.py", "erii/_engine", "erii/__init__.py"],
       "public_interface": "golden",
       "persistence_impact": "orchestrates-current-formats",
-      "ci": ["python-matrix", "windows-smoke", "contract-snapshots"],
-      "summary": "Primary host facade plus private MemoryPack analysis, export assembly, snapshot-bound transfer planning, and a preflighted executor whose existing-target non-compilation payload is exception-atomic on built-in Storage adapters; SQLite post-commit errors are surfaced as indeterminate rather than reported as success, while target orchestration and Persona Compilation stay in the facade.",
-      "next_gate": "Version a main-database operation receipt for exactly-once SQLite commit-error recovery; target creation, Persona Compilation and profile binding are already inside the atomic public-import execution contract."
+      "ci": ["python-matrix", "windows-smoke", "contract-snapshots", "refactoring-benchmark"],
+      "summary": "Primary host facade plus private MemoryPack analysis, export assembly, snapshot-bound transfer planning, and whole-import execution. SQLite schema 11 commits a versioned content-free operation receipt with the payload, so post-commit errors and identical retries resolve exactly once without replay; FileStorage retains restart-safe before-image journaling.",
+      "next_gate": "Keep the R1B transfer boundary frozen while R2 extracts Lifecycle read paths; do not move Engine workflows again before the R3 checkpoint."
     },
     {
       "id": "storage-lifecycle",
@@ -50,8 +50,8 @@
       ],
       "public_interface": "golden",
       "persistence_impact": "owns-current-formats",
-      "ci": ["python-matrix", "windows-smoke", "contract-snapshots", "longitudinal"],
-      "summary": "FileStorage v2 with recoverable flat-format MemoryPack payload journaling, SQLite schema 10 with single-transaction payload execution, MemoryPack 0.5.0a3, backup, restore, upgrade, import, erasure, and rebuild.",
+      "ci": ["python-matrix", "windows-smoke", "contract-snapshots", "longitudinal", "refactoring-benchmark"],
+      "summary": "FileStorage v2 with recoverable flat-format MemoryPack payload journaling, SQLite schema 11 with receipt-backed exactly-once MemoryPack execution, MemoryPack 0.5.0a3, backup, restore, upgrade, import, erasure, and rebuild.",
       "next_gate": "Complete R2/R3 internal extraction while preserving every declared reader and atomicity invariant."
     },
     {

@@ -7,7 +7,7 @@ plan types, ensuring strict JSON compatibility with historical plan formats.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Any
+from typing import TYPE_CHECKING, Dict
 
 from erii._lifecycle.plan_codec import is_sha256
 from erii.compatibility import FormatCompatibility, require_supported_version
@@ -22,8 +22,6 @@ if TYPE_CHECKING:
         LifecyclePlan,
         LifecycleOperation,
         LifecyclePlanSelector,
-        LifecycleTargetKind,
-        LifecycleStatus,
     )
 
 __all__ = [
@@ -52,7 +50,7 @@ def target_to_dict(target: LifecycleTarget) -> Dict[str, object]:
 def target_from_dict(value: object) -> LifecycleTarget:
     """Deserialize LifecycleTarget from dict."""
     from erii.data_lifecycle import LifecycleTarget, LifecycleTargetKind
-    
+
     if not isinstance(value, dict) or set(value) != {"kind", "path"}:
         raise LifecyclePlanError("lifecycle target fields are invalid")
     return LifecycleTarget(
@@ -78,7 +76,7 @@ def assessment_to_dict(assessment: LifecycleAssessment) -> Dict[str, object]:
 def assessment_from_dict(value: object) -> LifecycleAssessment:
     """Deserialize LifecycleAssessment from dict."""
     from erii.data_lifecycle import LifecycleAssessment, LifecycleStatus
-    
+
     fields = {
         "target",
         "status",
@@ -132,7 +130,7 @@ def content_from_dict(value: object) -> LifecycleContentIdentity:
         LifecycleStatus,
         LifecycleTargetKind,
     )
-    
+
     fields = {
         "kind",
         "status",
@@ -164,19 +162,14 @@ def content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
     producer views are validated against their exact old readable sets, then
     reclassified against the current catalog.
     """
-    from erii.compatibility import (
-        FILE_STORAGE_FORMAT,
-        MEMORY_PACK_FORMAT,
-        SQLITE_FORMAT,
-    )
     from erii.data_lifecycle import (
-        LifecycleContentIdentity,
         LifecycleStatus,
         LifecycleTargetKind,
+        _compatibility_for_kind,
     )
-    
+
     # Historical producer format catalogs for Backup-v1 compatibility
-    _BACKUP_V1_HISTORICAL_PRODUCER_FORMATS: dict = {
+    historical_producer_formats = {
         (LifecycleTargetKind.FILE_STORAGE, "1"): FormatCompatibility(
             format_id="erii.file-storage",
             current_version="1",
@@ -186,6 +179,11 @@ def content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
             format_id="erii.sqlite",
             current_version="9",
             readable_versions=tuple(str(version) for version in range(10)),
+        ),
+        (LifecycleTargetKind.SQLITE, "10"): FormatCompatibility(
+            format_id="erii.sqlite",
+            current_version="10",
+            readable_versions=tuple(str(version) for version in range(11)),
         ),
         (LifecycleTargetKind.MEMORY_PACK, "0.4.0a8"): FormatCompatibility(
             format_id="erii.memory-pack",
@@ -203,8 +201,46 @@ def content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
                 "0.4.0a8",
             ),
         ),
+        # Historical 0.5.0a1 source and the published 0.5.0a2 package artifact
+        # both wrote MemoryPack 0.5.0a1 into Backup-v1 source identities. Public
+        # post-tag a2 source checkouts also briefly wrote 0.5.0a2.
+        (LifecycleTargetKind.MEMORY_PACK, "0.5.0a1"): FormatCompatibility(
+            format_id="erii.memory-pack",
+            current_version="0.5.0a1",
+            readable_versions=(
+                "0.1.0",
+                "0.2.0",
+                "0.4.0",
+                "0.4.0a2",
+                "0.4.0a3",
+                "0.4.0a4",
+                "0.4.0a5",
+                "0.4.0a6",
+                "0.4.0a7",
+                "0.4.0a8",
+                "0.5.0a1",
+            ),
+        ),
+        (LifecycleTargetKind.MEMORY_PACK, "0.5.0a2"): FormatCompatibility(
+            format_id="erii.memory-pack",
+            current_version="0.5.0a2",
+            readable_versions=(
+                "0.1.0",
+                "0.2.0",
+                "0.4.0",
+                "0.4.0a2",
+                "0.4.0a3",
+                "0.4.0a4",
+                "0.4.0a5",
+                "0.4.0a6",
+                "0.4.0a7",
+                "0.4.0a8",
+                "0.5.0a1",
+                "0.5.0a2",
+            ),
+        ),
     }
-    
+
     if not isinstance(value, dict):
         return content_from_dict(value)
     try:
@@ -213,7 +249,7 @@ def content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
         return content_from_dict(value)
     producer_current = value.get("current_version")
     historical = (
-        _BACKUP_V1_HISTORICAL_PRODUCER_FORMATS.get((kind, producer_current))
+        historical_producer_formats.get((kind, producer_current))
         if isinstance(producer_current, str)
         else None
     )
@@ -223,35 +259,34 @@ def content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
         or value.get("current_version") != historical.current_version
     ):
         return content_from_dict(value)
-    
-    detected_version = value.get("detected_version")
-    if detected_version not in historical.readable_versions:
-        return content_from_dict(value)
-    
-    # Get current catalog and reclassify status
-    from erii.data_lifecycle import _compatibility_for_kind
-    current_catalog = _compatibility_for_kind(kind)
-    
-    # Determine normalized status
-    if detected_version is None:
-        normalized_status = LifecycleStatus.EMPTY
-    else:
-        detected = require_supported_version(current_catalog, detected_version)
-        normalized_status = (
+
+    def status_for_catalog(
+        compatibility: FormatCompatibility,
+        detected_version: object,
+    ) -> LifecycleStatus:
+        if detected_version is None:
+            return LifecycleStatus.EMPTY
+        detected = require_supported_version(compatibility, detected_version)
+        return (
             LifecycleStatus.CURRENT
-            if detected == current_catalog.current_version
+            if detected == compatibility.current_version
             else LifecycleStatus.MIGRATION_REQUIRED
         )
-    
-    return LifecycleContentIdentity(
-        kind=kind,
-        status=normalized_status,
-        format_id=current_catalog.format_id,
-        detected_version=detected_version,
-        current_version=current_catalog.current_version,
-        fingerprint=value.get("fingerprint"),
-        file_count=value.get("file_count", 0),
-    )
+
+    producer_status = status_for_catalog(historical, value.get("detected_version"))
+    if value.get("status") != producer_status.value:
+        raise LifecyclePlanError(
+            "backup source status does not match its historical producer catalog"
+        )
+
+    current = _compatibility_for_kind(kind)
+    normalized = dict(value)
+    normalized["status"] = status_for_catalog(
+        current,
+        value.get("detected_version"),
+    ).value
+    normalized["current_version"] = current.current_version
+    return content_from_dict(normalized)
 
 
 def directory_identity_to_dict(
@@ -268,7 +303,7 @@ def directory_identity_to_dict(
 def directory_identity_from_dict(value: object) -> LifecycleDirectoryIdentity:
     """Deserialize LifecycleDirectoryIdentity from dict."""
     from erii.data_lifecycle import LifecycleDirectoryIdentity
-    
+
     if not isinstance(value, dict) or set(value) != {"resolved_path", "device", "inode"}:
         raise LifecyclePlanError("lifecycle directory identity fields are invalid")
     device = value["device"]
@@ -293,7 +328,7 @@ def selector_to_dict(
     """Convert lifecycle plan selector to JSON-serializable dict."""
     from erii.lifecycle_erasure_contracts import ErasureSelector
     from erii.data_lifecycle import MemoryPackImportOptions
-    
+
     if selector is None:
         return None
     if isinstance(selector, ErasureSelector):
@@ -313,7 +348,7 @@ def selector_from_dict(
     """Deserialize lifecycle plan selector from dict."""
     from erii.lifecycle_erasure_contracts import ErasureSelector
     from erii.data_lifecycle import LifecycleOperation, MemoryPackImportOptions
-    
+
     if value is None:
         return None
     if operation in {LifecycleOperation.ERASE, LifecycleOperation.REBUILD}:
@@ -373,6 +408,3 @@ def plan_body_dict(plan: LifecyclePlan) -> Dict[str, object]:
 def plan_document_dict(plan: LifecyclePlan) -> Dict[str, object]:
     """Convert complete plan document to dict."""
     return {**plan_body_dict(plan), "plan_digest": plan.plan_digest}
-
-
-

@@ -15,6 +15,10 @@ from benchmarks.run_refactoring_baseline import (
     render_comparison,
     run,
 )
+from scripts.run_refactoring_performance_gate import (
+    evaluate_performance_gate,
+    render_performance_gate,
+)
 
 
 BASELINE_PATH = Path(__file__).parents[1] / "benchmarks" / "baselines" / "v0.5.0a3-refactoring-r0.json"
@@ -96,6 +100,29 @@ class RefactoringBaselineTests(unittest.TestCase):
         self.assertIn("Baseline unstable", rendered)
         self.assertIn("gate inconclusive", rendered)
 
+    def test_file_import_durability_budget_is_explicit_and_enforced(self) -> None:
+        baseline = self._baseline()
+        current = deepcopy(baseline)
+        metric = current["metrics"]["memory_pack_import_file_to_file_ms"]
+        metric["median_ms"] = (
+            baseline["metrics"]["memory_pack_import_file_to_file_ms"]["median_ms"]
+            * 1.50
+        )
+
+        accepted = compare_reports(current, baseline)
+        self.assertEqual(accepted.blocking_regressions, ())
+        self.assertIn("WITHIN DURABILITY BUDGET", render_comparison(accepted))
+
+        metric["median_ms"] = (
+            baseline["metrics"]["memory_pack_import_file_to_file_ms"]["median_ms"]
+            * 1.60
+        )
+        rejected = compare_reports(current, baseline)
+        self.assertEqual(
+            [item.name for item in rejected.blocking_regressions],
+            ["memory_pack_import_file_to_file_ms"],
+        )
+
     def test_compare_reports_skips_different_python_or_platform(self) -> None:
         baseline = self._baseline()
         current = deepcopy(baseline)
@@ -149,6 +176,29 @@ class RefactoringBaselineTests(unittest.TestCase):
             ):
                 result = main(["--compare", str(path), "--iterations", "5"])
         self.assertEqual(result, 0)
+
+    def test_same_environment_gate_enforces_comparability_and_stability(self) -> None:
+        baseline = self._baseline()
+        current = deepcopy(baseline)
+
+        passed = evaluate_performance_gate(current, baseline)
+        self.assertTrue(passed.passed)
+        self.assertIn("gate passed", render_performance_gate(passed))
+
+        current["environment"]["python"] = "3.14.7"
+        incompatible = evaluate_performance_gate(current, baseline)
+        self.assertFalse(incompatible.passed)
+        self.assertIn("not comparable", render_performance_gate(incompatible))
+
+        current = deepcopy(baseline)
+        metric = current["metrics"]["memory_pack_export_file_ms"]
+        metric["samples_ms"] = [
+            metric["median_ms"] * 0.8,
+            metric["median_ms"] * 1.2,
+        ]
+        unstable = evaluate_performance_gate(current, baseline)
+        self.assertFalse(unstable.passed)
+        self.assertIn("unstable same-environment current", render_performance_gate(unstable))
 
 
 if __name__ == "__main__":

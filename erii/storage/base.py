@@ -42,7 +42,10 @@ from erii.storage.archival import (
     ArchivalTombstoneValidationSource,
     AtomicArchivalStoreV1,
 )
-from erii.storage.memory_pack import AtomicMemoryPackWriteStoreV1
+from erii.storage.memory_pack import (
+    AtomicMemoryPackWriteStoreV1,
+    AtomicMemoryPackWriteStoreV2,
+)
 from erii.storage.turn_context import TurnContextSourceSnapshot
 
 
@@ -568,6 +571,12 @@ class BaseStorage(ABC):
         self,
     ) -> Optional[AtomicMemoryPackWriteStoreV1]:
         """Returns the optional whole-pack payload transaction capability."""
+        return None
+
+    def atomic_memory_pack_write_store_v2(
+        self,
+    ) -> Optional[AtomicMemoryPackWriteStoreV2]:
+        """Returns optional receipt-backed whole-pack execution."""
         return None
 
     def create_relationship_processing_run(

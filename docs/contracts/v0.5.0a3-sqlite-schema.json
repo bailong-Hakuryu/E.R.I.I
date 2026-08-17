@@ -1,7 +1,7 @@
 {
   "snapshot_release": "0.5.0a3",
   "sqlite": {
-    "current_schema_version": 10,
+    "current_schema_version": 11,
     "format_id": "erii.sqlite",
     "migrations": [
       {
@@ -43,9 +43,13 @@
       {
         "name": "relationship-consequence-journal-alpha1",
         "version": 10
+      },
+      {
+        "name": "memory-pack-write-receipts-v1",
+        "version": 11
       }
     ],
-    "schema_object_count": 43,
+    "schema_object_count": 45,
     "sqlite_master": [
       {
         "name": "idx_agent_user",
@@ -63,6 +67,12 @@
         "name": "idx_archival_tombstone_relationship",
         "sql": "CREATE INDEX idx_archival_tombstone_relationship ON archival_tombstones(relationship_id, terminal_at)",
         "table": "archival_tombstones",
+        "type": "index"
+      },
+      {
+        "name": "idx_memory_pack_write_receipts_scope",
+        "sql": "CREATE INDEX idx_memory_pack_write_receipts_scope ON memory_pack_write_receipts( target_agent, target_user, relationship_id )",
+        "table": "memory_pack_write_receipts",
         "type": "index"
       },
       {
@@ -201,6 +211,12 @@
         "name": "memory_nodes",
         "sql": "CREATE TABLE memory_nodes ( node_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, user_id TEXT NOT NULL, data JSON NOT NULL )",
         "table": "memory_nodes",
+        "type": "table"
+      },
+      {
+        "name": "memory_pack_write_receipts",
+        "sql": "CREATE TABLE memory_pack_write_receipts ( operation_id TEXT PRIMARY KEY, receipt_version INTEGER NOT NULL CHECK (receipt_version = 1), target_agent TEXT NOT NULL, target_user TEXT NOT NULL, relationship_id TEXT, result_json JSON NOT NULL, committed_at TEXT NOT NULL )",
+        "table": "memory_pack_write_receipts",
         "type": "table"
       },
       {

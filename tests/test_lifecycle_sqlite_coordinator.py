@@ -37,9 +37,19 @@ FIXTURE_DATABASE = (
 )
 
 
-def _copy_v10_as_schema9(source: Path, target: Path) -> None:
-    """Builds a schema-9 source from a private current staging artifact."""
+def _copy_v11_as_schema10(source: Path, target: Path) -> None:
+    """Builds a schema-10 source from a private current staging artifact."""
     shutil.copyfile(source, target)
+    with closing(sqlite3.connect(target)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("DROP TABLE memory_pack_write_receipts")
+        connection.execute("DELETE FROM schema_migrations WHERE version = 11")
+        connection.commit()
+
+
+def _copy_v11_as_schema9(source: Path, target: Path) -> None:
+    """Builds a schema-9 source from a private current staging artifact."""
+    _copy_v11_as_schema10(source, target)
     with closing(sqlite3.connect(target)) as connection:
         connection.execute("BEGIN IMMEDIATE")
         connection.execute("DROP TABLE narrative_tension_links")
@@ -70,16 +80,20 @@ class LifecycleSQLiteCoordinatorTests(unittest.TestCase):
         elif source_version == 9:
             current_path = root / "private-current.sqlite3"
             _migrate_sqlite_staging_copy(FIXTURE_DATABASE, current_path)
-            _copy_v10_as_schema9(current_path, source_path)
+            _copy_v11_as_schema9(current_path, source_path)
+        elif source_version == 10:
+            current_path = root / "private-current.sqlite3"
+            _migrate_sqlite_staging_copy(FIXTURE_DATABASE, current_path)
+            _copy_v11_as_schema10(current_path, source_path)
         else:
-            raise AssertionError("coordinator fixture supports only schema 6 or 9")
+            raise AssertionError("coordinator fixture supports schema 6, 9, or 10")
         lifecycle = DataLifecycleCoordinator()
         source = lifecycle.inspect(
             self._target(LifecycleTargetKind.SQLITE, source_path)
         )
         destination = self._target(
             LifecycleTargetKind.SQLITE,
-            root / "upgraded-schema10.sqlite3",
+            root / "upgraded-schema11.sqlite3",
         )
         backup = self._target(
             LifecycleTargetKind.BACKUP,
@@ -103,17 +117,17 @@ class LifecycleSQLiteCoordinatorTests(unittest.TestCase):
             second = lifecycle.plan(request)
 
             self.assertEqual(first, second)
-            self.assertEqual(first.strategy_id, "sqlite-schema-6-to-10")
+            self.assertEqual(first.strategy_id, "sqlite-schema-6-to-11")
             self.assertEqual(first.source.status, LifecycleStatus.MIGRATION_REQUIRED)
             self.assertEqual(first.source.detected_version, "6")
             self.assertEqual(first.content.status, LifecycleStatus.CURRENT)
-            self.assertEqual(first.content.detected_version, "10")
+            self.assertEqual(first.content.detected_version, "11")
             self.assertEqual(first.content.fingerprint, second.content.fingerprint)
             self.assertEqual(source_path.read_bytes(), source_bytes)
             self.assertFalse(Path(destination.path).exists())
             self.assertFalse(Path(backup.path).exists())
 
-    def test_execute_preserves_source_and_publishes_backup_before_schema10(self) -> None:
+    def test_execute_preserves_source_and_publishes_backup_before_schema11(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
             root = Path(root_dir)
             lifecycle, request, source_path, destination, backup = self._request(root)
@@ -129,7 +143,7 @@ class LifecycleSQLiteCoordinatorTests(unittest.TestCase):
                 plan.content.fingerprint,
             )
             current = SQLiteStorage(destination.path)
-            self.assertEqual(current.schema_version, 10)
+            self.assertEqual(current.schema_version, 11)
             with closing(sqlite3.connect(destination.path)) as connection:
                 self.assertEqual(
                     connection.execute("SELECT COUNT(*) FROM relationships").fetchone()[0],
@@ -155,7 +169,7 @@ class LifecycleSQLiteCoordinatorTests(unittest.TestCase):
             retried = DataLifecycleCoordinator().execute(plan)
             self.assertEqual(retried.outcome, LifecycleOutcome.ALREADY_COMPLETE)
 
-    def test_schema9_to_10_reuses_staging_migration_and_publishes_backup_first(
+    def test_schema9_to_11_reuses_staging_migration_and_publishes_backup_first(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
@@ -182,7 +196,7 @@ class LifecycleSQLiteCoordinatorTests(unittest.TestCase):
 
             self.assertEqual(request.source.detected_version, "9")
             self.assertEqual(request.source.status, LifecycleStatus.MIGRATION_REQUIRED)
-            self.assertEqual(plan.strategy_id, "sqlite-schema-9-to-10")
+            self.assertEqual(plan.strategy_id, "sqlite-schema-9-to-11")
 
             with mock.patch.object(
                 lifecycle_module,
@@ -199,12 +213,34 @@ class LifecycleSQLiteCoordinatorTests(unittest.TestCase):
             )
             upgraded = lifecycle.inspect(destination)
             self.assertEqual(upgraded.status, LifecycleStatus.CURRENT)
-            self.assertEqual(upgraded.detected_version, "10")
+            self.assertEqual(upgraded.detected_version, "11")
             self.assertEqual(upgraded.fingerprint, plan.content.fingerprint)
             self.assertEqual(
                 (Path(backup.path) / "payload" / "database.sqlite3").read_bytes(),
                 source_bytes,
             )
+
+    def test_schema10_to_11_installs_the_receipt_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as root_dir:
+            root = Path(root_dir)
+            lifecycle, request, _source_path, destination, _backup = self._request(
+                root,
+                source_version=10,
+            )
+
+            plan = lifecycle.plan(request)
+            self.assertEqual(plan.strategy_id, "sqlite-schema-10-to-11")
+            report = lifecycle.execute(plan)
+
+            self.assertEqual(report.outcome, LifecycleOutcome.APPLIED)
+            with closing(sqlite3.connect(destination.path)) as connection:
+                table = connection.execute(
+                    """
+                    SELECT name FROM sqlite_schema
+                    WHERE type = 'table' AND name = 'memory_pack_write_receipts'
+                    """
+                ).fetchone()
+            self.assertEqual(table, ("memory_pack_write_receipts",))
 
     def test_target_publish_failure_keeps_verified_backup_for_exact_retry(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
@@ -247,7 +283,7 @@ class LifecycleSQLiteCoordinatorTests(unittest.TestCase):
                 },
                 backup_before_retry,
             )
-            self.assertEqual(SQLiteStorage(destination.path).schema_version, 10)
+            self.assertEqual(SQLiteStorage(destination.path).schema_version, 11)
 
 
 if __name__ == "__main__":

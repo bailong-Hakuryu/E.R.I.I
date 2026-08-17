@@ -2,7 +2,7 @@
 
 > 当前源码：`0.5.0a3` Alpha
 > Python：3.11–3.14
-> SQLite：schema 10
+> SQLite：schema 11
 > FileStorage：format 2
 > MemoryPack writer：`0.5.0a3`
 

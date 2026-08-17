@@ -391,39 +391,33 @@ R1B versioned payload transaction capability 实施记录（2026-08-15）：
 - capability 当前只包住 executor-owned non-compilation payload，并以已存在 target relationship 为故障基线。
   target creation、Persona Compilation/Manifest bind、target profile refresh、relationship guard、stale read-set replay 和 conflict
   orchestration 仍在 Engine 外层；FileStorage 的合同是 writer serialization 与异常/重启恢复，不是跨多个 read call 的 MVCC
-  snapshot。完整公共 `import_memory()` 新目标失败原子性已在 4a037c0 (2026-08-17) 实现并通过回归测试。SQLite exactly-once operation receipt 仍是下一门禁。
+  snapshot。完整公共 `import_memory()` 新目标失败原子性已在 4a037c0 (2026-08-17) 实现并通过回归测试；
+  2026-08-18 的 schema 11 主库回执进一步关闭了 SQLite exactly-once commit-error 缺口。
 
 
-R1B 收口记录（2026-08-17）：
+R1B 最终收口记录（2026-08-18）：
 
-- ✅ MemoryPackTransfer 已完成全部导入导出、验证、remap 和执行规则提取
-- ✅ 41项核心测试全部通过（test_memory_pack_transfer.py）
-- ✅ 15项分析测试全部通过（test_memory_pack_analysis.py）
-- ✅ FileStorage 与 SQLite 原子性门禁通过（4a037c0）
-- ✅ 公共签名、返回值、异常和 deprecated 行为保持不变
-- ✅ 合同快照验证通过（freeze_contracts.py --check）
-- ✅ Ruff 代码质量检查通过
-- ✅ 模块行数：1993行（memory_pack_transfer.py）
-- ✅ ERIIEngine 已转为薄委托，不再包含领域对象逐项 remap/冲突实现
-- ✅ R1B 所有退出门满足，正式收口
+- ✅ `MemoryPackTransfer` 已完成导入导出、验证、remap、计划和执行规则提取；
+- ✅ FileStorage 以持久 before-image journal 提供整包异常/重启恢复；
+- ✅ SQLite schema 11 以主库 `memory_pack_write_receipts` 将 payload 与版本化成功回执同事务提交；
+- ✅ 公共 `import_memory()` 在 target preflight 前解析稳定 operation ID 的回执，提交后异常和重试均不重放；
+- ✅ schema 6/9/10 可显式升级至 11，Lifecycle 擦除会撤销相关回执；
+- ✅ Transfer 测试 `42 passed, 60 subtests passed`，SQLite Upgrade 测试 `13 passed, 3 subtests passed`；
+- ✅ CI 在同一作业检出冻结 R0 提交和当前源码，以相同 Python/OS 执行 15 样本硬门禁；
+- ✅ 2026-08-18 配对结果通过默认 10%/2 ms 预算；FileStorage 原子导入的 +14.6 至 +16.4 ms
+  journal/fsync 交换处于单独冻结的 20 ms / 55% 耐久性预算内；
+- ✅ Python API、MemoryPack wire 与 OpenAPI 未改变；SQLite 数据格式快照按 schema 11 更新。
 
-R1B 遗留事项（移交 R2 或后续批次）：
-
-- SQLite exactly-once operation receipt（当前已有重试语义）
-- 跨多个 read call 的 MVCC snapshot（当前依赖 writer serialization）
-- 性能基准对比（pending：同环境5次取中位数门禁）
+R1B 不再把 SQLite exactly-once 回执或稳定性能比较移交给 R2。跨多个 FileStorage read call 的
+MVCC snapshot 不属于本批承诺；当前 writer serialization 和 frozen target read-set 合同保持不变。
 ### 6.3 R1B：执行阶段，2026-08-31 至 2026-09-13
 
 目标：让 `MemoryPackTransfer` 拥有完整导入导出 Implementation，Engine 只保留兼容入口。
 
-状态：2026-08-14 提前开始。source、relationship target、完整 first-write conflict read set、deterministic
-ID remap、zero-write payload batches 与 export assembly 已冻结；2026-08-15 已把 causal relationship-history 和
-其余 non-compilation payload writes 迁入 preflighted execution seam，并为 FileStorage/SQLite 增加版本化 execution
-capability。执行期故障、durable-after-write、stored-return mismatch、reopen recovery 与 frozen-plan retry 已证明
-existing-target non-compilation payload 的异常原子性和双 Storage parity。下一门禁先为 SQLite main database 增加版本化
-operation receipt，消除 commit-error 的 indeterminate exactly-once 缺口；随后把 target creation、Persona Compilation/
-Manifest bind 与 target profile refresh 纳入一个冻结的公共 import execution 合同，并证明新目标失败也不留部分状态；
-relationship guard、stale replay、target conflict 与竞态恢复在相应合同冻结前继续由 Engine 拥有。
+状态：2026-08-18 已完成。source、target/read-set、deterministic ID remap、zero-write payload batches、
+export assembly、公共 import 原子执行、FileStorage 可恢复 journal 与 SQLite schema 11 exactly-once 回执均已冻结。
+relationship guard、stale replay、target conflict 与竞态恢复继续由 Engine Facade 编排；该所有权边界在 R3 检查点前
+不再移动。
 
 任务：
 

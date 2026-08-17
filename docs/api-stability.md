@@ -7,7 +7,7 @@ reviewed full commit SHA.
 
 `0.4.x` is the stable maintenance line. The current checkout identifies as
 `0.5.0a3`, an active alpha source milestone with FileStorage format 2, SQLite
-schema 10, and MemoryPack wire `0.5.0a3`. Its reader accepts declared-readable
+schema 11, and MemoryPack wire `0.5.0a3`. Its reader accepts declared-readable
 older packs, including `0.4.0a8`;
 the strict `0.4.0a8` reader rejects the new root fields, so compatibility is
 one-way. The classifications below describe adoption intent in this checkout;

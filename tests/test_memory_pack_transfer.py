@@ -2,6 +2,7 @@
 
 import ast
 import base64
+from contextlib import closing
 from dataclasses import FrozenInstanceError, replace
 import inspect
 import json
@@ -2089,6 +2090,7 @@ class MemoryPackTransferPlanTests(unittest.TestCase):
             def commit(self) -> None:
                 self._connection.commit()
                 self.commit_failures += 1
+                self._connection.close()
                 raise RuntimeError("injected error after sqlite commit")
 
             def rollback(self) -> None:
@@ -2116,14 +2118,12 @@ class MemoryPackTransferPlanTests(unittest.TestCase):
                 "_open_connection",
                 side_effect=open_commit_boundary_connection,
             ):
-                with self.assertRaisesRegex(
-                    RuntimeError,
-                    "injected error after sqlite commit",
-                ):
-                    execute_memory_pack_writes(storage, plan)
+                result = execute_memory_pack_writes(storage, plan)
 
-            self.assertEqual(len(opened_connections), 1)
+            self.assertEqual(len(opened_connections), 2)
             self.assertEqual(opened_connections[0].commit_failures, 1)
+            self.assertEqual(opened_connections[1].commit_failures, 0)
+            self.assertEqual(result.executed_batches, plan.batch_order)
             reopened = SQLiteStorage(database_path)
             self.assertEqual(
                 reopened.get_core_memory(pack.agent_id, pack.user_id),
@@ -2135,6 +2135,196 @@ class MemoryPackTransferPlanTests(unittest.TestCase):
                     pack.user_id,
                 )],
                 [pack.nodes[0].to_dict()],
+            )
+            self.assertEqual(execute_memory_pack_writes(reopened, plan), result)
+            with closing(sqlite3.connect(database_path)) as connection:
+                receipt = connection.execute(
+                    """
+                    SELECT receipt_version, operation_id
+                    FROM memory_pack_write_receipts
+                    """
+                ).fetchone()
+            self.assertEqual(receipt, (1, plan.fingerprint))
+
+    def test_sqlite_import_recovers_post_commit_error_and_retry_does_not_replay(
+        self,
+    ) -> None:
+        pack = self._fixture_pack()
+        assert pack.relationship is not None
+        pack.core_memory = "committed whole import"
+        pack.nodes = [
+            MemoryNode(
+                node_id="sqlite-import-node",
+                agent_id=pack.agent_id,
+                user_id=pack.user_id,
+                relationship_id=pack.relationship.relationship_id,
+                content="The public import committed exactly once.",
+            )
+        ]
+        pack.timeline_entries = []
+        pack.timeline = [
+            {
+                "timestamp": "2026-08-18T00:00:00+00:00",
+                "content": "one public import timeline entry",
+            }
+        ]
+
+        class CommitBoundaryConnection:
+            def __init__(self, connection: sqlite3.Connection) -> None:
+                self._connection = connection
+                self.commit_failures = 0
+
+            @property
+            def in_transaction(self) -> bool:
+                return self._connection.in_transaction
+
+            def execute(self, *args, **kwargs):
+                return self._connection.execute(*args, **kwargs)
+
+            def commit(self) -> None:
+                has_receipt = bool(
+                    self._connection.execute(
+                        "SELECT 1 FROM memory_pack_write_receipts LIMIT 1"
+                    ).fetchone()
+                )
+                self._connection.commit()
+                if has_receipt and self.commit_failures == 0:
+                    self.commit_failures += 1
+                    raise RuntimeError("injected error after public import commit")
+
+            def rollback(self) -> None:
+                self._connection.rollback()
+
+            def close(self) -> None:
+                self._connection.close()
+
+            def __getattr__(self, name: str):
+                return getattr(self._connection, name)
+
+        with tempfile.TemporaryDirectory() as root:
+            database_path = os.path.join(root, "memory.db")
+            storage = SQLiteStorage(database_path)
+            original_open = storage._open_connection
+            opened_connections: list[CommitBoundaryConnection] = []
+
+            def open_commit_boundary_connection() -> CommitBoundaryConnection:
+                connection = CommitBoundaryConnection(original_open())
+                opened_connections.append(connection)
+                return connection
+
+            with mock.patch.object(
+                storage,
+                "_open_connection",
+                side_effect=open_commit_boundary_connection,
+            ):
+                with ERIIEngine(storage_driver=storage) as engine:
+                    result = engine.import_memory(pack)
+
+            self.assertIs(result, pack)
+            self.assertEqual(
+                sum(item.commit_failures for item in opened_connections),
+                1,
+            )
+            self.assertEqual(
+                storage.get_relationship(pack.agent_id, pack.user_id),
+                pack.relationship,
+            )
+            timeline_entries = storage.list_timeline_entries(
+                pack.agent_id,
+                pack.user_id,
+            )
+            self.assertEqual(len(timeline_entries), 1)
+            self.assertEqual(
+                timeline_entries[0].content,
+                "one public import timeline entry",
+            )
+
+            with mock.patch.object(
+                storage,
+                "load_nodes",
+                side_effect=AssertionError("receipt retry performed target preflight"),
+            ):
+                with ERIIEngine(storage_driver=storage) as engine:
+                    retry_result = engine.import_memory(pack)
+            self.assertIs(retry_result, pack)
+            self.assertEqual(
+                storage.list_timeline_entries(pack.agent_id, pack.user_id),
+                timeline_entries,
+            )
+            with closing(sqlite3.connect(database_path)) as connection:
+                receipt_count = connection.execute(
+                    "SELECT COUNT(*) FROM memory_pack_write_receipts"
+                ).fetchone()[0]
+            self.assertEqual(receipt_count, 1)
+
+    def test_sqlite_remap_receipt_locks_the_actual_target_relationship(self) -> None:
+        fixture = self._fixture_pack()
+        assert fixture.relationship is not None
+        pack = MemoryPack(
+            agent_id=fixture.agent_id,
+            user_id=fixture.user_id,
+            core_memory="remapped lock scope",
+            relationship=fixture.relationship,
+        )
+        with tempfile.TemporaryDirectory() as root:
+            storage = SQLiteStorage(str(Path(root) / "remap-lock.sqlite3"))
+            target_agent = "remap-lock-agent"
+            target_user = "remap-lock-user"
+            with ERIIEngine(storage_driver=storage) as engine:
+                target = engine.initialize_relationship(
+                    target_agent,
+                    target_user,
+                    pack.relationship.blueprint.source_text,
+                    pack.relationship.blueprint.compiled,
+                    relationship_premise=pack.relationship.premise,
+                    source_format=pack.relationship.blueprint.source_format,
+                    source_name=pack.relationship.blueprint.source_name,
+                )
+                original_execute = storage.execute_memory_pack_write_v2
+                with (
+                    mock.patch.object(
+                        storage,
+                        "execute_memory_pack_write_v2",
+                        wraps=original_execute,
+                    ) as execute_v2,
+                    mock.patch.object(
+                        storage.lock_manager,
+                        "lock",
+                        wraps=storage.lock_manager.lock,
+                    ) as acquire_lock,
+                ):
+                    engine.import_memory(
+                        pack,
+                        agent_id=target_agent,
+                        user_id=target_user,
+                    )
+
+            self.assertEqual(execute_v2.call_count, 1)
+            self.assertEqual(
+                execute_v2.call_args.kwargs.get("lock_relationship_id"),
+                target.relationship_id,
+            )
+            locked_relationship_ids = {
+                call.args[1]
+                for call in acquire_lock.call_args_list
+                if call.args[0]
+                in {
+                    "__turn_records__",
+                    "__relationship_events__",
+                    "__relationship_adjudication__",
+                    "__relationship_history__",
+                    "__persona_growth__",
+                }
+            }
+            self.assertIn(target.relationship_id, locked_relationship_ids)
+            self.assertNotIn(
+                str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"erii:relationship-import:{target_agent}:{target_user}",
+                    )
+                ),
+                locked_relationship_ids,
             )
 
     def test_sqlite_storage_commit_error_detects_automatic_rollback(
@@ -2214,8 +2404,9 @@ class MemoryPackTransferPlanTests(unittest.TestCase):
                 ):
                     execute_memory_pack_writes(storage, plan)
 
-            self.assertEqual(len(opened_connections), 1)
+            self.assertEqual(len(opened_connections), 2)
             self.assertEqual(opened_connections[0].commit_failures, 1)
+            self.assertEqual(opened_connections[1].commit_failures, 0)
             reopened = SQLiteStorage(database_path)
             self.assertEqual(
                 reopened.get_core_memory(pack.agent_id, pack.user_id),

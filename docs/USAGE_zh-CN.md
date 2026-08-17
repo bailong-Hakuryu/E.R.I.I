@@ -1933,15 +1933,17 @@ with ERIIEngine(storage_driver=storage) as engine:
 
 从 `0.4.0b1` 开始，损坏或身份字段不一致的 SQLite MemoryNode 与结构化 Timeline 行会抛出 `StorageIntegrityError`；集合读取不会再跳过损坏行后返回具有误导性的部分结果。
 
-当前 `0.5.0a3` 的 SQLite 身份是 schema 10，新增 `relationship_consequences` 与
-`narrative_tension_links`；schema 9 是支持的升级来源，不是当前写入身份。
+当前 `0.5.0a3` 的 SQLite 身份是 schema 11。schema 10 新增
+`relationship_consequences` 与 `narrative_tension_links`；schema 11 新增版本化、
+不含 MemoryPack 内容的主库回执，用于 exactly-once commit-error recovery。
+schema 6、9、10 是支持的升级来源，不是当前写入身份。
 
 当前 alpha 源码仍以 FileStorage 为默认；选择 SQLite 必须显式传入 `SQLiteStorage`。两者都不是多租户授权边界，也都默认以明文保存数据。
 
 ## 数据生命周期：v0.4 基线与当前 Alpha
 
 `0.4.0b1` 首次建立零写入检查。当前目录继续遵守该契约，并能在迁移代码接触数据前
-识别 current FileStorage v2、SQLite v10 与 MemoryPack `0.5.0a3`：
+识别 current FileStorage v2、SQLite v11 与 MemoryPack `0.5.0a3`：
 
 ```python
 from erii.data_lifecycle import (
@@ -2070,17 +2072,17 @@ restore_report = lifecycle.execute(restore_plan)
 declared-readable 旧 MemoryPack → `0.4.0a8`。当前 `0.5.0a3` lifecycle 的最终目标是：
 
 - FileStorage `legacy | 1 → 2`；
-- SQLite schema `6 | 9 → 10`；
+- SQLite schema `6 | 9 | 10 → 11`；
 - 所有 declared-readable 旧 MemoryPack → `0.5.0a3`。
 
 升级要求缺失的并排目标和独立的缺失备份目标，并保留来源与备份。“可识别/可读”不
 代表已经有 SQLite 升级策略；schema `0–5`、`7`、`8` 仍不是当前升级来源。
 
 `MemoryPackImportRequest` 会在隔离 staging 中校验 current 或 declared-readable
-Pack，再发布到**不存在的全新** FileStorage v2 或 SQLite v10；它不是向已有在线
+Pack，再发布到**不存在的全新** FileStorage v2 或 SQLite v11；它不是向已有在线
 Storage 做原子 merge。
 
-`EraseRequest` 在 current FileStorage v2 / SQLite v10 上支持 relationship、Source
+`EraseRequest` 在 current FileStorage v2 / SQLite v11 上支持 relationship、Source
 Turn、Relationship Event 和 complete-user 四种 selector。`RebuildRequest` 不删除
 权威事件，只重新计算一段关系的派生投影。两者都 backup-first；报告只包含 ID、计数、
 摘要和处置组，不复制被删聊天或人设正文。

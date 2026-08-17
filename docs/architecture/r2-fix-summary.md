@@ -1,60 +1,23 @@
-# R2 Fix Summary
+# R2 修复摘要
 
-**Date**: 2026-08-17
-**Commit**: c357b03
+## 2026-08-17：删除重复 Serializer
 
-## Problem Discovered
+提交 `c357b03` 让 `erii.data_lifecycle` 使用 `_lifecycle.serializers`，删除了原文件中的
+重复转换函数。该修复解决了“复制但未接管”的第一层问题，但当时的“R2 已完成”结论不成立。
 
-During code review, found that R2 refactoring (commit 3a4851d) was incomplete:
-- Extracted serialization functions to `_lifecycle/serializers.py` ✅
-- BUT failed to replace private versions in `data_lifecycle.py` ❌
-- Result: ~500 lines of duplicate code
+## 2026-08-18：恢复历史 Backup-v1 行为
 
-## Root Cause
+审计发现提取后的 `content_from_backup_manifest()`：
 
-R2 only **copied** functions to new module, but did not **replace** the original usage.
+- 遗漏 MemoryPack `0.5.0a1` 和 `0.5.0a2` 的冻结 producer catalog；
+- 没有先按 producer catalog 校验持久化状态；
+- 改变了旧 catalog 校验后按当前 catalog 重新分类的顺序。
 
-### Duplicate Items Found
-- 15 private serialization functions (e.g., `_target_to_dict`, `_assessment_from_dict`)
-- 1 constant `_BACKUP_V1_HISTORICAL_PRODUCER_FORMATS` (67 lines)
-- Total: 332 lines of duplication
+修复恢复了 R2 前的精确行为。历史兼容测试现为 `4 passed, 23 subtests passed`，核心
+Lifecycle 子集为 `36 passed, 2 skipped, 44 subtests passed`；全量 Python 测试为
+`1028 passed, 14 skipped, 553 subtests passed`，DeepSeek 离线测试为 `45 passed`。
 
-## Fix Applied
+此外，错误定义了第二套枚举/数据类的 `contracts.py` 已改为引用唯一合同实现；无调用方的
+`utils.py` 也已改为权威 helper 的别名，不再保存第二份逻辑。
 
-### Changes
-1. Added import from `_lifecycle/serializers`:
-   ```python
-   from erii._lifecycle.serializers import (
-       assessment_from_dict as _assessment_from_dict,
-       assessment_to_dict as _assessment_to_dict,
-       content_from_backup_manifest as _content_from_backup_manifest,
-       # ... 14 functions total
-   )
-   ```
-
-2. Removed 15 duplicate function definitions
-3. Removed duplicate constant definition
-
-### Results
-- **Before**: 3903 lines
-- **After**: 3620 lines
-- **Net reduction**: 283 lines (316 removed - 33 added for imports)
-- **Tests**: ✅ 26 passed, 2 skipped, 17 subtests
-
-## Verification
-
-- [x] No duplicate function definitions remain
-- [x] All calls use imported versions (via `_name` aliases)
-- [x] No duplicate constants
-- [x] All tests passing
-- [x] Module compiles without errors
-
-## Lessons Learned
-
-1. **Code review is critical** - caught a significant incomplete refactoring
-2. **Test coverage is not enough** - tests passed with duplicate code because both versions were identical
-3. **Verification needed** - should check for code duplication after extraction
-
-## Next Steps
-
-R2 is now truly complete. Ready to proceed with R4 (Engine workflows).
+R2 仍未完成。当前状态和剩余门禁见 [refactoring-status.md](refactoring-status.md)。

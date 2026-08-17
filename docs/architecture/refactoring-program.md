@@ -1,8 +1,8 @@
 # E.R.I.I. 结构重构总控路线图
 
-> 状态：R1B 已完成，R2 待启动
+> 状态：R1B 已通过退出门；R2 只读路径修复与验收进行中
 >
-> 基线日期：2026-08-12（R0），2026-08-17（R1B 收口）（R0），2026-08-17（R1B 收口）
+> 基线日期：2026-08-12（R0），2026-08-18（本地修复审计）
 >
 > 基线提交：`94a61d5c1b77b5aa8871521aa53b0dba58dedf38`
 >
@@ -189,10 +189,11 @@ adjudication、reflection decision 和 direct-event journal 索引/闭包也已�
 outcome 闭包也已迁入；target Storage prefix/conflict 检查仍留在 Engine 并继续先于 replay 执行。
 reflection identity、evidence、Manifest/Growth 和 provenance 闭包也已迁入两阶段只读 Interface，
 由 Engine 显式传入合并后的 adjudication 上下文，不读取 Storage。archival evidence 继续由既有
-Core Module 直接复用。R1A 已于 2026-08-13 完成；R1B 已冻结绑定 source、relationship target、完整
-first-write conflict read set、deterministic ID remap、有序 payload batches 与零写入 export assembly。
-Engine 继续独占 target conflict enforcement、锁、事务、causal history commit、write order 与真实 writes。
-下一门禁冻结 transfer execution seam 合同并验证 parity、失败原子性和 stale 目标；在各自合同冻结前不提前移动上述执行职责。
+Core Module 直接复用。R1A 已于 2026-08-13 完成；R1B 于 2026-08-18 通过退出门：transfer plan
+绑定 source、relationship target、完整 first-write conflict read set、deterministic ID remap、有序 payload
+batches 与零写入 export assembly；公共导入在两个内建 Storage 上整体原子。SQLite schema 11 将版本化、
+不含 MemoryPack 内容的 operation receipt 与 payload 同事务提交，提交后异常和相同请求重试均由主库回执
+解析而不重放。CI 使用冻结 R0 提交与当前源码的同环境配对基准，不再因 Python/Windows build 不同而跳过。
 
 R1 退出门：
 
@@ -201,7 +202,7 @@ R1 退出门：
 - 导入失败时目标 Storage 的可观察状态与基线一致；
 - ID remap、来源、relationship 隔离和指纹验证只有一个权威 Implementation；
 - 性能没有超过第 8 节的退化阈值；
-- `git diff` 不包含格式版本、公开符号或 OpenAPI 变化。
+- 除 SQLite schema 11 的主库回执外，`git diff` 不包含公开符号、MemoryPack wire 或 OpenAPI 变化。
 
 ### 5.3 R2 和 R3：Lifecycle
 
@@ -325,8 +326,11 @@ python clients/typescript/scripts/verify_server_contract.py
 - 在 Windows smoke 覆盖文件占用、路径和原子发布行为；
 - 对比重构前后的 MemoryPack 导入导出和 Lifecycle 基准。
 
-默认性能门：同一环境、同一 fixture、至少 5 次取中位数，单项中位时间或峰值内存退化超过
-10% 时暂停合入并解释原因。若基线抖动超过 5%，先改善基准，不用不稳定数字阻塞或放行。
+默认性能门：同一 CI 作业检出冻结 R0 提交与当前源码，使用同一 Python、OS、fixture，至少 5 次取
+中位数；样本中位绝对偏差超过 8% 时直接失败。默认预算同时要求退化超过 10% 且超过 2 ms 才阻断。
+R1B 为 FileStorage 整包导入新增持久 before-image journal、commit marker 和多次 fsync，已接受并冻结
+20 ms / 55% 的逐指标耐久性预算；2026-08-18 的 15 样本结果为 +14.6 至 +16.4 ms（+39.6% 至
++45.4%），仍在预算内。其他指标继续使用默认预算，环境不兼容或样本不稳定不能跳过门禁。
 
 ## 9. 停止和回滚条件
 

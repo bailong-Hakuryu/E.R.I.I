@@ -18,6 +18,10 @@ GitHub Release 或 PyPI 制品；发布前必须固定 full commit SHA 并重新
 - 性能和并发验证改用规范 Turn 与显式归档，并直接核对持久 MemoryNode、来源和关系范围。
 - 根目录只保留 README、CHANGELOG、ROADMAP、安全、支持、贡献和上下文等权威入口；
   删除重复且无法复核的过程总结和完成报告。
+- SQLite 当前写入身份推进到 schema 11；schema 6、9、10 通过 backup-first Lifecycle
+  路径并排升级，Storage 构造仍不做隐式迁移。
+- 重构性能门在同一 CI 作业内配对运行冻结 R0 提交与当前源码；环境不兼容或样本不稳定
+  直接失败。FileStorage 原子导入的持久 journal/fsync 成本使用单独、可执行的耐久性预算。
 
 ### Fixed
 
@@ -28,13 +32,20 @@ GitHub Release 或 PyPI 制品；发布前必须固定 full commit SHA 并重新
 - REST 404、请求校验和领域错误统一为可公开的结构化错误契约；OpenAPI 同步声明
   `RESTErrorEnvelope`，并正确标注公开 health 与受保护业务路由。
 - Backup-v1 reader 接受历史 `0.5.0a1` 源码、已发布 `0.5.0a2` 制品以及其后 a2
-  源码实际写出的 MemoryPack producer identity，同时继续拒绝未知版本、错误状态与
-  未来 producer view。
+  源码实际写出的 MemoryPack producer identity，并恢复对 SQLite schema-10 producer
+  identity 的精确识别；未知版本、错误状态与未来 producer view 仍会被拒绝。
 - Persona Compiler 将完整人设原文放入明确的 JSON 数据边界；离线测试只证明本地 framing
   与 schema 约束，不把固定 Mock 误报为远程模型的 Prompt Injection 抵抗能力。
 - 凭据扫描重新覆盖 Markdown、文本、测试和 benchmark；移除整类扩展名与整文件豁免，
   恢复包含标点的 labelled secret 检测回归。
 - 修复性能示例、Turn 示例和 Windows 控制台编码路径。
+- SQLite MemoryPack 整包写入把版本化、无正文的 operation receipt 与 payload 同事务提交；
+  commit 返回后异常和相同公共导入重试由主库回执解析，不重放已经提交的写入。
+- Relationship、Source Turn 或 Relationship Event 擦除只撤销真实 relationship 及其 remap
+  别名范围内的 MemoryPack 回执，不再清除同一外部身份下其他历史范围的回执。
+- SQLite remap 导入将稳定回执范围与并发锁范围分离：回执继续支持 target preflight 前重试，
+  写事务则锁定真实目标 relationship，和并发 Turn/Event 写入使用同一串行化边界。
+- Pytest 默认收集范围固定为 `tests/`，从仓库根目录运行不会误收集可拆卸实验目录。
 
 ### Verification
 

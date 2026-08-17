@@ -153,9 +153,10 @@ Agent-private Markdown 分别渲染 `Verified Memories` 与 `Legacy Context - pr
 
 FileStorage 与 SQLiteStorage 遵循相同的关系隔离、事件追加、处理运行、反思决定、
 Consequence/Tension 账本与幂等语义。`0.4.0b1` 接受基线当时分别是 FileStorage v1 与
-SQLite v9；当前 `0.5.0a1` 身份是 FileStorage v2 与 SQLite v10。SQLite v10 在 v9
-基础上增加 consequence 与 tension link 表。旧 SQLite 不再在 Storage 构造时静默原地
-迁移，而是显式失败；当前生命周期只验证 schema `6 | 9 → 10` 的 backup-first、并排
+SQLite v9；`0.5.0a1` 引入 SQLite v10 的 consequence 与 tension link 表，当前身份为
+FileStorage v2 与 SQLite v11。v11 增加不含 MemoryPack 内容的 exactly-once operation receipt。
+旧 SQLite 不再在 Storage 构造时静默原地迁移，而是显式失败；当前生命周期验证 schema
+`6 | 9 | 10 → 11` 的 backup-first、并排
 升级。其他可识别旧 schema 不因能够 inspect 就自动获得升级承诺。
 
 历史 MemoryPack wire `0.4.0a8` 携带规范 Source Turn、现代审查/交付记录、归档
@@ -180,7 +181,7 @@ FileStorage、SQLiteStorage 与 MemoryPack 都不是认证、授权、加密或�
 `DataLifecycleCoordinator` 以 `inspect → plan → execute` 统一备份、缺失目标恢复、
 并排升级、fresh MemoryPack 导入、四范围删除和关系投影重建。Plan writer 是 v3，
 reader 严格接受 v1–v3；当前 fresh import 只发布到不存在的全新 FileStorage v2 或
-SQLite v10，不能合并到在线/已有目标。Plan 绑定来源身份、策略、目标和 selector；Report
+SQLite v11，不能合并到在线/已有目标。Plan 绑定来源身份、策略、目标和 selector；Report
 只包含 ID、摘要、计数和 disposition，不复制正文。
 
 删除 Source Turn 或 Relationship Event 时，内核会一并删除依赖该权威来源的处理运行、裁决、反思、成长/归档产物，并从仍有效的权威事件历史重建 Current Belief、Relationship State、State Reason、Episode 与 Chapter。重建不会从剩余对话猜测新事件；删除派生投影也不能反向删除仍有效权威历史。

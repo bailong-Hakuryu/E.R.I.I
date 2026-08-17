@@ -46,7 +46,7 @@
         ]
       },
       "sqlite": {
-        "current_version": "10",
+        "current_version": "11",
         "format_id": "erii.sqlite",
         "readable_versions": [
           "0",
@@ -59,7 +59,8 @@
           "7",
           "8",
           "9",
-          "10"
+          "10",
+          "11"
         ]
       }
     },

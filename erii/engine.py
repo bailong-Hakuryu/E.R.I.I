@@ -33,6 +33,9 @@ from erii._engine.memory_pack_transfer import (
     bind_memory_pack_transfer_plan,
     execute_memory_pack_persona_compilation,
     execute_memory_pack_writes,
+    memory_pack_import_operation_id,
+    memory_pack_import_result_from_json,
+    memory_pack_import_result_json,
     plan_memory_pack_persona_compilation_writes,
     plan_memory_pack_persona_growth_writes,
     plan_memory_pack_writes,
@@ -195,6 +198,7 @@ from erii.renderers.markdown import MarkdownRecallRenderer
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.base import BaseStorage
 from erii.storage.file_storage import FileStorage
+from erii.storage.memory_pack import memory_pack_remap_scope_id
 from erii.vector.base import BaseEmbeddingProvider, BaseVectorStore
 from erii.vector.in_memory_vector import CallableEmbeddingAdapter, DummyEmbeddingProvider
 
@@ -2764,12 +2768,7 @@ class ERIIEngine:
                 overwrite=overwrite,
             )
 
-        provisional_guard_id = str(
-            uuid.uuid5(
-                uuid.NAMESPACE_URL,
-                f"erii:relationship-import:{clean_agent}:{clean_user}",
-            )
-        )
+        provisional_guard_id = memory_pack_remap_scope_id(clean_agent, clean_user)
         for _ in range(4):
             existing_profile = self.storage.get_relationship(
                 clean_agent,
@@ -2855,6 +2854,47 @@ class ERIIEngine:
         self._validate_turn_pack(pack, clean_agent, clean_user)
         validate_memory_pack_archival_evidence(pack)
         validate_memory_pack_relationship_consequences(pack)
+        import_operation_id = memory_pack_import_operation_id(
+            transfer_source,
+            clean_agent,
+            clean_user,
+            overwrite=overwrite,
+        )
+        receipt_relationship_id = None
+        if pack.relationship is not None:
+            if (
+                clean_agent == pack.relationship.agent_id
+                and clean_user == pack.relationship.user_id
+            ):
+                receipt_relationship_id = pack.relationship.relationship_id
+            else:
+                receipt_relationship_id = memory_pack_remap_scope_id(
+                    clean_agent,
+                    clean_user,
+                )
+        receipt_capability_provider = getattr(
+            self.storage,
+            "atomic_memory_pack_write_store_v2",
+            None,
+        )
+        receipt_capability = (
+            receipt_capability_provider()
+            if callable(receipt_capability_provider)
+            else None
+        )
+        if receipt_capability is not None:
+            committed_result = receipt_capability.load_memory_pack_write_result(
+                import_operation_id,
+                clean_agent,
+                clean_user,
+                receipt_relationship_id,
+                lambda result_json: memory_pack_import_result_from_json(
+                    result_json,
+                    pack,
+                ),
+            )
+            if committed_result is not None:
+                return committed_result
         existing_target_profile = self.storage.get_relationship(
             clean_agent,
             clean_user,
@@ -3187,6 +3227,20 @@ class ERIIEngine:
             else None
         )
         try:
+            if receipt_capability is not None:
+                return receipt_capability.execute_memory_pack_write_v2(
+                    import_operation_id,
+                    clean_agent,
+                    clean_user,
+                    receipt_relationship_id,
+                    execute_import,
+                    memory_pack_import_result_json,
+                    lambda result_json: memory_pack_import_result_from_json(
+                        result_json,
+                        pack,
+                    ),
+                    lock_relationship_id=atomic_relationship_id,
+                )
             if capability is None:
                 return execute_import(self.storage)
             return capability.execute_memory_pack_write(

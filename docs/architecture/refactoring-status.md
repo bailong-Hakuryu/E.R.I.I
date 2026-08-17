@@ -1,149 +1,67 @@
-# E.R.I.I. 项目重构进度总结
+# E.R.I.I. 结构重构状态
 
-**更新日期**: 2026-08-17 (R2 Fixed)
-**当前阶段**: R2 完成并修复 ✅
+> 更新日期：2026-08-18
+>
+> 权威项目状态：[PROJECT_STATUS.md](../PROJECT_STATUS.md)；其数据源为
+> [`docs/project-status.json`](../project-status.json)。本文只记录结构重构的本地实施状态，
+> 不覆盖项目状态门禁。
 
-## 总体进度
+## 当前结论
 
-`
-✅ R0: Baseline (完成)
-✅ R1A: MemoryPack 分析 (完成)
-✅ R1B: MemoryPack Transfer 提取 (完成，提交: 9fd98c6)
-✅ R2A: JSON工具 + 基础合约 (完成)
-✅ R2B: 类型序列化函数提取 (完成)
-✅ R2C: 基础工具函数 (完成，简化版)
-⏳ R3: Lifecycle 写操作 (待开始)
-⏳ R4: Engine 工作流 (推荐下一步) ⭐
-`
+R1B 已于 2026-08-18 通过剩余退出门，权威阶段进入 `R2 / in_progress`。本地 `main` 提前
+开展的 R2 工作已修复重复实现和历史 catalog 回归，但 R2 尚未达到总控路线图定义的退出条件，
+也不能据此跳过 R3 进入 R4。
 
-## R2 完成总结 (已修复)
+R1B 收口证据：
 
-**修复日期**: 2026-08-17
-**修复提交**: c357b03
+- SQLite schema 11 新增 `memory_pack_write_receipts`，payload 与版本化成功回执同事务提交；
+- `ERIIEngine.import_memory()` 使用 source/target/overwrite 派生的稳定 operation ID，在 target
+  preflight 前解析相同请求的已提交回执，提交后异常可返回成功且重试不重放；
+- schema 6、9、10 均可通过 source-preserving Lifecycle 路径升级到 11，擦除会撤销相关回执；
+- MemoryPack Transfer：`43 passed, 60 subtests passed`；SQLite Upgrade：`13 passed, 3 subtests passed`；
+- 15 样本 R0/current 同环境配对性能门通过；FileStorage 原子导入的持久 journal 成本为
+  +14.6 至 +16.4 ms，处于明确的 20 ms / 55% 耐久性预算内；
+- CI 的性能作业不再按冻结报告的 Python/Windows build 静默跳过，环境不兼容或样本不稳定直接失败。
 
-### 修复内容
-在代码审查中发现R2存在严重的代码重复问题：
-- ❌ 原R2提交(3a4851d)只是复制了代码，未替换原有调用
-- ❌ data_lifecycle.py中保留了15个私有函数+1个常量(332行重复)
-- ✅ 修复提交删除了所有重复代码，改用导入
+## R2 已实施部分
 
-## R2 完成总结
+- `erii/_lifecycle/plan_codec.py` 已接管规范 JSON、严格解码和摘要工具。
+- `erii/_lifecycle/serializers.py` 已接管 Lifecycle 类型与 Plan 文档的转换逻辑。
+- `erii/_lifecycle/contracts.py` 当前只为 `erii.data_lifecycle` 中的唯一合同类型提供私有别名；
+  合同本体尚未迁移。
+- `erii/_lifecycle/utils.py` 不再保存重复实现；当前只为 `erii.data_lifecycle` 中的权威
+  helper 提供私有别名，等待 Inspection 整体迁移。
 
-### 提取的模块 (4个，735行)
-`
-erii/_lifecycle/
-├── __init__.py
-├── plan_codec.py      (59行)  - JSON严格序列化
-├── contracts.py       (117行) - 公共类型定义
-├── serializers.py     (378行) - 类型转换函数
-└── utils.py           (181行) - 文件系统工具
-`
+## 2026-08-18 修复审计
 
-### 测试验证
-- ✅ **26个** lifecycle核心测试通过
-- ✅ **17个** 子测试通过  
-- ✅ 零功能回归
-- ⚠️  10个历史兼容性边缘情况待调整（非阻塞）
+序列化提取曾遗漏两个 MemoryPack Backup-v1 历史 producer catalog，并跳过旧 catalog 的
+状态一致性校验，造成 10 个历史兼容子测试失败。当前修复恢复了重构前的冻结 catalog、
+旧 catalog 校验和当前 catalog 重新分类顺序。SQLite schema 11 收口后再次发现并补齐了
+schema-10 producer catalog；schema 6、9、10 的 Backup-v1 恢复现均有 byte-exact 回归覆盖。
 
-### R2C 决策
-**原计划**: 提取Inspector和Planner (~800-1000行)
-**实际执行**: 只提取基础工具函数 (~180行)
+已验证：
 
-**原因**: 
-- Inspector/Planner相互依赖复杂，提取风险高
-- R2A/R2B已完成核心价值（序列化和类型安全）
-- 边际收益递减
-- 保持在主模块更利于维护
+- 历史 Backup 兼容：`4 passed, 24 subtests passed`；
+- 核心 Backup/Inspection/Plan 集：`36 passed, 2 skipped, 44 subtests passed`；
+- 全部 Python：`1034 passed, 14 skipped, 96 warnings, 555 subtests passed`；
+- DeepSeek 离线测试：`45 passed`；
+- `ruff check --no-cache erii/_lifecycle erii/data_lifecycle.py` 通过。
 
-**结论**: R2核心目标已达成 ✅
+R1B 不再有未完成门禁；Windows smoke 将由更新后的 CI 在提交后再次执行。
 
-## 代码指标
+## R2 未完成范围
 
-| 项目 | R0基线 | R2完成 | 变化 |
-|------|--------|--------|------|
-| data_lifecycle.py | 3883行 | 3883行 | +0 (添加导入) |
-| _lifecycle/ 模块 | 0行 | 735行 | +735 |
-| **净增加** | - | - | **+735行** |
+- Lifecycle 合同仍由 `erii.data_lifecycle` 定义；
+- Inspector 仍在 `erii.data_lifecycle`；
+- Planner、Plan shape 校验及只读恢复路径仍在 `erii.data_lifecycle`；
+- `DataLifecycleCoordinator.inspect/plan` 尚未由独立内部深模块承担。
 
-*说明*: data_lifecycle.py未减少是因为添加了导入，实际业务逻辑通过模块化更清晰
+文档链接、项目状态目录、重构清单、合同快照、secret 扫描、Ruff、Compileall 和
+`git diff --check` 均已通过。
 
-## 技术亮点
+## 下一步顺序
 
-### 1. 历史兼容性
-- 支持Backup-v1格式（0.4.0时代）
-- FILE_STORAGE v1, SQLITE v9, MEMORY_PACK 0.4.0a8
-- 自动重新分类到当前catalog
-
-### 2. 模块化设计
-`
-plan_codec (JSON工具)
-    ↓
-serializers (类型转换)
-    ↓
-contracts (数据类型)
-    ↓
-data_lifecycle (业务逻辑)
-`
-
-### 3. 零性能回归
-所有核心测试通过，无性能损失
-
-## 下一步建议
-
-### 推荐: R4 Engine工作流重构 ⭐
-
-**为什么推荐R4**:
-- ✅ R2已为R4奠定基础（序列化层完整）
-- ✅ 更高业务价值（Turn/Archival/Relationship）
-- ✅ 独立性强，风险可控
-- ✅ R3可以在R4之后再做
-
-**R4范围预估**:
-- Turn状态机和工作流
-- Archival处理逻辑
-- Relationship/Persona管理
-- 预计: 6-8小时
-
-### 备选: R3 Lifecycle写操作
-
-**为什么不优先R3**:
-- ⚠️ 需要更多测试覆盖
-- ⚠️ 写入操作风险较高
-- ⚠️ R2的Inspector/Planner未完全提取
-- ⚠️ 可以等R4完成后再评估
-
-## Git状态
-
-⚠️ **待提交文件**:
-- rii/_lifecycle/plan_codec.py
-- rii/_lifecycle/contracts.py
-- rii/_lifecycle/serializers.py
-- rii/_lifecycle/utils.py
-- docs/architecture/* (所有文档)
-
-**注意**: .git/index.lock 权限问题需要手动解决
-
-## Token预算
-
-- **已使用**: 103K / 200K (51.5%)
-- **剩余**: 97K
-- **R4预估**: 40-50K tokens
-- **状态**: ✅ 充足
-
----
-
-## 快速决策矩阵
-
-| 选项 | 时间 | 价值 | 风险 | 推荐度 |
-|------|------|------|------|--------|
-| **R4 Engine** | 6-8h | ⭐⭐⭐⭐⭐ | 低 | ✅✅✅ 强烈推荐 |
-| R3 Lifecycle | 5-7h | ⭐⭐⭐ | 中 | ⚠️ 可推迟 |
-| 继续R2C | 4-6h | ⭐⭐ | 中 | ❌ 不推荐 |
-| 提交+休息 | 0h | ⭐⭐⭐⭐ | 无 | ✅ 合理 |
-
----
-
-**更新于**: 2026-08-17  
-**会话时长**: ~4小时  
-**阶段**: R2完成，准备R4
-
+1. 在同一权威合同上完成 R2 Contracts、Inspection 和 Planning 提取；
+2. 运行 R2 全部门禁，确认历史 reader、双 Storage、Windows 和性能无回归；
+3. 进入 R3 写路径重构；
+4. 只有 R3 稳定检查点通过后才进入 R4。

@@ -8,10 +8,10 @@ This inventory records the structural and caller baseline used by R1. It is gene
 
 | Surface | Lines or symbols | Public methods | Private methods |
 | --- | ---: | ---: | ---: |
-| `erii/engine.py` | 3934 lines | 71 | 25 |
+| `erii/engine.py` | 3988 lines | 71 | 25 |
 | `erii/__init__.py` | 330 exports | n/a | n/a |
-| `BaseStorage` | 56 methods | 55 | 1 |
-| `erii/data_lifecycle.py` | 4283 lines | 3 coordinator | 12 coordinator |
+| `BaseStorage` | 57 methods | 56 | 1 |
+| `erii/data_lifecycle.py` | 3941 lines | 3 coordinator | 12 coordinator |
 
 Counts locate risk; they are not completion targets. R1 succeeds only when MemoryPack complexity moves behind a smaller Interface without public or format changes.
 
@@ -21,16 +21,16 @@ Counts locate risk; they are not completion targets. R1 succeeds only when Memor
 
 | Method | Start line | Span |
 | --- | ---: | ---: |
-| `export_memory` | 2570 | 165 |
-| `import_memory` | 2736 | 82 |
-| `_import_memory_unlocked` | 2819 | 403 |
-| `_validate_turn_pack` | 3224 | 21 |
-| `_validate_turn_import_conflicts` | 3246 | 45 |
-| `_validate_relationship_consequence_import_conflicts` | 3292 | 87 |
-| `_validate_timeline_import_conflicts` | 3380 | 73 |
-| `_validate_persona_growth_import_conflicts` | 3454 | 62 |
-| `_validate_relationship_adjudication_import_conflicts` | 3517 | 37 |
-| `_validate_relationship_processing_pack` | 3556 | 330 |
+| `export_memory` | 2574 | 165 |
+| `import_memory` | 2740 | 77 |
+| `_import_memory_unlocked` | 2818 | 458 |
+| `_validate_turn_pack` | 3278 | 21 |
+| `_validate_turn_import_conflicts` | 3300 | 45 |
+| `_validate_relationship_consequence_import_conflicts` | 3346 | 87 |
+| `_validate_timeline_import_conflicts` | 3434 | 73 |
+| `_validate_persona_growth_import_conflicts` | 3508 | 62 |
+| `_validate_relationship_adjudication_import_conflicts` | 3571 | 37 |
+| `_validate_relationship_processing_pack` | 3610 | 330 |
 
 The remaining cluster includes the public export/import entry points, guarded import execution, target conflict helper Implementation, Persona target-state transitions, causal history commit, and real Storage writes. R1B now routes first-write preflight reads through the private transfer Recorder and consumes its deterministic zero-write payload plan; locking, transactions, conflict enforcement, execution order, and writes remain in Engine.
 
@@ -60,56 +60,61 @@ This private Module is not exported from `erii.__all__`. Its Interface accepts a
 
 ### Snapshot-Bound Transfer Planning
 
-`erii/_engine/memory_pack_transfer.py`: 2199 lines.
+`erii/_engine/memory_pack_transfer.py`: 2395 lines.
 
 | Function | Start line | Span |
 | --- | ---: | ---: |
-| `_canonical_fingerprint` | 332 | 8 |
-| `assemble_memory_pack_export` | 342 | 58 |
-| `_portable_value` | 402 | 18 |
-| `_canonical_json` | 422 | 7 |
-| `_observe_target_read` | 431 | 30 |
-| `_empty_target_read_set` | 599 | 2 |
-| `_replay_arguments` | 603 | 2 |
-| `replay_memory_pack_target_read_set` | 607 | 31 |
-| `_source_fingerprint` | 640 | 2 |
-| `_target_snapshot` | 644 | 22 |
-| `analyze_memory_pack_source` | 668 | 15 |
-| `bind_memory_pack_transfer_plan` | 685 | 37 |
-| `require_memory_pack_transfer_plan_current` | 724 | 19 |
-| `_plan_persona_compilation_writes` | 745 | 288 |
-| `plan_memory_pack_persona_compilation_writes` | 1035 | 6 |
-| `_relationship_remap_maps` | 1043 | 63 |
-| `_remap_temporal_payload` | 1108 | 38 |
-| `_plan_persona_growth_writes` | 1148 | 29 |
-| `plan_memory_pack_persona_growth_writes` | 1179 | 20 |
-| `_plan_relationship_writes` | 1201 | 164 |
-| `_memory_pack_write_batch_order` | 1367 | 38 |
-| `_memory_pack_write_plan_payload` | 1407 | 33 |
-| `plan_memory_pack_writes` | 1442 | 81 |
-| `_schedule_memory_pack_relationship_history` | 1525 | 87 |
-| `_commit_memory_pack_relationship_history_schedule` | 1614 | 29 |
-| `execute_memory_pack_relationship_history` | 1645 | 17 |
-| `_validate_memory_pack_write_execution` | 1664 | 73 |
-| `_execute_memory_pack_writes_direct` | 1739 | 166 |
-| `execute_memory_pack_writes` | 1907 | 42 |
-| `execute_memory_pack_persona_compilation` | 1951 | 216 |
+| `_memory_pack_write_result_json` | 238 | 25 |
+| `_memory_pack_write_result_from_json` | 265 | 89 |
+| `_canonical_fingerprint` | 450 | 8 |
+| `assemble_memory_pack_export` | 460 | 58 |
+| `_portable_value` | 520 | 18 |
+| `_canonical_json` | 540 | 7 |
+| `_observe_target_read` | 549 | 30 |
+| `_empty_target_read_set` | 717 | 2 |
+| `_replay_arguments` | 721 | 2 |
+| `replay_memory_pack_target_read_set` | 725 | 31 |
+| `_source_fingerprint` | 758 | 2 |
+| `memory_pack_import_operation_id` | 762 | 17 |
+| `memory_pack_import_result_json` | 781 | 8 |
+| `memory_pack_import_result_from_json` | 791 | 15 |
+| `_target_snapshot` | 808 | 22 |
+| `analyze_memory_pack_source` | 832 | 15 |
+| `bind_memory_pack_transfer_plan` | 849 | 37 |
+| `require_memory_pack_transfer_plan_current` | 888 | 19 |
+| `_plan_persona_compilation_writes` | 909 | 288 |
+| `plan_memory_pack_persona_compilation_writes` | 1199 | 6 |
+| `_relationship_remap_maps` | 1207 | 63 |
+| `_remap_temporal_payload` | 1272 | 38 |
+| `_plan_persona_growth_writes` | 1312 | 29 |
+| `plan_memory_pack_persona_growth_writes` | 1343 | 20 |
+| `_plan_relationship_writes` | 1365 | 164 |
+| `_memory_pack_write_batch_order` | 1531 | 38 |
+| `_memory_pack_write_plan_payload` | 1571 | 33 |
+| `plan_memory_pack_writes` | 1606 | 81 |
+| `_schedule_memory_pack_relationship_history` | 1689 | 87 |
+| `_commit_memory_pack_relationship_history_schedule` | 1778 | 29 |
+| `execute_memory_pack_relationship_history` | 1809 | 17 |
+| `_validate_memory_pack_write_execution` | 1828 | 73 |
+| `_execute_memory_pack_writes_direct` | 1903 | 166 |
+| `execute_memory_pack_writes` | 2071 | 71 |
+| `execute_memory_pack_persona_compilation` | 2144 | 216 |
 
 This private Module freezes the portable source, target relationship, overwrite intent, ordered target conflict read set, deterministic ID remaps, and zero-write payload batches. Its read-only Recorder accepts the existing Storage Interface, records capability outcomes and canonical result fingerprints, and is replayed before the first write; the write-planning Interface accepts no Storage, imports no concrete Storage Adapter, and exposes no root-level public symbol.
 
 ## MemoryPack Callers
 
-Tracked call sites: 188 across 30 files; 20 runtime/example/benchmark call sites and 168 test call sites.
+Tracked call sites: 193 across 31 files; 20 runtime/example/benchmark call sites and 173 test call sites.
 
 | Path | Method | Calls | Lines |
 | --- | --- | ---: | --- |
-| `benchmarks/run_refactoring_baseline.py` | `export_memory` | 2 | 377, 387 |
-| `benchmarks/run_refactoring_baseline.py` | `import_memory` | 1 | 413 |
+| `benchmarks/run_refactoring_baseline.py` | `export_memory` | 2 | 429, 439 |
+| `benchmarks/run_refactoring_baseline.py` | `import_memory` | 1 | 465 |
 | `erii/demo.py` | `export_memory` | 2 | 458, 503 |
 | `erii/evaluation/longitudinal.py` | `export_memory` | 2 | 1108, 1208 |
 | `erii/evaluation/longitudinal.py` | `import_memory` | 3 | 1119, 1124, 1250 |
-| `erii/lifecycle_erasure.py` | `export_memory` | 1 | 2359 |
-| `erii/lifecycle_erasure.py` | `import_memory` | 1 | 2375 |
+| `erii/lifecycle_erasure.py` | `export_memory` | 1 | 2404 |
+| `erii/lifecycle_erasure.py` | `import_memory` | 1 | 2420 |
 | `erii/lifecycle_memory_pack_import.py` | `export_memory` | 2 | 46, 126 |
 | `erii/lifecycle_memory_pack_import.py` | `import_memory` | 1 | 40 |
 | `erii/server/app.py` | `export_memory` | 1 | 1443 |
@@ -129,12 +134,14 @@ Tracked call sites: 188 across 30 files; 20 runtime/example/benchmark call sites
 | `tests/test_consolidation_memorypack.py` | `import_memory` | 29 | 215, 216, 351, 431, 499, 580, 640, 701, 776, 846, 916, 917, 963, 1021, 1092, 1157, 1219, 1307, 1381, 1411, 1505, 1586, 1652, 1719, 1793, 1870, 1947, 2093, 2137 |
 | `tests/test_golden_continuity_demo.py` | `export_memory` | 3 | 299, 423, 442 |
 | `tests/test_golden_continuity_demo.py` | `import_memory` | 5 | 421, 422, 457, 459, 469 |
+| `tests/test_lifecycle_erasure.py` | `export_memory` | 1 | 168 |
+| `tests/test_lifecycle_erasure.py` | `import_memory` | 1 | 169 |
 | `tests/test_lifecycle_erasure_coordinator.py` | `export_memory` | 2 | 762, 1116 |
 | `tests/test_lifecycle_erasure_coordinator.py` | `import_memory` | 2 | 775, 1129 |
 | `tests/test_lifecycle_memory_pack_import_coordinator.py` | `export_memory` | 1 | 252 |
 | `tests/test_lifecycle_memory_pack_staging_import.py` | `export_memory` | 2 | 129, 185 |
 | `tests/test_memory_pack_analysis.py` | `export_memory` | 1 | 86 |
-| `tests/test_memory_pack_transfer.py` | `import_memory` | 8 | 2335, 2778, 2798, 2835, 2861, 2916, 2956, 3013 |
+| `tests/test_memory_pack_transfer.py` | `import_memory` | 11 | 2221, 2248, 2296, 2526, 2969, 2989, 3026, 3052, 3107, 3147, 3204 |
 | `tests/test_persona_storage_integrity.py` | `import_memory` | 1 | 162 |
 | `tests/test_relationship_adjudication.py` | `export_memory` | 3 | 137, 168, 646 |
 | `tests/test_relationship_adjudication.py` | `import_memory` | 2 | 651, 652 |
@@ -172,21 +179,21 @@ The broad test surface is intentional evidence: MemoryPack crosses relationship,
 
 | Method | Start line | Span |
 | --- | ---: | ---: |
-| `__init__` | 3168 | 2 |
-| `inspect` | 3171 | 5 |
-| `plan` | 3177 | 15 |
-| `execute` | 3193 | 18 |
-| `_plan_backup` | 3212 | 22 |
-| `_plan_restore` | 3235 | 25 |
-| `_plan_upgrade` | 3261 | 44 |
-| `_plan_erasure` | 3306 | 60 |
-| `_plan_memory_pack_import` | 3367 | 45 |
-| `_ensure_verified_prechange_backup` | 3413 | 93 |
-| `_execute_backup` | 3507 | 93 |
-| `_execute_restore` | 3601 | 69 |
-| `_execute_upgrade` | 3671 | 201 |
-| `_execute_erasure_or_rebuild` | 3873 | 211 |
-| `_execute_memory_pack_import` | 4085 | 162 |
+| `__init__` | 2826 | 2 |
+| `inspect` | 2829 | 5 |
+| `plan` | 2835 | 15 |
+| `execute` | 2851 | 18 |
+| `_plan_backup` | 2870 | 22 |
+| `_plan_restore` | 2893 | 25 |
+| `_plan_upgrade` | 2919 | 44 |
+| `_plan_erasure` | 2964 | 60 |
+| `_plan_memory_pack_import` | 3025 | 45 |
+| `_ensure_verified_prechange_backup` | 3071 | 93 |
+| `_execute_backup` | 3165 | 93 |
+| `_execute_restore` | 3259 | 69 |
+| `_execute_upgrade` | 3329 | 201 |
+| `_execute_erasure_or_rebuild` | 3531 | 211 |
+| `_execute_memory_pack_import` | 3743 | 162 |
 
 Top-level Lifecycle types/classes: 25. R2 separates contracts and no-write paths before any R3 write-path extraction.
 

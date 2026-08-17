@@ -1,9 +1,12 @@
 """Shared staging-only erasure contracts for built-in storage adapters."""
 
+from contextlib import closing
 import json
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
+import uuid
 
 from erii.engine import ERIIEngine
 from erii.core.adjudication import list_complete_relationship_events
@@ -160,6 +163,17 @@ class StagedErasureContract(unittest.TestCase):
                 case = next(item for item in self._cases(root) if item[0] is kind)
                 _, path, storage_factory = case
                 target, kept = self._seed(storage_factory, path)
+                if kind is ErasureStorageKind.SQLITE:
+                    with ERIIEngine(storage_driver=storage_factory(path)) as engine:
+                        pack = engine.export_memory(target.agent_id, target.user_id)
+                        engine.import_memory(pack)
+                    with closing(sqlite3.connect(path)) as connection:
+                        self.assertEqual(
+                            connection.execute(
+                                "SELECT COUNT(*) FROM memory_pack_write_receipts"
+                            ).fetchone()[0],
+                            1,
+                        )
 
                 result = erase_staged_storage(
                     path,
@@ -195,6 +209,21 @@ class StagedErasureContract(unittest.TestCase):
                     result.inventory.counts["deleted"].get("relationship", 0),
                     0,
                 )
+                if kind is ErasureStorageKind.SQLITE:
+                    self.assertEqual(
+                        result.inventory.counts["deleted"].get(
+                            "memory_pack_write_receipt",
+                            0,
+                        ),
+                        1,
+                    )
+                    with closing(sqlite3.connect(path)) as connection:
+                        self.assertEqual(
+                            connection.execute(
+                                "SELECT COUNT(*) FROM memory_pack_write_receipts"
+                            ).fetchone()[0],
+                            0,
+                        )
                 self.assertEqual(
                     result.inventory.counts["delegated"]["memory_vector_delete"],
                     1,
@@ -208,6 +237,70 @@ class StagedErasureContract(unittest.TestCase):
                 self.assertNotIn("TARGET PERSONA BODY", rendered)
                 self.assertNotIn("sensitive-value", rendered)
                 self.assertNotIn("TARGET MEMORY BODY", rendered)
+
+    def test_relationship_erasure_preserves_receipts_from_other_scopes(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = str(Path(root, "memory.sqlite3"))
+            storage = SQLiteStorage(path)
+            with ERIIEngine(storage_driver=storage) as engine:
+                target = engine.initialize_relationship(
+                    "receipt-agent",
+                    "receipt-user",
+                    "RECEIPT TEST PERSONA",
+                )
+
+            remap_receipt_relationship_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    "erii:relationship-import:receipt-agent:receipt-user",
+                )
+            )
+            rows = (
+                ("a" * 64, target.relationship_id),
+                ("b" * 64, remap_receipt_relationship_id),
+                ("c" * 64, "previous-relationship-id"),
+                ("d" * 64, None),
+            )
+            with closing(sqlite3.connect(path)) as connection:
+                connection.executemany(
+                    """
+                    INSERT INTO memory_pack_write_receipts (
+                        operation_id, receipt_version, target_agent, target_user,
+                        relationship_id, result_json, committed_at
+                    ) VALUES (?, 1, 'receipt-agent', 'receipt-user', ?, '{}',
+                              '2026-08-18T00:00:00+00:00')
+                    """,
+                    rows,
+                )
+                connection.commit()
+
+            result = erase_staged_storage(
+                path,
+                ErasureStorageKind.SQLITE,
+                ErasureSelector(
+                    scope=ErasureScope.RELATIONSHIP,
+                    agent_id=target.agent_id,
+                    user_id=target.user_id,
+                    relationship_id=target.relationship_id,
+                ),
+            )
+
+            self.assertEqual(
+                result.inventory.counts["deleted"]["memory_pack_write_receipt"],
+                2,
+            )
+            with closing(sqlite3.connect(path)) as connection:
+                remaining = connection.execute(
+                    """
+                    SELECT operation_id, relationship_id
+                    FROM memory_pack_write_receipts
+                    ORDER BY operation_id
+                    """
+                ).fetchall()
+            self.assertEqual(
+                remaining,
+                [("c" * 64, "previous-relationship-id"), ("d" * 64, None)],
+            )
 
     def test_selector_rejects_ambiguous_or_cross_scope_fields(self):
         with self.assertRaises(ValueError):

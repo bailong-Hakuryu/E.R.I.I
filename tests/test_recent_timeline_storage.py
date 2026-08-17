@@ -320,7 +320,7 @@ class RecentTimelineStorageTest(unittest.TestCase):
             )
             with closing(sqlite3.connect(path)) as connection:
                 connection.execute(
-                    "DELETE FROM schema_migrations WHERE version IN (9, 10)"
+                    "DELETE FROM schema_migrations WHERE version IN (9, 10, 11)"
                 )
                 connection.execute("DROP INDEX IF EXISTS idx_timeline_recent")
                 connection.execute(

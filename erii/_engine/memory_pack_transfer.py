@@ -235,6 +235,124 @@ class MemoryPackWriteExecutionResult:
     history: Optional[MemoryPackHistoryExecutionResult]
 
 
+def _memory_pack_write_result_json(
+    result: MemoryPackWriteExecutionResult,
+) -> str:
+    """Serializes the content-free v1 SQLite operation receipt result."""
+    return _canonical_json(
+        {
+            "receipt_version": 1,
+            "target_agent": result.target_agent,
+            "target_user": result.target_user,
+            "target_relationship_id": result.target_relationship_id,
+            "executed_batches": list(result.executed_batches),
+            "saved_node_count": result.saved_node_count,
+            "core_memory_written": result.core_memory_written,
+            "history": (
+                None
+                if result.history is None
+                else {
+                    "relationship_id": result.history.relationship_id,
+                    "unit_order": list(result.history.unit_order),
+                    "direct_event_count": result.history.direct_event_count,
+                    "adjudication_count": result.history.adjudication_count,
+                }
+            ),
+        }
+    )
+
+
+def _memory_pack_write_result_from_json(
+    result_json: str,
+    plan: MemoryPackWritePlan,
+) -> MemoryPackWriteExecutionResult:
+    """Loads and scope-checks one content-free v1 SQLite receipt result."""
+    try:
+        value = json.loads(result_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("MemoryPack write receipt result is invalid") from exc
+    fields = {
+        "receipt_version",
+        "target_agent",
+        "target_user",
+        "target_relationship_id",
+        "executed_batches",
+        "saved_node_count",
+        "core_memory_written",
+        "history",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("MemoryPack write receipt result fields are invalid")
+    if value["receipt_version"] != 1:
+        raise ValueError("MemoryPack write receipt result version is invalid")
+    if (
+        value["target_agent"] != plan.target_agent
+        or value["target_user"] != plan.target_user
+        or value["target_relationship_id"] != plan.target_relationship_id
+    ):
+        raise ValueError("MemoryPack write receipt result scope is invalid")
+    executed_batches = value["executed_batches"]
+    if (
+        not isinstance(executed_batches, list)
+        or any(not isinstance(item, str) for item in executed_batches)
+        or tuple(executed_batches) != plan.batch_order
+    ):
+        raise ValueError("MemoryPack write receipt batch order is invalid")
+    saved_node_count = value["saved_node_count"]
+    if (
+        isinstance(saved_node_count, bool)
+        or not isinstance(saved_node_count, int)
+        or saved_node_count < 0
+    ):
+        raise ValueError("MemoryPack write receipt node count is invalid")
+    core_memory_written = value["core_memory_written"]
+    if not isinstance(core_memory_written, bool):
+        raise ValueError("MemoryPack write receipt Core result is invalid")
+
+    history_value = value["history"]
+    history = None
+    if history_value is not None:
+        history_fields = {
+            "relationship_id",
+            "unit_order",
+            "direct_event_count",
+            "adjudication_count",
+        }
+        if not isinstance(history_value, dict) or set(history_value) != history_fields:
+            raise ValueError("MemoryPack write receipt history fields are invalid")
+        unit_order = history_value["unit_order"]
+        direct_event_count = history_value["direct_event_count"]
+        adjudication_count = history_value["adjudication_count"]
+        if (
+            not isinstance(history_value["relationship_id"], str)
+            or not isinstance(unit_order, list)
+            or any(not isinstance(item, str) for item in unit_order)
+            or isinstance(direct_event_count, bool)
+            or not isinstance(direct_event_count, int)
+            or direct_event_count < 0
+            or isinstance(adjudication_count, bool)
+            or not isinstance(adjudication_count, int)
+            or adjudication_count < 0
+        ):
+            raise ValueError("MemoryPack write receipt history is invalid")
+        history = MemoryPackHistoryExecutionResult(
+            relationship_id=history_value["relationship_id"],
+            unit_order=tuple(unit_order),
+            direct_event_count=direct_event_count,
+            adjudication_count=adjudication_count,
+        )
+
+    return MemoryPackWriteExecutionResult(
+        target_agent=plan.target_agent,
+        target_user=plan.target_user,
+        target_relationship_id=plan.target_relationship_id,
+        executed_batches=tuple(executed_batches),
+        saved_node_count=saved_node_count,
+        core_memory_written=core_memory_written,
+        history=history,
+    )
+
+
 class MemoryPackRelationshipHistoryStorage(Protocol):
     """Narrow write seam shared by FileStorage and SQLiteStorage history."""
 
@@ -639,6 +757,52 @@ def replay_memory_pack_target_read_set(
 
 def _source_fingerprint(pack: MemoryPack) -> str:
     return _canonical_fingerprint(pack.to_dict())
+
+
+def memory_pack_import_operation_id(
+    source: MemoryPackSourceSnapshot,
+    target_agent: str,
+    target_user: str,
+    *,
+    overwrite: bool,
+) -> str:
+    """Returns the stable v1 identity of one public MemoryPack import request."""
+    return _canonical_fingerprint(
+        {
+            "contract": "erii.memory-pack-import-receipt.v1",
+            "source": source.fingerprint,
+            "target_agent": target_agent,
+            "target_user": target_user,
+            "overwrite": bool(overwrite),
+        }
+    )
+
+
+def memory_pack_import_result_json(_result: MemoryPack) -> str:
+    """Returns the content-free success token stored by the v1 import receipt."""
+    return _canonical_json(
+        {
+            "operation": "memory-pack-import",
+            "receipt_version": 1,
+        }
+    )
+
+
+def memory_pack_import_result_from_json(
+    result_json: str,
+    pack: MemoryPack,
+) -> MemoryPack:
+    """Validates a v1 import success token and returns the caller's source pack."""
+    try:
+        value = json.loads(result_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("MemoryPack import receipt result is invalid") from exc
+    if value != {
+        "operation": "memory-pack-import",
+        "receipt_version": 1,
+    }:
+        raise ValueError("MemoryPack import receipt result is invalid")
+    return pack
 
 
 def _target_snapshot(
@@ -1920,6 +2084,35 @@ def execute_memory_pack_writes(
     # the same deterministic error contract even when a durable adapter is
     # busy or its backing path is temporarily unavailable.
     planned_batches = _validate_memory_pack_write_execution(plan)
+    receipt_capability_provider = getattr(
+        storage,
+        "atomic_memory_pack_write_store_v2",
+        None,
+    )
+    receipt_capability = (
+        receipt_capability_provider()
+        if callable(receipt_capability_provider)
+        else None
+    )
+    if receipt_capability is not None:
+        return receipt_capability.execute_memory_pack_write_v2(
+            plan.fingerprint,
+            plan.target_agent,
+            plan.target_user,
+            plan.target_relationship_id,
+            lambda transactional_storage: _execute_memory_pack_writes_direct(
+                transactional_storage,
+                plan,
+                planned_batches,
+            ),
+            _memory_pack_write_result_json,
+            lambda result_json: _memory_pack_write_result_from_json(
+                result_json,
+                plan,
+            ),
+            lock_relationship_id=plan.target_relationship_id,
+        )
+
     capability_provider = getattr(
         storage,
         "atomic_memory_pack_write_store_v1",
@@ -2191,6 +2384,9 @@ __all__ = [
     "execute_memory_pack_persona_compilation",
     "execute_memory_pack_relationship_history",
     "execute_memory_pack_writes",
+    "memory_pack_import_operation_id",
+    "memory_pack_import_result_from_json",
+    "memory_pack_import_result_json",
     "plan_memory_pack_persona_compilation_writes",
     "plan_memory_pack_persona_growth_writes",
     "plan_memory_pack_writes",

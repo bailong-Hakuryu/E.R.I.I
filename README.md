@@ -183,7 +183,8 @@ E.R.I.I. 不生成最终聊天回复，不会自动启动隐藏处理线程，�
 | Lifecycle Plan | writer `3`，readers `1`–`3` |
 
 `v0.5.0a1` 引入 Relationship Consequence 和 Narrative Tension 持久字段，并将 SQLite
-升级至 schema 10、FileStorage 升级至 format 2。当前 writer 标记 MemoryPack
+升级至 schema 10、FileStorage 升级至 format 2。当前 SQLite schema 11 另加入整包导入的
+版本化主库操作回执。当前 writer 标记 MemoryPack
 `0.5.0a3`；reader 仍接受 declared-readable 的旧 Pack。严格的 `0.4.0a8` reader 会拒绝
 带 0.5 扩展字段的新 Pack，因此兼容性是新 reader 向旧数据单向可读。Character
 Deliberation 和伤害后修复决策仍未实现。

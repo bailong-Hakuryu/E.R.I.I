@@ -13,7 +13,7 @@ import shutil
 import sqlite3
 import stat
 import sys
-from typing import Any, Dict, TypeAlias
+from typing import Dict, TypeAlias
 
 from erii.compatibility import (
     FILE_STORAGE_FORMAT,
@@ -67,8 +67,6 @@ from erii._lifecycle.serializers import (
     plan_intent_dict as _plan_intent_dict,
     selector_from_dict as _selector_from_dict,
     selector_to_dict as _selector_to_dict,
-    target_from_dict as _target_from_dict,
-    target_to_dict as _target_to_dict,
 )
 from erii.lifecycle_streaming import (
     RegularFileIdentity,
@@ -88,15 +86,17 @@ _BACKUP_STRATEGY_ID = "backup-byte-preserving-v1"
 _RESTORE_STRATEGY_ID = "restore-byte-preserving-v1"
 _FILE_STORAGE_LEGACY_TO_V2_STRATEGY_ID = "file-storage-legacy-to-v2"
 _FILE_STORAGE_V1_TO_V2_STRATEGY_ID = "file-storage-v1-to-v2"
-_SQLITE_SCHEMA_6_TO_10_STRATEGY_ID = "sqlite-schema-6-to-10"
-_SQLITE_SCHEMA_9_TO_10_STRATEGY_ID = "sqlite-schema-9-to-10"
+_SQLITE_SCHEMA_6_TO_11_STRATEGY_ID = "sqlite-schema-6-to-11"
+_SQLITE_SCHEMA_9_TO_11_STRATEGY_ID = "sqlite-schema-9-to-11"
+_SQLITE_SCHEMA_10_TO_11_STRATEGY_ID = "sqlite-schema-10-to-11"
 _FILE_STORAGE_UPGRADE_STRATEGIES = {
     "legacy": _FILE_STORAGE_LEGACY_TO_V2_STRATEGY_ID,
     "1": _FILE_STORAGE_V1_TO_V2_STRATEGY_ID,
 }
 _SQLITE_UPGRADE_STRATEGIES = {
-    "6": _SQLITE_SCHEMA_6_TO_10_STRATEGY_ID,
-    "9": _SQLITE_SCHEMA_9_TO_10_STRATEGY_ID,
+    "6": _SQLITE_SCHEMA_6_TO_11_STRATEGY_ID,
+    "9": _SQLITE_SCHEMA_9_TO_11_STRATEGY_ID,
+    "10": _SQLITE_SCHEMA_10_TO_11_STRATEGY_ID,
 }
 _MEMORY_PACK_STRATEGY_PREFIX = "memory-pack-"
 _ERASE_STRATEGY_PREFIX = "erase-staged-"

@@ -31,13 +31,14 @@ from erii.storage.timeline_order import timeline_timestamp_sort_key
 
 
 _SQLITE_HEADER = b"SQLite format 3\x00"
-_SOURCE_SCHEMA_VERSIONS = frozenset({6, 9})
+_SOURCE_SCHEMA_VERSIONS = frozenset({6, 9, 10})
 _TARGET_SCHEMA_VERSION = int(SQLITE_FORMAT.current_version)
 _MIGRATION_NAMES = {
     7: "bounded-recent-timeline-alpha7",
     8: "semantic-timeline-order-alpha7",
     9: "utc-stable-timeline-order-alpha7",
     10: "relationship-consequence-journal-alpha1",
+    11: "memory-pack-write-receipts-v1",
 }
 
 
@@ -356,6 +357,17 @@ def _migrate_relationship_consequence_v10(
         cursor.close()
 
 
+def _migrate_memory_pack_write_receipts_v11(
+    connection: sqlite3.Connection,
+) -> None:
+    """Reuses the runtime receipt schema migration for the staging copy."""
+    cursor = connection.cursor()
+    try:
+        SQLiteStorage._migrate_memory_pack_write_receipts_v11(cursor)
+    finally:
+        cursor.close()
+
+
 def _index_columns(
     connection: sqlite3.Connection,
     index_name: str,
@@ -514,14 +526,44 @@ def _validate_upgraded_connection(connection: sqlite3.Connection) -> None:
     ).fetchone()
     if index_sql is None or "sort_key" not in str(index_sql[0]):
         raise StorageIntegrityError("SQLite migration did not install the current index")
-    migration_name = connection.execute(
-        "SELECT name FROM schema_migrations WHERE version = 10"
-    ).fetchone()
-    if migration_name is None or str(migration_name[0]) != _MIGRATION_NAMES[10]:
-        raise StorageIntegrityError(
-            "SQLite migration did not record the v10 schema identity"
-        )
+    for version in (10, 11):
+        migration_name = connection.execute(
+            "SELECT name FROM schema_migrations WHERE version = ?",
+            (version,),
+        ).fetchone()
+        if (
+            migration_name is None
+            or str(migration_name[0]) != _MIGRATION_NAMES[version]
+        ):
+            raise StorageIntegrityError(
+                f"SQLite migration did not record the v{version} schema identity"
+            )
     _validate_relationship_consequence_schema(connection)
+    receipt_columns = tuple(
+        str(row[1])
+        for row in connection.execute(
+            "PRAGMA table_info(memory_pack_write_receipts)"
+        )
+    )
+    if receipt_columns != (
+        "operation_id",
+        "receipt_version",
+        "target_agent",
+        "target_user",
+        "relationship_id",
+        "result_json",
+        "committed_at",
+    ):
+        raise StorageIntegrityError(
+            "SQLite migration did not install the MemoryPack receipt table"
+        )
+    if _index_columns(
+        connection,
+        "idx_memory_pack_write_receipts_scope",
+    ) != ("target_agent", "target_user", "relationship_id"):
+        raise StorageIntegrityError(
+            "SQLite migration did not install the MemoryPack receipt scope index"
+        )
     _semantic_digest_from_connection(connection)
 
 
@@ -533,8 +575,8 @@ def _migrate_loaded_connection(
         source_version = _schema_version(connection)
         if source_version not in _SOURCE_SCHEMA_VERSIONS:
             raise LifecyclePlanError(
-                "SQLite staging migration supports only schema 6 or 9 "
-                "sources to schema 10"
+                "SQLite staging migration supports only schema 6, 9, or 10 "
+                f"sources to schema {_TARGET_SCHEMA_VERSION}"
             )
         if [row[0] for row in connection.execute("PRAGMA integrity_check")] != ["ok"]:
             raise StorageIntegrityError("SQLite upgrade source failed integrity check")
@@ -549,6 +591,7 @@ def _migrate_loaded_connection(
             (8, _migrate_semantic_timeline_order_v8),
             (9, _migrate_stable_timeline_order_v9),
             (10, _migrate_relationship_consequence_v10),
+            (11, _migrate_memory_pack_write_receipts_v11),
         ):
             if version <= source_version:
                 continue

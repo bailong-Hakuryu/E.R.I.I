@@ -37,8 +37,8 @@ class CompatibilityCatalog:
 
 SQLITE_FORMAT = FormatCompatibility(
     format_id="erii.sqlite",
-    current_version="10",
-    readable_versions=tuple(str(version) for version in range(11)),
+    current_version="11",
+    readable_versions=tuple(str(version) for version in range(12)),
 )
 FILE_STORAGE_FORMAT = FormatCompatibility(
     format_id="erii.file-storage",

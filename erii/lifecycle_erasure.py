@@ -42,6 +42,7 @@ from erii.models.consequence import (
 from erii.models.relationship import RelationshipEvent
 from erii.models.turn import TurnRecord
 from erii.storage.file_storage import FileStorage
+from erii.storage.memory_pack import memory_pack_remap_scope_id
 from erii.storage.sqlite_storage import SQLiteStorage
 
 
@@ -495,6 +496,36 @@ def _sqlite_profile(connection: sqlite3.Connection, relationship_id: str):
     ).fetchone()
 
 
+def _delete_sqlite_memory_pack_receipts(
+    connection: sqlite3.Connection,
+    selector: ErasureSelector,
+    deleted: Counter[str],
+) -> None:
+    """Revokes cached import success after any target-scope erasure."""
+    if selector.scope is ErasureScope.COMPLETE_USER:
+        cursor = connection.execute(
+            "DELETE FROM memory_pack_write_receipts WHERE target_user = ?",
+            (selector.user_id,),
+        )
+    else:
+        agent_id = _required_text(selector.agent_id, "agent_id")
+        user_id = _required_text(selector.user_id, "user_id")
+        relationship_id = _required_text(
+            selector.relationship_id,
+            "relationship_id",
+        )
+        remap_scope_id = memory_pack_remap_scope_id(agent_id, user_id)
+        cursor = connection.execute(
+            """
+            DELETE FROM memory_pack_write_receipts
+            WHERE target_agent = ? AND target_user = ?
+              AND relationship_id IN (?, ?)
+            """,
+            (agent_id, user_id, relationship_id, remap_scope_id),
+        )
+    deleted["memory_pack_write_receipt"] += cursor.rowcount
+
+
 def _load_sqlite_consequence_journals(
     connection: sqlite3.Connection,
     relationship_id: str,
@@ -584,6 +615,7 @@ def _erase_sqlite_relationship(
     with closing(sqlite3.connect(path)) as connection:
         connection.row_factory = sqlite3.Row
         connection.execute("BEGIN IMMEDIATE")
+        _delete_sqlite_memory_pack_receipts(connection, selector, deleted)
         row = _sqlite_profile(connection, selector.relationship_id or "")
         if row is None:
             raise ErasureSelectionError("relationship was not found in staging")
@@ -1593,6 +1625,7 @@ def _erase_sqlite_turn(
     with closing(sqlite3.connect(path)) as connection:
         connection.row_factory = sqlite3.Row
         connection.execute("BEGIN IMMEDIATE")
+        _delete_sqlite_memory_pack_receipts(connection, selector, deleted)
         profile = _sqlite_profile(connection, selector.relationship_id or "")
         if profile is None:
             raise ErasureSelectionError("relationship was not found in staging")
@@ -1894,6 +1927,7 @@ def _erase_sqlite_event(
     with closing(sqlite3.connect(path)) as connection:
         connection.row_factory = sqlite3.Row
         connection.execute("BEGIN IMMEDIATE")
+        _delete_sqlite_memory_pack_receipts(connection, selector, deleted)
         profile = _sqlite_profile(connection, selector.relationship_id or "")
         if profile is None:
             raise ErasureSelectionError("relationship was not found in staging")
@@ -2196,6 +2230,17 @@ def _erase_sqlite_complete_user(
         )
         affected.extend(current_affected)
         inventories.append(inventory)
+    receipt_deletions: Counter[str] = Counter()
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _delete_sqlite_memory_pack_receipts(
+            connection,
+            selector,
+            receipt_deletions,
+        )
+        connection.commit()
+    if receipt_deletions:
+        inventories.append(_empty_inventory(receipt_deletions))
     return tuple(sorted(affected)), _merge_inventories(inventories)
 
 
