@@ -69,4 +69,4 @@ tests/test_real_api_integration_simple.py
 *.swp
 *.swo
 .DS_Store
-erii/_lifecycle/
+# erii/_lifecycle/  # Now tracked for R2 refactoring
