@@ -2,8 +2,10 @@ E.R.I.I. R2 会话报告（已更正）
 ================================
 
 原报告把“复制/局部提取成功”误记为“R2 完成”，并建议跳过 R3 进入 R4。
-2026-08-18 审计已撤销该结论：历史兼容回归已修复，但 Contracts、Inspection、Planning
-尚未完成迁移，完整门禁尚未运行。
+2026-08-18 审计已撤销该结论：历史兼容回归和 R1B 剩余退出门均已修复，但 R2 的
+Contracts、Inspection、Planning 尚未完成迁移，R2 自身退出门尚未运行。
 
-权威的当前说明：docs/architecture/refactoring-status.md
+权威当前状态：docs/architecture/refactoring-status.md
+正式 Lifecycle 计划：docs/architecture/lifecycle-refactoring-plan.md
+R2 历史实施日志：docs/architecture/r2-implementation-log.md
 R2 局部实施审计：docs/architecture/r2-completion-summary.md

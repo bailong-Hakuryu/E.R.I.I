@@ -1,8 +1,11 @@
 # Data Lifecycle 深 Module 重构计划
 
-> 状态：已排期，尚未开始实现
+> 状态：R2 `in_progress`；早期 Codec/Serializer 提取已修复，Contracts、Inspection 和
+> Planning 尚未完成
 >
 > 总控计划：[结构重构总控路线图](refactoring-program.md)
+>
+> 当前实施状态：[refactoring-status.md](refactoring-status.md)
 >
 > 基线：`0.5.0a3`，提交 `94a61d5c1b77b5aa8871521aa53b0dba58dedf38`
 >
@@ -37,16 +40,20 @@ report = coordinator.execute(plan)
 
 ## 2. 当前真实结构
 
-旧计划把 Lifecycle 描述为一个尚未拆分的 4000 行文件，但当前源码已经完成部分纵向提取：
+Lifecycle 已完成部分纵向提取和早期 R2 工作，但只读路径尚未形成完整的深 Module：
 
 | 路径 | 当前职责 | 状态 |
 | --- | --- | --- |
-| `erii/data_lifecycle.py` | 公共合同、Plan Codec、Inspection、Backup/Restore/Upgrade/Import/Erase 编排 | 仍是主巨型 Implementation |
+| `erii/data_lifecycle.py` | 公共合同本体、Inspection、Planning、Backup/Restore/Upgrade/Import/Erase 编排 | 仍是主 Implementation |
+| `erii/_lifecycle/plan_codec.py` | 规范 JSON、严格解码和摘要原语 | 已接管 |
+| `erii/_lifecycle/serializers.py` | 类型/Plan 文档转换、历史 producer catalog | 已接管且兼容回归已修复 |
+| `erii/_lifecycle/contracts.py` | 指向 `data_lifecycle` 唯一合同类型的私有别名 | 合同本体尚未迁移 |
+| `erii/_lifecycle/utils.py` | 指向 `data_lifecycle` 权威 helper 的私有别名 | 等待 Inspection 整体迁移 |
 | `erii/lifecycle_streaming.py` | 稳定文件/目录扫描、独占复制、identity | 已独立 |
-| `erii/lifecycle_sqlite_upgrade.py` | SQLite 6/9 到 10 的迁移与语义摘要 | 已独立 |
+| `erii/lifecycle_sqlite_upgrade.py` | SQLite 6/9/10 到 11 的迁移与语义摘要 | 已独立 |
 | `erii/lifecycle_memory_pack_import.py` | MemoryPack staging import | 已独立 |
 | `erii/lifecycle_memory_pack_import_contracts.py` | staging import 合同 | 已独立 |
-| `erii/lifecycle_erasure.py` | FileStorage/SQLite 擦除、重建和 staged 验证 | 已独立但仍有 2826 行 |
+| `erii/lifecycle_erasure.py` | FileStorage/SQLite 擦除、重建和 staged 验证 | 已独立但仍约 2871 行 |
 | `erii/lifecycle_erasure_contracts.py` | 擦除 selector、inventory、proof | 已独立 |
 
 因此本轮不是从零“把 Erasure 拆出去”，而是把已经存在的这些 Module 收敛到一致的内部
@@ -54,10 +61,10 @@ Interface，并从 `data_lifecycle.py` 移除剩余重复规则。
 
 ### 2.1 `data_lifecycle.py` 当前职责
 
-约 4280 行的文件目前包含：
+约 3941 行的文件目前包含：
 
 - 目标、状态、操作、结果、Request、Plan、Report 等公共合同；
-- Lifecycle Plan v1 至当前的严格 JSON Codec；
+- Lifecycle Plan v1 至当前的读取/验证编排；规范 JSON 和类型转换已委托内部模块；
 - 策略选择、Plan shape 和 content identity 验证；
 - 文件、目录、SQLite 和 MemoryPack Inspection；
 - Payload Snapshot 与 format Adapter；
@@ -244,7 +251,7 @@ Inspector 获得。
 `upgrades.py` 选择并调用格式 Adapter：
 
 - FileStorage legacy/1 到 2；
-- SQLite 6/9 到 10；
+- SQLite 6/9/10 到 11；
 - declared-readable MemoryPack 到当前 writer。
 
 具体 SQLite 迁移继续由现有已验证 Implementation 承担。内部 Interface 接受冻结 Snapshot，
@@ -284,6 +291,10 @@ class StagedErasure:
 
 ### 7.1 R2A：Contracts 和 Plan Codec，2026-09-14 至 2026-09-20
 
+当前进度：规范 JSON 原语和 serializer 转换已提前提取，历史 producer catalog 回归也已
+修复；但 `contracts.py` 仍是别名，合同本体和完整 Plan shape validation 尚未迁移，因此
+R2A 不能标记完成。
+
 任务：
 
 1. 建立 `erii/_lifecycle/` 私有包；
@@ -296,6 +307,9 @@ class StagedErasure:
 退出门：根级符号和 data-format snapshot 无差异；当前和历史 Plan round-trip/拒绝行为不变。
 
 ### 7.2 R2B：Inspection 和 Planning，2026-09-21 至 2026-09-27
+
+当前进度：尚未形成独立 Inspector/Planner Interface；早期草稿使用过“R2C”标签，现已
+统一回本节，不新增或跳过正式阶段。
 
 任务：
 

@@ -107,6 +107,10 @@ Turn 文档中的示例必须与 `ERIIEngine` 的公开签名一起通过测试�
   源码生成的 Engine、Lifecycle、Storage Interface 和 MemoryPack 调用地图。
 - [Engine 重构计划](architecture/engine-refactoring-plan.md)
 - [Lifecycle 重构计划](architecture/lifecycle-refactoring-plan.md)
+- [当前结构重构状态](architecture/refactoring-status.md)：R1B 收口证据、R2 已实施部分和
+  尚未完成的退出门。
+- [R2 历史实施日志](architecture/r2-implementation-log.md)：早期 Codec/Serializer 提取、
+  审计修复及阶段草稿索引；不覆盖权威状态。
 - [ADR 索引](adr/README.md)
 
 ## 实验模块

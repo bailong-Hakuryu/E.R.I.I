@@ -32,6 +32,10 @@ R1B 收口证据：
 - `erii/_lifecycle/utils.py` 不再保存重复实现；当前只为 `erii.data_lifecycle` 中的权威
   helper 提供私有别名，等待 Inspection 整体迁移。
 
+记录分层：本文是当前实施状态；[Lifecycle 重构计划](lifecycle-refactoring-plan.md) 定义
+正式范围和退出门；[R2 实施日志](r2-implementation-log.md) 与其链接的阶段报告只保留
+历史过程和已撤销结论，不能覆盖权威状态。
+
 ## 2026-08-18 修复审计
 
 序列化提取曾遗漏两个 MemoryPack Backup-v1 历史 producer catalog，并跳过旧 catalog 的

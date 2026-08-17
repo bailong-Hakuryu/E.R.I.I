@@ -13,11 +13,14 @@
 - 没有先按 producer catalog 校验持久化状态；
 - 改变了旧 catalog 校验后按当前 catalog 重新分类的顺序。
 
-修复恢复了 R2 前的精确行为。历史兼容测试现为 `4 passed, 23 subtests passed`，核心
-Lifecycle 子集为 `36 passed, 2 skipped, 44 subtests passed`；全量 Python 测试为
-`1028 passed, 14 skipped, 553 subtests passed`，DeepSeek 离线测试为 `45 passed`。
+修复恢复了 R2 前的精确行为；R1B schema 11 收口又补齐了 SQLite schema-10 producer
+catalog。历史兼容测试现为 `4 passed, 24 subtests passed`，核心 Lifecycle 子集为
+`36 passed, 2 skipped, 44 subtests passed`；全量 Python 测试为
+`1034 passed, 14 skipped, 96 warnings, 555 subtests passed`，DeepSeek 离线测试为
+`45 passed`。
 
 此外，错误定义了第二套枚举/数据类的 `contracts.py` 已改为引用唯一合同实现；无调用方的
 `utils.py` 也已改为权威 helper 的别名，不再保存第二份逻辑。
 
-R2 仍未完成。当前状态和剩余门禁见 [refactoring-status.md](refactoring-status.md)。
+R2 仍未完成。当前状态和剩余门禁见 [refactoring-status.md](refactoring-status.md)，历史
+实施顺序见 [r2-implementation-log.md](r2-implementation-log.md)。
