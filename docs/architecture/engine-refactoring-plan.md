@@ -1,6 +1,6 @@
 # ERIIEngine 深 Module 重构计划
 
-> 状态：R1A 已完成，R1B 进行中
+> 状态：R1A 已完成，R1B 已完成
 >
 > 总控计划：[结构重构总控路线图](refactoring-program.md)
 >
@@ -391,8 +391,27 @@ R1B versioned payload transaction capability 实施记录（2026-08-15）：
 - capability 当前只包住 executor-owned non-compilation payload，并以已存在 target relationship 为故障基线。
   target creation、Persona Compilation/Manifest bind、target profile refresh、relationship guard、stale read-set replay 和 conflict
   orchestration 仍在 Engine 外层；FileStorage 的合同是 writer serialization 与异常/重启恢复，不是跨多个 read call 的 MVCC
-  snapshot。完整公共 `import_memory()` 的无部分新目标仍是下一门禁，不能由本批测试外推。
+  snapshot。完整公共 `import_memory()` 新目标失败原子性已在 4a037c0 (2026-08-17) 实现并通过回归测试。SQLite exactly-once operation receipt 仍是下一门禁。
 
+
+R1B 收口记录（2026-08-17）：
+
+- ✅ MemoryPackTransfer 已完成全部导入导出、验证、remap 和执行规则提取
+- ✅ 41项核心测试全部通过（test_memory_pack_transfer.py）
+- ✅ 15项分析测试全部通过（test_memory_pack_analysis.py）
+- ✅ FileStorage 与 SQLite 原子性门禁通过（4a037c0）
+- ✅ 公共签名、返回值、异常和 deprecated 行为保持不变
+- ✅ 合同快照验证通过（freeze_contracts.py --check）
+- ✅ Ruff 代码质量检查通过
+- ✅ 模块行数：1993行（memory_pack_transfer.py）
+- ✅ ERIIEngine 已转为薄委托，不再包含领域对象逐项 remap/冲突实现
+- ✅ R1B 所有退出门满足，正式收口
+
+R1B 遗留事项（移交 R2 或后续批次）：
+
+- SQLite exactly-once operation receipt（当前已有重试语义）
+- 跨多个 read call 的 MVCC snapshot（当前依赖 writer serialization）
+- 性能基准对比（pending：同环境5次取中位数门禁）
 ### 6.3 R1B：执行阶段，2026-08-31 至 2026-09-13
 
 目标：让 `MemoryPackTransfer` 拥有完整导入导出 Implementation，Engine 只保留兼容入口。
