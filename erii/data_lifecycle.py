@@ -54,6 +54,22 @@ from erii._lifecycle.plan_codec import (
     is_sha256 as _is_sha256,
     sha256_json as _sha256_json,
 )
+from erii._lifecycle.serializers import (
+    assessment_from_dict as _assessment_from_dict,
+    assessment_to_dict as _assessment_to_dict,
+    content_from_backup_manifest as _content_from_backup_manifest,
+    content_from_dict as _content_from_dict,
+    content_to_dict as _content_to_dict,
+    directory_identity_from_dict as _directory_identity_from_dict,
+    directory_identity_to_dict as _directory_identity_to_dict,
+    plan_body_dict as _plan_body_dict,
+    plan_document_dict as _plan_document_dict,
+    plan_intent_dict as _plan_intent_dict,
+    selector_from_dict as _selector_from_dict,
+    selector_to_dict as _selector_to_dict,
+    target_from_dict as _target_from_dict,
+    target_to_dict as _target_to_dict,
+)
 from erii.lifecycle_streaming import (
     RegularFileIdentity,
     copy_regular_file_exclusive,
@@ -132,73 +148,6 @@ class LifecycleTargetKind(str, Enum):
     BACKUP = "backup"
 
 
-_BACKUP_V1_HISTORICAL_PRODUCER_FORMATS = {
-    (LifecycleTargetKind.FILE_STORAGE, "1"): FormatCompatibility(
-        format_id="erii.file-storage",
-        current_version="1",
-        readable_versions=("legacy", "1"),
-    ),
-    (LifecycleTargetKind.SQLITE, "9"): FormatCompatibility(
-        format_id="erii.sqlite",
-        current_version="9",
-        readable_versions=tuple(str(version) for version in range(10)),
-    ),
-    (LifecycleTargetKind.MEMORY_PACK, "0.4.0a8"): FormatCompatibility(
-        format_id="erii.memory-pack",
-        current_version="0.4.0a8",
-        readable_versions=(
-            "0.1.0",
-            "0.2.0",
-            "0.4.0",
-            "0.4.0a2",
-            "0.4.0a3",
-            "0.4.0a4",
-            "0.4.0a5",
-            "0.4.0a6",
-            "0.4.0a7",
-            "0.4.0a8",
-        ),
-    ),
-    # Historical 0.5.0a1 source and the published 0.5.0a2 package artifact both
-    # wrote MemoryPack 0.5.0a1 into Backup-v1 source identities. Public post-tag
-    # a2 source checkouts also briefly wrote 0.5.0a2. These catalogs are frozen
-    # reader facts; they do not relax validation of live lifecycle plans.
-    (LifecycleTargetKind.MEMORY_PACK, "0.5.0a1"): FormatCompatibility(
-        format_id="erii.memory-pack",
-        current_version="0.5.0a1",
-        readable_versions=(
-            "0.1.0",
-            "0.2.0",
-            "0.4.0",
-            "0.4.0a2",
-            "0.4.0a3",
-            "0.4.0a4",
-            "0.4.0a5",
-            "0.4.0a6",
-            "0.4.0a7",
-            "0.4.0a8",
-            "0.5.0a1",
-        ),
-    ),
-    (LifecycleTargetKind.MEMORY_PACK, "0.5.0a2"): FormatCompatibility(
-        format_id="erii.memory-pack",
-        current_version="0.5.0a2",
-        readable_versions=(
-            "0.1.0",
-            "0.2.0",
-            "0.4.0",
-            "0.4.0a2",
-            "0.4.0a3",
-            "0.4.0a4",
-            "0.4.0a5",
-            "0.4.0a6",
-            "0.4.0a7",
-            "0.4.0a8",
-            "0.5.0a1",
-            "0.5.0a2",
-        ),
-    ),
-}
 
 
 class LifecycleStatus(str, Enum):
@@ -634,271 +583,6 @@ class LifecycleReport:
 # Moved to erii._lifecycle.plan_codec
 # Moved to erii._lifecycle.plan_codec
 # Moved to erii._lifecycle.plan_codec
-def _target_to_dict(target: LifecycleTarget) -> Dict[str, object]:
-    return {"kind": target.kind.value, "path": target.path}
-
-
-def _target_from_dict(value: object) -> LifecycleTarget:
-    if not isinstance(value, dict) or set(value) != {"kind", "path"}:
-        raise LifecyclePlanError("lifecycle target fields are invalid")
-    return LifecycleTarget(
-        kind=LifecycleTargetKind(value["kind"]),
-        path=value["path"],
-    )
-
-
-def _assessment_to_dict(assessment: LifecycleAssessment) -> Dict[str, object]:
-    return {
-        "target": _target_to_dict(assessment.target),
-        "status": assessment.status.value,
-        "format_id": assessment.format_id,
-        "detected_version": assessment.detected_version,
-        "current_version": assessment.current_version,
-        "fingerprint": assessment.fingerprint,
-        "file_count": assessment.file_count,
-        "warnings": list(assessment.warnings),
-    }
-
-
-def _assessment_from_dict(value: object) -> LifecycleAssessment:
-    fields = {
-        "target",
-        "status",
-        "format_id",
-        "detected_version",
-        "current_version",
-        "fingerprint",
-        "file_count",
-        "warnings",
-    }
-    if not isinstance(value, dict) or set(value) != fields:
-        raise LifecyclePlanError("lifecycle assessment fields are invalid")
-    warnings = value["warnings"]
-    if not isinstance(warnings, list) or any(not isinstance(item, str) for item in warnings):
-        raise LifecyclePlanError("lifecycle assessment warnings are invalid")
-    file_count = value["file_count"]
-    if isinstance(file_count, bool) or not isinstance(file_count, int) or file_count < 0:
-        raise LifecyclePlanError("lifecycle assessment file_count is invalid")
-    fingerprint = value["fingerprint"]
-    if fingerprint is not None and not _is_sha256(fingerprint):
-        raise LifecyclePlanError("lifecycle assessment fingerprint is invalid")
-    return LifecycleAssessment(
-        target=_target_from_dict(value["target"]),
-        status=LifecycleStatus(value["status"]),
-        format_id=value["format_id"],
-        detected_version=value["detected_version"],
-        current_version=value["current_version"],
-        fingerprint=fingerprint,
-        file_count=file_count,
-        warnings=tuple(warnings),
-    )
-
-
-def _content_to_dict(content: LifecycleContentIdentity) -> Dict[str, object]:
-    return {
-        "kind": content.kind.value,
-        "status": content.status.value,
-        "format_id": content.format_id,
-        "detected_version": content.detected_version,
-        "current_version": content.current_version,
-        "fingerprint": content.fingerprint,
-        "file_count": content.file_count,
-    }
-
-
-def _content_from_dict(value: object) -> LifecycleContentIdentity:
-    fields = {
-        "kind",
-        "status",
-        "format_id",
-        "detected_version",
-        "current_version",
-        "fingerprint",
-        "file_count",
-    }
-    if not isinstance(value, dict) or set(value) != fields:
-        raise LifecyclePlanError("lifecycle content identity fields are invalid")
-    return LifecycleContentIdentity(
-        kind=LifecycleTargetKind(value["kind"]),
-        status=LifecycleStatus(value["status"]),
-        format_id=value["format_id"],
-        detected_version=value["detected_version"],
-        current_version=value["current_version"],
-        fingerprint=value["fingerprint"],
-        file_count=value["file_count"],
-    )
-
-
-def _content_status_for_catalog(
-    compatibility: FormatCompatibility,
-    detected_version: object,
-) -> LifecycleStatus:
-    if detected_version is None:
-        return LifecycleStatus.EMPTY
-    detected = require_supported_version(compatibility, detected_version)
-    return (
-        LifecycleStatus.CURRENT
-        if detected == compatibility.current_version
-        else LifecycleStatus.MIGRATION_REQUIRED
-    )
-
-
-def _content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
-    """Normalizes only frozen Backup-v1 producer catalogs before payload checks.
-
-    Backup v1 persists the producer's ``current_version`` and status. Frozen
-    released/source catalogs can therefore describe an older format as current,
-    while this reader correctly classifies it as a migration source. Known
-    producer views are validated against their exact old readable sets, then
-    reclassified against the current catalog. Lifecycle plans and live
-    assessments remain current-catalog strict.
-    """
-    if not isinstance(value, dict):
-        return _content_from_dict(value)
-    try:
-        kind = LifecycleTargetKind(value.get("kind"))
-    except (TypeError, ValueError):
-        return _content_from_dict(value)
-    producer_current = value.get("current_version")
-    historical = (
-        _BACKUP_V1_HISTORICAL_PRODUCER_FORMATS.get((kind, producer_current))
-        if isinstance(producer_current, str)
-        else None
-    )
-    if (
-        historical is None
-        or value.get("format_id") != historical.format_id
-        or value.get("current_version") != historical.current_version
-    ):
-        return _content_from_dict(value)
-
-    producer_status = _content_status_for_catalog(
-        historical,
-        value.get("detected_version"),
-    )
-    if value.get("status") != producer_status.value:
-        raise LifecyclePlanError(
-            "backup source status does not match its historical producer catalog"
-        )
-
-    current = _compatibility_for_kind(kind)
-    normalized = dict(value)
-    normalized["status"] = _content_status_for_catalog(
-        current,
-        value.get("detected_version"),
-    ).value
-    normalized["current_version"] = current.current_version
-    return _content_from_dict(normalized)
-
-
-def _directory_identity_to_dict(
-    identity: LifecycleDirectoryIdentity,
-) -> Dict[str, object]:
-    return {
-        "resolved_path": identity.resolved_path,
-        # Decimal strings avoid IEEE-754 precision loss in JSON tooling on
-        # Windows, where file identities commonly exceed 2**53.
-        "device": str(identity.device),
-        "inode": str(identity.inode),
-    }
-
-
-def _directory_identity_from_dict(value: object) -> LifecycleDirectoryIdentity:
-    if not isinstance(value, dict) or set(value) != {"resolved_path", "device", "inode"}:
-        raise LifecyclePlanError("lifecycle directory identity fields are invalid")
-    device = value["device"]
-    inode = value["inode"]
-    if (
-        not isinstance(device, str)
-        or not device.isdecimal()
-        or not isinstance(inode, str)
-        or not inode.isdecimal()
-    ):
-        raise LifecyclePlanError("lifecycle directory identity numbers are invalid")
-    return LifecycleDirectoryIdentity(
-        resolved_path=value["resolved_path"],
-        device=int(device),
-        inode=int(inode),
-    )
-
-
-def _selector_to_dict(
-    selector: LifecyclePlanSelector | None,
-) -> Dict[str, object] | None:
-    if selector is None:
-        return None
-    if isinstance(selector, ErasureSelector):
-        return selector.to_dict()
-    if isinstance(selector, MemoryPackImportOptions):
-        return {
-            "target_agent_id": selector.target_agent_id,
-            "target_user_id": selector.target_user_id,
-        }
-    raise LifecyclePlanError("lifecycle plan selector is invalid")
-
-
-def _selector_from_dict(
-    operation: LifecycleOperation,
-    value: object,
-) -> LifecyclePlanSelector | None:
-    if value is None:
-        return None
-    if operation in {LifecycleOperation.ERASE, LifecycleOperation.REBUILD}:
-        if not isinstance(value, dict):
-            raise LifecyclePlanError("lifecycle erasure selector is invalid")
-        try:
-            return ErasureSelector.from_dict(value)
-        except (TypeError, ValueError) as exc:
-            raise LifecyclePlanError("lifecycle erasure selector is invalid") from exc
-    if operation is LifecycleOperation.IMPORT:
-        fields = {"target_agent_id", "target_user_id"}
-        if not isinstance(value, dict) or set(value) != fields:
-            raise LifecyclePlanError("lifecycle MemoryPack import options are invalid")
-        return MemoryPackImportOptions(
-            target_agent_id=value["target_agent_id"],
-            target_user_id=value["target_user_id"],
-        )
-    raise LifecyclePlanError("this lifecycle operation cannot carry a selector")
-
-
-def _plan_intent_dict(plan: LifecyclePlan) -> Dict[str, object]:
-    intent: Dict[str, object] = {
-        "contract_version": plan.contract_version,
-        "operation": plan.operation.value,
-        "source": _assessment_to_dict(plan.source),
-        "destination": _assessment_to_dict(plan.destination),
-        "destination_parent": _directory_identity_to_dict(plan.destination_parent),
-        "content": _content_to_dict(plan.content),
-    }
-    if plan.contract_version in {"2", "3"}:
-        intent.update(
-            {
-                "strategy_id": plan.strategy_id,
-                "backup_destination": (
-                    None
-                    if plan.backup_destination is None
-                    else _assessment_to_dict(plan.backup_destination)
-                ),
-                "backup_destination_parent": (
-                    None
-                    if plan.backup_destination_parent is None
-                    else _directory_identity_to_dict(plan.backup_destination_parent)
-                ),
-            }
-        )
-    if plan.contract_version == "3":
-        intent["selector"] = _selector_to_dict(plan.selector)
-    return intent
-
-
-def _plan_body_dict(plan: LifecyclePlan) -> Dict[str, object]:
-    return {**_plan_intent_dict(plan), "operation_id": plan.operation_id}
-
-
-def _plan_document_dict(plan: LifecyclePlan) -> Dict[str, object]:
-    return {**_plan_body_dict(plan), "plan_digest": plan.plan_digest}
-
-
 def _plan_from_document(value: object) -> LifecyclePlan:
     v1_fields = {
         "contract_version",
