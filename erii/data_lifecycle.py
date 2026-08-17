@@ -48,6 +48,12 @@ from erii.lifecycle_memory_pack_import_contracts import (
     MemoryPackStagingAdapter,
     MemoryPackStagingImportReport,
 )
+from erii._lifecycle.plan_codec import (
+    canonical_json as _canonical_json,
+    decode_strict_json as _decode_strict_json,
+    is_sha256 as _is_sha256,
+    sha256_json as _sha256_json,
+)
 from erii.lifecycle_streaming import (
     RegularFileIdentity,
     copy_regular_file_exclusive,
@@ -624,42 +630,10 @@ class LifecycleReport:
         }
 
 
-def _is_sha256(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 64
-        and all(character in "0123456789abcdef" for character in value)
-    )
-
-
-def _canonical_json(value: object) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
-def _sha256_json(value: object) -> str:
-    return hashlib.sha256(_canonical_json(value)).hexdigest()
-
-
-def _decode_strict_json(json_text: str, *, label: str) -> Any:
-    if not isinstance(json_text, str):
-        raise ValueError(f"{label} must be JSON text")
-
-    def reject_duplicates(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"{label} contains duplicate field {key!r}")
-            result[key] = value
-        return result
-
-    return json.loads(json_text, object_pairs_hook=reject_duplicates)
-
-
+# Moved to erii._lifecycle.plan_codec
+# Moved to erii._lifecycle.plan_codec
+# Moved to erii._lifecycle.plan_codec
+# Moved to erii._lifecycle.plan_codec
 def _target_to_dict(target: LifecycleTarget) -> Dict[str, object]:
     return {"kind": target.kind.value, "path": target.path}
 
