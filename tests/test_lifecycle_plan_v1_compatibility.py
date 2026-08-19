@@ -8,6 +8,12 @@ import tempfile
 import unittest
 
 from erii import FileStorage
+from erii._lifecycle.plan_codec import (
+    canonical_json as codec_canonical_json,
+    decode_plan,
+    decode_strict_json,
+    encode_plan,
+)
 from erii.data_lifecycle import (
     BackupRequest,
     DataLifecycleCoordinator,
@@ -153,6 +159,31 @@ class LifecyclePlanV1CompatibilityTests(unittest.TestCase):
             self.assertEqual(report.operation_id, document["operation_id"])
             self.assertEqual(report.plan_digest, document["plan_digest"])
             self.assertTrue(Path(request.destination.path).is_dir())
+
+    def test_internal_codec_owns_the_strict_v1_reader_and_writer(self) -> None:
+        with tempfile.TemporaryDirectory() as root_dir:
+            lifecycle, request = self._backup_request(Path(root_dir))
+            destination = lifecycle.inspect(request.destination)
+            json_text = _canonical_json(
+                _v1_plan_document(request, destination)
+            ).decode("utf-8")
+
+            plan = decode_plan(json_text)
+
+            self.assertIs(type(plan), LifecyclePlan)
+            self.assertEqual(encode_plan(plan), json_text)
+
+    def test_internal_codec_rejects_nonstandard_json_numbers(self) -> None:
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                with self.assertRaises(ValueError):
+                    decode_strict_json(
+                        f'{{"value":{constant}}}',
+                        label="lifecycle plan",
+                    )
+
+        with self.assertRaises(ValueError):
+            codec_canonical_json({"value": float("nan")})
 
     def test_v1_document_cannot_claim_the_v2_upgrade_operation(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:

@@ -5,35 +5,19 @@ from enum import Enum
 import os
 from typing import Dict, TypeAlias
 
-from erii.compatibility import LIFECYCLE_PLAN_FORMAT, require_supported_version
+from erii.compatibility import require_supported_version
 from erii.errors import LifecyclePlanError
 from erii.lifecycle_erasure_contracts import ErasureSelector, ErasureTransformResult
 from erii.lifecycle_memory_pack_import_contracts import MemoryPackStagingImportReport
 from erii._lifecycle.plan_codec import (
-    canonical_json as _canonical_json,
-    decode_strict_json as _decode_strict_json,
+    READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS as _READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS,
+    compatibility_for_kind as _compatibility_for_kind,
+    decode_plan as _decode_plan,
+    encode_plan as _encode_plan,
     is_sha256 as _is_sha256,
     sha256_json as _sha256_json,
+    validate_plan as _validate_plan_shape,
 )
-
-_READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS = frozenset(
-    LIFECYCLE_PLAN_FORMAT.readable_versions
-)
-
-
-def _compatibility_for_kind(kind: "LifecycleTargetKind"):
-    from erii.data_lifecycle import _compatibility_for_kind as implementation
-    return implementation(kind)
-
-
-def _validate_plan_shape(plan: "LifecyclePlan") -> None:
-    from erii.data_lifecycle import _validate_plan_shape as implementation
-    implementation(plan)
-
-
-def _plan_from_document(value: object) -> "LifecyclePlan":
-    from erii.data_lifecycle import _plan_from_document as implementation
-    return implementation(value)
 
 
 def _plan_intent_dict(plan: "LifecyclePlan") -> Dict[str, object]:
@@ -44,11 +28,6 @@ def _plan_intent_dict(plan: "LifecyclePlan") -> Dict[str, object]:
 def _plan_body_dict(plan: "LifecyclePlan") -> Dict[str, object]:
     from erii._lifecycle.serializers import plan_body_dict
     return plan_body_dict(plan)
-
-
-def _plan_document_dict(plan: "LifecyclePlan") -> Dict[str, object]:
-    from erii._lifecycle.serializers import plan_document_dict
-    return plan_document_dict(plan)
 
 
 class LifecycleTargetKind(str, Enum):
@@ -427,18 +406,12 @@ class LifecyclePlan:
 
     def to_json(self) -> str:
         """Returns the canonical no-content plan document."""
-        return _canonical_json(_plan_document_dict(self)).decode("utf-8")
+        return _encode_plan(self)
 
     @classmethod
     def from_json(cls, json_text: str) -> "LifecyclePlan":
         """Loads a strict plan document and rejects unknown or duplicate fields."""
-        try:
-            document = _decode_strict_json(json_text, label="lifecycle plan")
-            return _plan_from_document(document)
-        except LifecyclePlanError:
-            raise
-        except (KeyError, TypeError, ValueError) as exc:
-            raise LifecyclePlanError("lifecycle plan document is invalid") from exc
+        return _decode_plan(json_text)
 
 
 @dataclass(frozen=True, slots=True)

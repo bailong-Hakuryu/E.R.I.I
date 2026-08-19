@@ -25,6 +25,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import erii  # noqa: E402
+from erii._lifecycle.plan_codec import (  # noqa: E402
+    READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS,
+)
 from erii.compatibility import (  # noqa: E402
     COMPATIBILITY_CATALOG,
     MEMORY_PACK_METADATA_FIELDS,
@@ -42,7 +45,6 @@ from erii.data_lifecycle import (  # noqa: E402
     LifecycleTarget,
     LifecycleTargetKind,
     MemoryPackImportOptions,
-    _READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS,
 )
 from erii.lifecycle_erasure_contracts import (  # noqa: E402
     ErasureScope,
@@ -159,7 +161,7 @@ def _data_formats_snapshot() -> dict[str, Any]:
     if (
         catalog.lifecycle_plan.current_version != LIFECYCLE_PLAN_CONTRACT_VERSION
         or set(catalog.lifecycle_plan.readable_versions)
-        != set(_READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS)
+        != set(READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS)
     ):
         raise RuntimeError(
             "compatibility catalog and lifecycle plan serializer versions disagree"
@@ -186,7 +188,7 @@ def _data_formats_snapshot() -> dict[str, Any]:
         "lifecycle_plan": {
             "current_contract_version": LIFECYCLE_PLAN_CONTRACT_VERSION,
             "readable_contract_versions": sorted(
-                _READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS,
+                READABLE_LIFECYCLE_PLAN_CONTRACT_VERSIONS,
                 key=int,
             ),
             "current_document_fields": _current_plan_document_fields(),

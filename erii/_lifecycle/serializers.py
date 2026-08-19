@@ -9,19 +9,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Dict
 
-from erii._lifecycle.plan_codec import is_sha256
+from erii._lifecycle.plan_codec import compatibility_for_kind, is_sha256
 from erii.compatibility import FormatCompatibility, require_supported_version
 from erii.errors import LifecyclePlanError
 
 if TYPE_CHECKING:
-    from erii.data_lifecycle import (
-        LifecycleTarget,
+    from erii._lifecycle.contracts import (
         LifecycleAssessment,
         LifecycleContentIdentity,
         LifecycleDirectoryIdentity,
-        LifecyclePlan,
         LifecycleOperation,
+        LifecyclePlan,
         LifecyclePlanSelector,
+        LifecycleTarget,
     )
 
 __all__ = [
@@ -49,7 +49,7 @@ def target_to_dict(target: LifecycleTarget) -> Dict[str, object]:
 
 def target_from_dict(value: object) -> LifecycleTarget:
     """Deserialize LifecycleTarget from dict."""
-    from erii.data_lifecycle import LifecycleTarget, LifecycleTargetKind
+    from erii._lifecycle.contracts import LifecycleTarget, LifecycleTargetKind
 
     if not isinstance(value, dict) or set(value) != {"kind", "path"}:
         raise LifecyclePlanError("lifecycle target fields are invalid")
@@ -75,7 +75,7 @@ def assessment_to_dict(assessment: LifecycleAssessment) -> Dict[str, object]:
 
 def assessment_from_dict(value: object) -> LifecycleAssessment:
     """Deserialize LifecycleAssessment from dict."""
-    from erii.data_lifecycle import LifecycleAssessment, LifecycleStatus
+    from erii._lifecycle.contracts import LifecycleAssessment, LifecycleStatus
 
     fields = {
         "target",
@@ -125,7 +125,7 @@ def content_to_dict(content: LifecycleContentIdentity) -> Dict[str, object]:
 
 def content_from_dict(value: object) -> LifecycleContentIdentity:
     """Deserialize LifecycleContentIdentity from dict."""
-    from erii.data_lifecycle import (
+    from erii._lifecycle.contracts import (
         LifecycleContentIdentity,
         LifecycleStatus,
         LifecycleTargetKind,
@@ -162,11 +162,7 @@ def content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
     producer views are validated against their exact old readable sets, then
     reclassified against the current catalog.
     """
-    from erii.data_lifecycle import (
-        LifecycleStatus,
-        LifecycleTargetKind,
-        _compatibility_for_kind,
-    )
+    from erii._lifecycle.contracts import LifecycleStatus, LifecycleTargetKind
 
     # Historical producer format catalogs for Backup-v1 compatibility
     historical_producer_formats = {
@@ -279,7 +275,7 @@ def content_from_backup_manifest(value: object) -> LifecycleContentIdentity:
             "backup source status does not match its historical producer catalog"
         )
 
-    current = _compatibility_for_kind(kind)
+    current = compatibility_for_kind(kind)
     normalized = dict(value)
     normalized["status"] = status_for_catalog(
         current,
@@ -302,7 +298,7 @@ def directory_identity_to_dict(
 
 def directory_identity_from_dict(value: object) -> LifecycleDirectoryIdentity:
     """Deserialize LifecycleDirectoryIdentity from dict."""
-    from erii.data_lifecycle import LifecycleDirectoryIdentity
+    from erii._lifecycle.contracts import LifecycleDirectoryIdentity
 
     if not isinstance(value, dict) or set(value) != {"resolved_path", "device", "inode"}:
         raise LifecyclePlanError("lifecycle directory identity fields are invalid")
@@ -326,8 +322,8 @@ def selector_to_dict(
     selector: LifecyclePlanSelector | None,
 ) -> Dict[str, object] | None:
     """Convert lifecycle plan selector to JSON-serializable dict."""
+    from erii._lifecycle.contracts import MemoryPackImportOptions
     from erii.lifecycle_erasure_contracts import ErasureSelector
-    from erii.data_lifecycle import MemoryPackImportOptions
 
     if selector is None:
         return None
@@ -346,8 +342,8 @@ def selector_from_dict(
     value: object,
 ) -> LifecyclePlanSelector | None:
     """Deserialize lifecycle plan selector from dict."""
+    from erii._lifecycle.contracts import LifecycleOperation, MemoryPackImportOptions
     from erii.lifecycle_erasure_contracts import ErasureSelector
-    from erii.data_lifecycle import LifecycleOperation, MemoryPackImportOptions
 
     if value is None:
         return None
