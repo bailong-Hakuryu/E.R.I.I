@@ -16,7 +16,7 @@
 - [x] `serializers.py` 接管类型与 Plan 文档转换；
 - [x] 历史 MemoryPack 和 SQLite schema-10 producer catalog 回归已修复；
 - [x] R1B exactly-once、schema 11、精确回执擦除和实际 remap 锁范围已收口；
-- [ ] Lifecycle 合同本体迁入 `contracts.py`；
+- [x] Lifecycle 合同本体迁入 `contracts.py`，旧路径保持相同 type identity；
 - [ ] Inspection 和 Planning 形成独立 Module Interface。
 
 ## 实施顺序

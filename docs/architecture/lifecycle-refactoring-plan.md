@@ -1,7 +1,7 @@
 # Data Lifecycle 深 Module 重构计划
 
-> 状态：R2 `in_progress`；早期 Codec/Serializer 提取已修复，Contracts、Inspection 和
-> Planning 尚未完成
+> 状态：R2 `in_progress`；Codec、Serializer 与 Contracts 已接管，Inspection 和 Planning
+> 尚未完成
 >
 > 总控计划：[结构重构总控路线图](refactoring-program.md)
 >
@@ -44,10 +44,10 @@ Lifecycle 已完成部分纵向提取和早期 R2 工作，但只读路径尚未
 
 | 路径 | 当前职责 | 状态 |
 | --- | --- | --- |
-| `erii/data_lifecycle.py` | 公共合同本体、Inspection、Planning、Backup/Restore/Upgrade/Import/Erase 编排 | 仍是主 Implementation |
+| `erii/data_lifecycle.py` | 公共合同 re-export、Inspection、Planning、Backup/Restore/Upgrade/Import/Erase 编排 | 仍是主 Implementation |
 | `erii/_lifecycle/plan_codec.py` | 规范 JSON、严格解码和摘要原语 | 已接管 |
 | `erii/_lifecycle/serializers.py` | 类型/Plan 文档转换、历史 producer catalog | 已接管且兼容回归已修复 |
-| `erii/_lifecycle/contracts.py` | 指向 `data_lifecycle` 唯一合同类型的私有别名 | 合同本体尚未迁移 |
+| `erii/_lifecycle/contracts.py` | Lifecycle Enum、dataclass、Request、Plan、Report 的权威定义 | 已接管合同本体；Plan shape 尚待 Planning 接管 |
 | `erii/_lifecycle/utils.py` | 指向 `data_lifecycle` 权威 helper 的私有别名 | 等待 Inspection 整体迁移 |
 | `erii/lifecycle_streaming.py` | 稳定文件/目录扫描、独占复制、identity | 已独立 |
 | `erii/lifecycle_sqlite_upgrade.py` | SQLite 6/9/10 到 11 的迁移与语义摘要 | 已独立 |
@@ -61,9 +61,9 @@ Interface，并从 `data_lifecycle.py` 移除剩余重复规则。
 
 ### 2.1 `data_lifecycle.py` 当前职责
 
-约 3941 行的文件目前包含：
+约 3505 行的文件目前包含：
 
-- 目标、状态、操作、结果、Request、Plan、Report 等公共合同；
+- 目标、状态、操作、结果、Request、Plan、Report 等公共合同的旧路径 re-export；
 - Lifecycle Plan v1 至当前的读取/验证编排；规范 JSON 和类型转换已委托内部模块；
 - 策略选择、Plan shape 和 content identity 验证；
 - 文件、目录、SQLite 和 MemoryPack Inspection；
@@ -291,9 +291,9 @@ class StagedErasure:
 
 ### 7.1 R2A：Contracts 和 Plan Codec，2026-09-14 至 2026-09-20
 
-当前进度：规范 JSON 原语和 serializer 转换已提前提取，历史 producer catalog 回归也已
-修复；但 `contracts.py` 仍是别名，合同本体和完整 Plan shape validation 尚未迁移，因此
-R2A 不能标记完成。
+当前进度：规范 JSON 原语、serializer 转换和合同本体已经提取，历史 producer catalog
+回归也已修复；旧路径保持相同 type identity 与 `__module__`。完整 Plan shape validation
+尚未迁移，因此 R2A 仍不能标记完成。
 
 任务：
 
