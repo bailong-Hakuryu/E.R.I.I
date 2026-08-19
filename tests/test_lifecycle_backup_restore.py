@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import pickle
 import shutil
 import tempfile
 import unittest
@@ -173,6 +174,29 @@ class LifecycleBackupRestoreTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(name, erii.__all__)
                 self.assertIsNotNone(getattr(erii, name))
+
+    def test_lifecycle_contracts_keep_one_identity_across_import_paths(self) -> None:
+        from erii._lifecycle import contracts as internal_contracts
+
+        for name in internal_contracts.__all__:
+            with self.subTest(name=name):
+                root_contract = getattr(erii, name)
+                facade_contract = getattr(lifecycle_module, name)
+                internal_contract = getattr(internal_contracts, name)
+
+                self.assertIn(name, erii.__all__)
+                self.assertIn(name, lifecycle_module.__all__)
+                self.assertIs(root_contract, facade_contract)
+                self.assertIs(facade_contract, internal_contract)
+                if isinstance(internal_contract, type):
+                    self.assertEqual(
+                        internal_contract.__module__,
+                        "erii.data_lifecycle",
+                    )
+                    self.assertIs(
+                        pickle.loads(pickle.dumps(internal_contract)),
+                        internal_contract,
+                    )
 
     def test_changed_source_is_rejected_before_backup_is_written(self) -> None:
         with tempfile.TemporaryDirectory() as root_dir:
