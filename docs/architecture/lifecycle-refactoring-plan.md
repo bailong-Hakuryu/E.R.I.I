@@ -291,9 +291,9 @@ class StagedErasure:
 
 ### 7.1 R2A：Contracts 和 Plan Codec，2026-09-14 至 2026-09-20
 
-当前进度：规范 JSON 原语、serializer 转换和合同本体已经提取，历史 producer catalog
-回归也已修复；旧路径保持相同 type identity 与 `__module__`。完整 Plan shape validation
-尚未迁移，因此 R2A 仍不能标记完成。
+当前进度：已于 2026-08-20 完成。规范 JSON、v1-current 严格 reader/writer、serializer
+转换、Plan shape/strategy validation 和合同本体已迁入单一内部权威实现；历史 producer
+catalog 回归已修复，旧路径保持相同 type identity、`__module__` 与 pickle 解析路径。
 
 任务：
 
@@ -304,7 +304,8 @@ class StagedErasure:
 5. 让 `freeze_contracts.py` 继续通过生产 serializer 验证字段；
 6. 增加旧 Plan fixture 的独立 Codec 测试。
 
-退出门：根级符号和 data-format snapshot 无差异；当前和历史 Plan round-trip/拒绝行为不变。
+退出门：已通过。根级符号和 data-format snapshot 无差异；当前和历史 Plan
+round-trip/拒绝行为不变；Codec Interface 直接测试覆盖 v1 和非标准 JSON 数值拒绝。
 
 ### 7.2 R2B：Inspection 和 Planning，2026-09-21 至 2026-09-27
 

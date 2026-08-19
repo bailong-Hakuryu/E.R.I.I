@@ -12,21 +12,23 @@
 
 ## 前置状态
 
-- [x] `plan_codec.py` 接管规范 JSON、严格解码和摘要原语；
+- [x] `plan_codec.py` 接管 v1-current 严格 reader/writer、Plan shape/strategy validation、
+  规范 JSON 和摘要原语；
 - [x] `serializers.py` 接管类型与 Plan 文档转换；
 - [x] 历史 MemoryPack 和 SQLite schema-10 producer catalog 回归已修复；
 - [x] R1B exactly-once、schema 11、精确回执擦除和实际 remap 锁范围已收口；
 - [x] Lifecycle 合同本体迁入 `contracts.py`，旧路径保持相同 type identity；
+- [x] 删除 Contracts/Serializer 到 façade 的反向委托，R2A 完成；
 - [ ] Inspection 和 Planning 形成独立 Module Interface。
 
 ## 实施顺序
 
-### 1. 单一合同来源
+### 1. 单一合同来源（已完成）
 
 - 将 Enum、dataclass、Request、Plan 和 Report 迁到 `contracts.py`；
 - `erii.data_lifecycle` 与根级 `erii` 只 re-export；
 - 保持 type identity、`__module__` 要求、冻结字段和异常类型；
-- 先通过公共符号、合同快照和历史 Plan fixture，再删除旧定义。
+- 公共符号、合同快照、历史 Plan fixture 与 pickle 路径已经通过。
 
 ### 2. 零写入 Inspection
 

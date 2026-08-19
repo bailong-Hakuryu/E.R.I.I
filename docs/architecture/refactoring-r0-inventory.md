@@ -11,7 +11,7 @@ This inventory records the structural and caller baseline used by R1. It is gene
 | `erii/engine.py` | 3988 lines | 71 | 25 |
 | `erii/__init__.py` | 330 exports | n/a | n/a |
 | `BaseStorage` | 57 methods | 56 | 1 |
-| `erii/data_lifecycle.py` | 3505 lines | 3 coordinator | 12 coordinator |
+| `erii/data_lifecycle.py` | 3165 lines | 3 coordinator | 12 coordinator |
 
 Counts locate risk; they are not completion targets. R1 succeeds only when MemoryPack complexity moves behind a smaller Interface without public or format changes.
 
@@ -179,21 +179,21 @@ The broad test surface is intentional evidence: MemoryPack crosses relationship,
 
 | Method | Start line | Span |
 | --- | ---: | ---: |
-| `__init__` | 2390 | 2 |
-| `inspect` | 2393 | 5 |
-| `plan` | 2399 | 15 |
-| `execute` | 2415 | 18 |
-| `_plan_backup` | 2434 | 22 |
-| `_plan_restore` | 2457 | 25 |
-| `_plan_upgrade` | 2483 | 44 |
-| `_plan_erasure` | 2528 | 60 |
-| `_plan_memory_pack_import` | 2589 | 45 |
-| `_ensure_verified_prechange_backup` | 2635 | 93 |
-| `_execute_backup` | 2729 | 93 |
-| `_execute_restore` | 2823 | 69 |
-| `_execute_upgrade` | 2893 | 201 |
-| `_execute_erasure_or_rebuild` | 3095 | 211 |
-| `_execute_memory_pack_import` | 3307 | 162 |
+| `__init__` | 2050 | 2 |
+| `inspect` | 2053 | 5 |
+| `plan` | 2059 | 15 |
+| `execute` | 2075 | 18 |
+| `_plan_backup` | 2094 | 22 |
+| `_plan_restore` | 2117 | 25 |
+| `_plan_upgrade` | 2143 | 44 |
+| `_plan_erasure` | 2188 | 60 |
+| `_plan_memory_pack_import` | 2249 | 45 |
+| `_ensure_verified_prechange_backup` | 2295 | 93 |
+| `_execute_backup` | 2389 | 93 |
+| `_execute_restore` | 2483 | 69 |
+| `_execute_upgrade` | 2553 | 201 |
+| `_execute_erasure_or_rebuild` | 2755 | 211 |
+| `_execute_memory_pack_import` | 2967 | 162 |
 
 Top-level Lifecycle types/classes: 8. R2 separates contracts and no-write paths before any R3 write-path extraction.
 
