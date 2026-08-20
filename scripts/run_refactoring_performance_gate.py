@@ -91,6 +91,15 @@ def _arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=15)
     parser.add_argument(
+        "--stability-attempts",
+        type=int,
+        default=1,
+        help=(
+            "remeasure an unstable same-environment pair up to this many times; "
+            "stable regressions still fail immediately"
+        ),
+    )
+    parser.add_argument(
         "--baseline-manifest",
         type=Path,
         default=DEFAULT_BASELINE_MANIFEST,
@@ -171,10 +180,14 @@ def run_gate(
     iterations: int,
     baseline_manifest: Path,
     output_dir: Path | None,
+    *,
+    stability_attempts: int = 1,
 ) -> PerformanceGateEvaluation:
     """Checks out the frozen R0 commit and measures both revisions in one job."""
     if type(iterations) is not int or iterations < 5:
         raise ValueError("iterations must be an integer of at least 5")
+    if type(stability_attempts) is not int or stability_attempts < 1:
+        raise ValueError("stability_attempts must be a positive integer")
     baseline_commit = _baseline_commit(baseline_manifest)
     with tempfile.TemporaryDirectory(prefix="erii-refactoring-gate-") as directory:
         temporary_root = Path(directory)
@@ -214,15 +227,35 @@ def run_gate(
             ROOT / "benchmarks" / "run_refactoring_baseline.py",
             baseline_benchmark,
         )
-        _run_benchmark(baseline_checkout, baseline_output, iterations)
-        _run_benchmark(ROOT, current_output, iterations)
+        evaluation = None
+        for attempt in range(1, stability_attempts + 1):
+            _run_benchmark(baseline_checkout, baseline_output, iterations)
+            _run_benchmark(ROOT, current_output, iterations)
 
-        baseline = _load_report(baseline_output)
-        current = _load_report(current_output)
-        if baseline.get("commit") != baseline_commit:
-            raise RuntimeError("R0 benchmark did not run at the frozen baseline commit")
-        evaluation = evaluate_performance_gate(current, baseline)
-        print(render_performance_gate(evaluation))
+            baseline = _load_report(baseline_output)
+            current = _load_report(current_output)
+            if baseline.get("commit") != baseline_commit:
+                raise RuntimeError(
+                    "R0 benchmark did not run at the frozen baseline commit"
+                )
+            evaluation = evaluate_performance_gate(current, baseline)
+            if stability_attempts > 1:
+                print(f"Performance gate attempt {attempt}/{stability_attempts}:")
+            print(render_performance_gate(evaluation))
+
+            unstable_pair = bool(
+                evaluation.comparison.compatible
+                and (
+                    evaluation.unstable_baseline_metrics
+                    or evaluation.unstable_current_metrics
+                )
+            )
+            if not unstable_pair or attempt == stability_attempts:
+                break
+            print("Measurement pair unstable; retrying in the same environment.")
+
+        if evaluation is None:  # pragma: no cover - validated positive attempts.
+            raise RuntimeError("performance gate did not produce an evaluation")
         if output_dir is not None:
             print(f"Wrote paired benchmark reports to {retained}")
         return evaluation
@@ -235,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
             args.iterations,
             args.baseline_manifest,
             args.output_dir,
+            stability_attempts=args.stability_attempts,
         )
         return 0 if evaluation.passed else 1
     except Exception as exc:

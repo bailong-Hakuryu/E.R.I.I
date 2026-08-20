@@ -71,6 +71,7 @@ jobs:
         run: >-
           python scripts/run_refactoring_performance_gate.py
           --iterations 15
+          --stability-attempts 3
           --output-dir benchmark-results
       - uses: actions/upload-artifact@v4
         if: always()

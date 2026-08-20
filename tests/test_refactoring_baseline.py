@@ -18,6 +18,7 @@ from benchmarks.run_refactoring_baseline import (
 from scripts.run_refactoring_performance_gate import (
     evaluate_performance_gate,
     render_performance_gate,
+    run_gate,
 )
 
 
@@ -199,6 +200,56 @@ class RefactoringBaselineTests(unittest.TestCase):
         unstable = evaluate_performance_gate(current, baseline)
         self.assertFalse(unstable.passed)
         self.assertIn("unstable same-environment current", render_performance_gate(unstable))
+
+    def test_same_environment_gate_retries_an_unstable_measurement_pair(self) -> None:
+        baseline_commit = "a" * 40
+        stable_baseline = self._baseline()
+        stable_baseline["commit"] = baseline_commit
+        stable_current = deepcopy(stable_baseline)
+        stable_current["commit"] = "b" * 40
+        unstable_baseline = deepcopy(stable_baseline)
+        metric = unstable_baseline["metrics"]["memory_pack_export_file_ms"]
+        metric["samples_ms"] = [
+            metric["median_ms"] * 0.8,
+            metric["median_ms"] * 1.2,
+        ]
+        reports = iter(
+            [
+                unstable_baseline,
+                stable_current,
+                stable_baseline,
+                stable_current,
+            ]
+        )
+
+        def write_next_report(_source_root, output, _iterations):
+            output.write_text(json.dumps(next(reports)), encoding="utf-8")
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                json.dumps({"commit": baseline_commit}),
+                encoding="utf-8",
+            )
+            with (
+                patch(
+                    "scripts.run_refactoring_performance_gate._run_checked"
+                ),
+                patch(
+                    "scripts.run_refactoring_performance_gate._run_benchmark",
+                    side_effect=write_next_report,
+                ) as run_benchmark,
+            ):
+                evaluation = run_gate(
+                    5,
+                    manifest,
+                    root / "results",
+                    stability_attempts=2,
+                )
+
+        self.assertTrue(evaluation.passed)
+        self.assertEqual(run_benchmark.call_count, 4)
 
 
 if __name__ == "__main__":
