@@ -40,6 +40,15 @@
   Contracts/Codec 依赖；
 - 冻结脚本改为直接消费 Codec 的可读 Plan 版本集合，并增加独立 Codec Interface 回归测试。
 
+### 2026-08-20：R2B 收口
+
+- `inspection.py`、`planning.py`、`filesystem.py` 与 `snapshots.py` 接管零写入观察、稳定读取和
+  Request -> Plan；Coordinator 委托同一个 Inspector/Planner 组合；
+- SQLite image upgrade、Erasure scope inspection 与 MemoryPack graph validation 下沉为无 façade、
+  Engine、Storage 或写执行依赖的内部 seam；
+- `lifecycle_streaming.py` 转为同对象兼容 re-export，`utils.py` 删除；
+- 公共/历史兼容、Windows capability smoke、强制同环境性能门和全量 Python 均通过。
+
 ## 当前实现快照
 
 | 路径 | 当前职责 | 状态 |
@@ -47,10 +56,11 @@
 | `erii/_lifecycle/plan_codec.py` | 严格 v1-current reader/writer、shape/strategy validation、规范 JSON 与摘要 | R2A 已接管 |
 | `erii/_lifecycle/serializers.py` | 类型转换、Plan 文档转换、历史 producer catalog | 已接管且回归已修复 |
 | `erii/_lifecycle/contracts.py` | Lifecycle Enum、dataclass、Request、Plan、Report 的权威定义 | R2A 已接管，旧路径 identity/module/pickle 兼容 |
-| `erii/_lifecycle/utils.py` | 指向 `erii.data_lifecycle` 权威 helper 的私有别名 | 等待 Inspection 整体迁移 |
-| `erii/data_lifecycle.py` | 合同 re-export、Inspection、Request -> Plan 与执行编排 | R2A 去重完成；等待 R2B |
+| `erii/_lifecycle/inspection.py` / `planning.py` | 零写入 target/Backup 观察与六种 Request -> Plan | R2B 已接管 |
+| `erii/_lifecycle/filesystem.py` / `snapshots.py` | stable read/tree 与不可变 payload observation | R2B 已接管，`utils.py` 已删除 |
+| `erii/data_lifecycle.py` | 合同 re-export、Coordinator Facade 与 R3 写执行编排 | `inspect/plan` 已委托内部 Module |
 
-当前规模仅作导航信号：`data_lifecycle.py` 约 3165 行，`lifecycle_erasure.py` 约 2871 行；
+当前规模仅作导航信号：`data_lifecycle.py` 约 1723 行，`lifecycle_erasure.py` 约 2203 行；
 R2 是否完成由 Interface 和门禁决定，不由行数决定。
 
 ## 当前证据
@@ -65,14 +75,15 @@ R2 是否完成由 Interface 和门禁决定，不由行数决定。
 R2A 收口新增证据：Lifecycle 筛选集 `160 passed, 4 skipped, 206 subtests passed`；核心
 Backup/Upgrade/Erasure/Import 矩阵 `75 passed, 2 skipped, 118 subtests passed`；全部 Python
 `1037 passed, 14 skipped, 96 warnings, 577 subtests passed`；合同快照 4 个文件无差异。
-R2 总阶段仍需 R2B 及其退出门。
+R2B 收口证据：Lifecycle 筛选集 `170 passed, 4 skipped, 220 subtests passed`；全部 Python
+`1048 passed, 14 skipped, 96 warnings, 591 subtests passed`；Windows capability smoke、
+强制同环境性能门、合同快照与静态结构门通过。R2 总阶段已完成。
 
 ## 下一步
 
-1. 提取零写入 Inspection；
-2. 提取 Request 到 immutable Plan 的 Planning；
-3. 让 `DataLifecycleCoordinator.inspect/plan` 委托新 Module；
-4. 运行 R2 的公共/历史兼容、Windows、双 Storage 和同环境性能退出门。
+1. 进入 R3 Backup/Restore、Upgrade 与 Import 写路径批次；
+2. 再收敛 Erasure/Rebuild 与 Coordinator 写编排；
+3. R3 稳定检查点通过前保持 R2 Interface 和格式承诺冻结。
 
 相关历史记录：
 

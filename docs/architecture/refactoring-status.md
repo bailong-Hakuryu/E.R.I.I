@@ -8,9 +8,9 @@
 
 ## 当前结论
 
-R1B 已于 2026-08-18 通过剩余退出门，权威阶段进入 `R2 / in_progress`。R2A（Contracts 与
-Plan Codec）已于 2026-08-20 收口；R2B（Inspection 与 Planning）仍未达到总控路线图定义的
-退出条件，也不能据此跳过 R3 进入 R4。
+R1B 已于 2026-08-18 通过剩余退出门。R2A（Contracts 与 Plan Codec）和 R2B（Inspection 与
+Planning）均已于 2026-08-20 收口，并通过公共/历史兼容、Windows capability smoke 与强制
+同环境性能门；权威阶段为 `R2 / complete`，下一阶段是 R3，不能跳过 R3 进入 R4。
 
 R1B 收口证据：
 
@@ -31,8 +31,10 @@ R1B 收口证据：
 - `erii/_lifecycle/contracts.py` 已成为 Lifecycle Enum、dataclass、Request、Plan 和 Report 的
   单一权威定义；`erii.data_lifecycle` 与根级 `erii` 只 re-export 相同类对象，历史
   `__module__ = "erii.data_lifecycle"` 与 pickle 路径保持不变。
-- `erii/_lifecycle/utils.py` 不再保存重复实现；当前只为 `erii.data_lifecycle` 中的权威
-  helper 提供私有别名，等待 Inspection 整体迁移。
+- `erii/_lifecycle/inspection.py` 与 `planning.py` 已分别接管零写入观察和六种 Request -> Plan；
+  `DataLifecycleCoordinator.inspect/plan` 委托同一个 Inspector/Planner 组合。
+- `filesystem.py`、`snapshots.py`、`sqlite_semantics.py` 与纯格式 seam 已接管 stable read、
+  不可变 observation、SQLite 语义读取/升级预演及 Erasure/MemoryPack 只读验证；`utils.py` 已删除。
 
 记录分层：本文是当前实施状态；[Lifecycle 重构计划](lifecycle-refactoring-plan.md) 定义
 正式范围和退出门；[R2 实施日志](r2-implementation-log.md) 与其链接的阶段报告只保留
@@ -69,18 +71,25 @@ R1B 不再有未完成门禁；Windows smoke 将由更新后的 CI 在提交后�
   `75 passed, 2 skipped, 118 subtests passed`；全部 Python：
   `1037 passed, 14 skipped, 96 warnings, 577 subtests passed`；合同快照 4 个文件无差异。
 
-## R2 未完成范围
+## R2B 收口与剩余门禁
 
-- Inspector 仍在 `erii.data_lifecycle`；
-- Request -> immutable Plan 的 Planner 与只读恢复路径仍在 `erii.data_lifecycle`；
-- `DataLifecycleCoordinator.inspect/plan` 尚未由独立内部深模块承担。
+2026-08-20 本地验证证据：Lifecycle 筛选集 `170 passed, 4 skipped, 220 subtests passed`；
+全部 Python `1048 passed, 14 skipped, 96 warnings, 591 subtests passed`；4 个合同快照、Ruff、
+Compileall、文档链接、secret、项目状态、重构 inventory 与 `git diff --check` 均通过。
+
+- `LifecycleInspector` 在 `erii`、`erii.data_lifecycle` 与内部路径保持同一对象、历史
+  `__module__` 与 pickle 解析；公共 Lifecycle 合同的三路径 identity 保持冻结。
+- Inspection/Planning 及纯格式 seam 的 AST 门禁止 façade 反向依赖、函数内项目 import、
+  Engine/Storage/写执行模块依赖；`lifecycle_streaming.py` 仅同对象兼容 re-export。
+- Windows capability smoke `49 passed, 4 skipped, 54 subtests passed`；4 个 skip 均由当前平台
+  不提供目录 fd/FIFO 或当前账户无 symlink 权限触发。强制同环境性能门通过。
 
 文档链接、项目状态目录、重构清单、合同快照、secret 扫描、Ruff、Compileall 和
 `git diff --check` 均已通过。
 
 ## 下一步顺序
 
-1. 提取零写入 Inspection 和 Request -> immutable Plan 的 Planning；
-2. 运行 R2 全部门禁，确认历史 reader、双 Storage、Windows 和性能无回归；
-3. 进入 R3 写路径重构；
+1. 进入 R3 写路径重构；
+2. 先按独立批次迁移 Backup/Restore、Upgrade 与 Import；
+3. 再收敛 Erasure/Rebuild 与 Coordinator 写编排；
 4. 只有 R3 稳定检查点通过后才进入 R4。

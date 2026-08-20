@@ -1,7 +1,6 @@
 # Data Lifecycle 深 Module 重构计划
 
-> 状态：R2 `in_progress`；Codec、Serializer 与 Contracts 已接管，Inspection 和 Planning
-> 尚未完成
+> 状态：R2 `complete`；R2A/R2B 已通过退出门，下一阶段为 R3
 >
 > 总控计划：[结构重构总控路线图](refactoring-program.md)
 >
@@ -40,20 +39,22 @@ report = coordinator.execute(plan)
 
 ## 2. 当前真实结构
 
-Lifecycle 已完成部分纵向提取和早期 R2 工作，但只读路径尚未形成完整的深 Module：
+Lifecycle 已完成 R2A/R2B 的纵向提取；写执行路径仍留待 R3：
 
 | 路径 | 当前职责 | 状态 |
 | --- | --- | --- |
-| `erii/data_lifecycle.py` | 公共合同 re-export、Inspection、Planning、Backup/Restore/Upgrade/Import/Erase 编排 | 仍是主 Implementation |
+| `erii/data_lifecycle.py` | 公共合同 re-export、Coordinator Facade 与 R3 写执行编排 | `inspect/plan` 已委托内部 Module |
 | `erii/_lifecycle/plan_codec.py` | 规范 JSON、严格解码和摘要原语 | 已接管 |
 | `erii/_lifecycle/serializers.py` | 类型/Plan 文档转换、历史 producer catalog | 已接管且兼容回归已修复 |
-| `erii/_lifecycle/contracts.py` | Lifecycle Enum、dataclass、Request、Plan、Report 的权威定义 | 已接管合同本体；Plan shape 尚待 Planning 接管 |
-| `erii/_lifecycle/utils.py` | 指向 `data_lifecycle` 权威 helper 的私有别名 | 等待 Inspection 整体迁移 |
-| `erii/lifecycle_streaming.py` | 稳定文件/目录扫描、独占复制、identity | 已独立 |
-| `erii/lifecycle_sqlite_upgrade.py` | SQLite 6/9/10 到 11 的迁移与语义摘要 | 已独立 |
+| `erii/_lifecycle/contracts.py` | Lifecycle Enum、dataclass、Request、Plan、Report 的权威定义 | 已接管，旧路径同对象 re-export |
+| `erii/_lifecycle/inspection.py` | live target 与 Backup 的完整零写入观察 | 已接管 Inspector 权威实现 |
+| `erii/_lifecycle/planning.py` | 六种 Request -> immutable Plan | 已接管 Planner 权威实现 |
+| `erii/_lifecycle/filesystem.py` / `snapshots.py` | stable read/tree、identity、不可变 payload observation | 已接管；`utils.py` 已删除 |
+| `erii/lifecycle_streaming.py` | 历史 stable streaming 导入路径 | 同对象兼容 re-export |
+| `erii/lifecycle_sqlite_upgrade.py` | SQLite staging 读取与发布 | 纯 image 迁移/语义读取已下沉内部 leaf |
 | `erii/lifecycle_memory_pack_import.py` | MemoryPack staging import | 已独立 |
 | `erii/lifecycle_memory_pack_import_contracts.py` | staging import 合同 | 已独立 |
-| `erii/lifecycle_erasure.py` | FileStorage/SQLite 擦除、重建和 staged 验证 | 已独立但仍约 2871 行 |
+| `erii/lifecycle_erasure.py` | FileStorage/SQLite 擦除、重建和 staged 验证 | 只读 selector inspection 已下沉内部 leaf |
 | `erii/lifecycle_erasure_contracts.py` | 擦除 selector、inventory、proof | 已独立 |
 
 因此本轮不是从零“把 Erasure 拆出去”，而是把已经存在的这些 Module 收敛到一致的内部
@@ -216,8 +217,18 @@ Inspector 不创建目录、不清理 staging、不执行恢复。
 - selector 和 import options；
 - source/target/content identity 绑定。
 
-Planning 不重新扫描目标，也不执行 I/O。若需要最新 assessment，由 Facade 在调用前通过
-Inspector 获得。
+Interface 保持为一个深入口：
+
+```python
+class LifecyclePlanner:
+    def __init__(self, inspector: LifecycleInspector) -> None: ...
+    def plan(self, request: LifecycleRequest) -> LifecyclePlan: ...
+```
+
+Planning 不实现格式扫描，也不执行写入。所有文件系统观察必须通过 Inspector 或只读 Snapshot
+helper；为保持现有 stale/TOCTOU 拒绝语义，Planner 可以在 capture/selector validation 前后要求
+Inspector 再次观察同一 target。不能为了追求“纯函数”而把 backup content、升级结果、目录 identity
+等一大包浅参数暴露给 Coordinator。
 
 ### 6.5 Filesystem Primitives
 
@@ -235,12 +246,12 @@ Inspector 获得。
 
 ### 6.6 Backup/Restore
 
-`backup_restore.py` 拥有：
+R2B 中，`inspection.py` 独占 Backup 的零写入观察：严格 manifest、canonical path、声明/实际
+文件集合、checksum、source content、嵌入 payload 与最终稳定树验证。R3 的
+`backup_restore.py` 将消费该 observation，并拥有：
 
-- Payload Snapshot 与 materialization；
-- Backup manifest 生成、读取和完整性验证；
+- Backup manifest 生成；
 - byte-preserving backup/restore；
-- 历史 producer catalog；
 - source/destination overlap 和 no-overwrite；
 - report inventory。
 
@@ -309,8 +320,9 @@ round-trip/拒绝行为不变；Codec Interface 直接测试覆盖 v1 和非标�
 
 ### 7.2 R2B：Inspection 和 Planning，2026-09-21 至 2026-09-27
 
-当前进度：尚未形成独立 Inspector/Planner Interface；早期草稿使用过“R2C”标签，现已
-统一回本节，不新增或跳过正式阶段。
+当前进度：R2B 实现已完成。`inspection.py`、`planning.py`、`filesystem.py`、`snapshots.py`
+及只读格式 seam 已成为单一权威实现；Facade 只委托同一个 Inspector/Planner 组合，旧重复
+实现和 `utils.py` 已删除。早期草稿使用过“R2C”标签，现已统一回本节。
 
 任务：
 
@@ -321,8 +333,9 @@ round-trip/拒绝行为不变；Codec Interface 直接测试覆盖 v1 和非标�
 5. 删除旧文件中的重复 helper；
 6. 验证 inspect/plan 对文件树没有写入。
 
-退出门：所有 target kind/status/strategy/selector 组合与基线一致；`execute` 仍留在原路径且
-可以消费新 Plan。
+退出证据：所有 target kind/status/strategy/selector 组合、历史 reader、type identity、
+零写入与依赖方向门均通过；`execute` 仍留在原路径并消费相同 Plan。Windows capability smoke
+和强制同环境性能门均通过，R2 正式转为 `complete`。
 
 ### 7.3 R3A：Backup/Restore、Upgrade、Import，2026-09-28 至 2026-10-11
 

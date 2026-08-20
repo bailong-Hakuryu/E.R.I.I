@@ -1,14 +1,14 @@
 {
   "schema_version": "erii-project-status/v1",
-  "as_of": "2026-08-18",
+  "as_of": "2026-08-20",
   "source_version": "0.5.0a3",
   "baseline_commit": "94a61d5c1b77b5aa8871521aa53b0dba58dedf38",
   "program": {
     "phase": "R2",
-    "status": "in_progress",
+    "status": "complete",
     "window_start": "2026-08-13",
     "window_end": "2026-09-27",
-    "next_gate": "Complete the R2 Lifecycle Contracts, Inspection, and Planning extraction on one authoritative implementation, then pass public/historical compatibility, Windows, and the enforced same-environment performance gate before R3."
+    "next_gate": "Begin R3 Lifecycle write-path extraction with Backup/Restore and Upgrade/Import batches while preserving the R2 read-path checkpoint."
   },
   "modules": [
     {
@@ -33,7 +33,7 @@
       "persistence_impact": "orchestrates-current-formats",
       "ci": ["python-matrix", "windows-smoke", "contract-snapshots", "refactoring-benchmark"],
       "summary": "Primary host facade plus private MemoryPack analysis, export assembly, snapshot-bound transfer planning, and whole-import execution. SQLite schema 11 commits a versioned content-free operation receipt with the payload, so post-commit errors and identical retries resolve exactly once without replay; FileStorage retains restart-safe before-image journaling.",
-      "next_gate": "Keep the R1B transfer boundary frozen while R2 extracts Lifecycle read paths; do not move Engine workflows again before the R3 checkpoint."
+      "next_gate": "Keep the R1B transfer boundary and completed R2 read-path checkpoint frozen while R3 extracts Lifecycle writes; do not move Engine workflows before the R3 checkpoint."
     },
     {
       "id": "storage-lifecycle",
@@ -52,7 +52,7 @@
       "persistence_impact": "owns-current-formats",
       "ci": ["python-matrix", "windows-smoke", "contract-snapshots", "longitudinal", "refactoring-benchmark"],
       "summary": "FileStorage v2 with recoverable flat-format MemoryPack payload journaling, SQLite schema 11 with receipt-backed exactly-once MemoryPack execution, MemoryPack 0.5.0a3, backup, restore, upgrade, import, erasure, and rebuild.",
-      "next_gate": "Complete R2/R3 internal extraction while preserving every declared reader and atomicity invariant."
+      "next_gate": "Complete R3 write-path extraction while preserving every declared reader, R2 observation identity, and atomicity invariant."
     },
     {
       "id": "reference-server",

@@ -8,10 +8,10 @@ This inventory records the structural and caller baseline used by R1. It is gene
 
 | Surface | Lines or symbols | Public methods | Private methods |
 | --- | ---: | ---: | ---: |
-| `erii/engine.py` | 3988 lines | 71 | 25 |
+| `erii/engine.py` | 3975 lines | 71 | 25 |
 | `erii/__init__.py` | 330 exports | n/a | n/a |
 | `BaseStorage` | 57 methods | 56 | 1 |
-| `erii/data_lifecycle.py` | 3165 lines | 3 coordinator | 12 coordinator |
+| `erii/data_lifecycle.py` | 1723 lines | 3 coordinator | 7 coordinator |
 
 Counts locate risk; they are not completion targets. R1 succeeds only when MemoryPack complexity moves behind a smaller Interface without public or format changes.
 
@@ -21,40 +21,42 @@ Counts locate risk; they are not completion targets. R1 succeeds only when Memor
 
 | Method | Start line | Span |
 | --- | ---: | ---: |
-| `export_memory` | 2574 | 165 |
-| `import_memory` | 2740 | 77 |
-| `_import_memory_unlocked` | 2818 | 458 |
-| `_validate_turn_pack` | 3278 | 21 |
-| `_validate_turn_import_conflicts` | 3300 | 45 |
-| `_validate_relationship_consequence_import_conflicts` | 3346 | 87 |
-| `_validate_timeline_import_conflicts` | 3434 | 73 |
-| `_validate_persona_growth_import_conflicts` | 3508 | 62 |
-| `_validate_relationship_adjudication_import_conflicts` | 3571 | 37 |
-| `_validate_relationship_processing_pack` | 3610 | 330 |
+| `export_memory` | 2573 | 165 |
+| `import_memory` | 2739 | 77 |
+| `_import_memory_unlocked` | 2817 | 458 |
+| `_validate_turn_pack` | 3277 | 21 |
+| `_validate_turn_import_conflicts` | 3299 | 45 |
+| `_validate_relationship_consequence_import_conflicts` | 3345 | 87 |
+| `_validate_timeline_import_conflicts` | 3433 | 73 |
+| `_validate_persona_growth_import_conflicts` | 3507 | 62 |
+| `_validate_relationship_adjudication_import_conflicts` | 3570 | 37 |
+| `_validate_relationship_processing_pack` | 3609 | 318 |
 
 The remaining cluster includes the public export/import entry points, guarded import execution, target conflict helper Implementation, Persona target-state transitions, causal history commit, and real Storage writes. R1B now routes first-write preflight reads through the private transfer Recorder and consumes its deterministic zero-write payload plan; locking, transactions, conflict enforcement, execution order, and writes remain in Engine.
 
 ### Extracted No-Write Analysis
 
-`erii/_engine/memory_pack_analysis.py`: 1225 lines.
+`erii/_engine/memory_pack_analysis.py`: 1294 lines.
 
 | Function | Start line | Span |
 | --- | ---: | ---: |
 | `resolve_relationship_processing_profile` | 92 | 23 |
-| `analyze_relationship_processing_pack_structure` | 117 | 107 |
-| `validate_relationship_processing_runs` | 226 | 253 |
-| `analyze_relationship_processing_reflection_context` | 481 | 42 |
-| `validate_relationship_processing_reflections` | 525 | 285 |
-| `_portable_fingerprint` | 812 | 8 |
-| `validate_memory_pack_node_types` | 822 | 6 |
-| `validate_memory_pack_relationship_consequences` | 830 | 57 |
-| `validate_memory_pack_turn_records` | 889 | 24 |
-| `validate_persisted_turn_adjudication_sources` | 915 | 102 |
-| `validate_memory_pack_persisted_turn_adjudications` | 1019 | 58 |
-| `analyze_memory_pack` | 1079 | 32 |
-| `_temporal_reference_ids` | 1113 | 15 |
-| `_validate_temporal_pack` | 1130 | 52 |
-| `_validate_persona_growth_pack` | 1184 | 31 |
+| `analyze_memory_pack_relationship_processing` | 117 | 36 |
+| `analyze_relationship_processing_pack_structure` | 155 | 107 |
+| `validate_memory_pack_relationship_processing` | 264 | 27 |
+| `validate_relationship_processing_runs` | 293 | 253 |
+| `analyze_relationship_processing_reflection_context` | 548 | 42 |
+| `validate_relationship_processing_reflections` | 592 | 285 |
+| `_portable_fingerprint` | 879 | 8 |
+| `validate_memory_pack_node_types` | 889 | 6 |
+| `validate_memory_pack_relationship_consequences` | 897 | 57 |
+| `validate_memory_pack_turn_records` | 956 | 24 |
+| `validate_persisted_turn_adjudication_sources` | 982 | 102 |
+| `validate_memory_pack_persisted_turn_adjudications` | 1086 | 58 |
+| `analyze_memory_pack` | 1146 | 32 |
+| `_temporal_reference_ids` | 1180 | 15 |
+| `_validate_temporal_pack` | 1197 | 52 |
+| `_validate_persona_growth_pack` | 1251 | 31 |
 
 This private Module is not exported from `erii.__all__`. Its Interface accepts a MemoryPack snapshot, performs no Storage access, returns immutable derived facts, and preserves the existing ValueError messages for the rules it owns.
 
@@ -113,8 +115,8 @@ Tracked call sites: 193 across 31 files; 20 runtime/example/benchmark call sites
 | `erii/demo.py` | `export_memory` | 2 | 458, 503 |
 | `erii/evaluation/longitudinal.py` | `export_memory` | 2 | 1108, 1208 |
 | `erii/evaluation/longitudinal.py` | `import_memory` | 3 | 1119, 1124, 1250 |
-| `erii/lifecycle_erasure.py` | `export_memory` | 1 | 2404 |
-| `erii/lifecycle_erasure.py` | `import_memory` | 1 | 2420 |
+| `erii/lifecycle_erasure.py` | `export_memory` | 1 | 2055 |
+| `erii/lifecycle_erasure.py` | `import_memory` | 1 | 2071 |
 | `erii/lifecycle_memory_pack_import.py` | `export_memory` | 2 | 46, 126 |
 | `erii/lifecycle_memory_pack_import.py` | `import_memory` | 1 | 40 |
 | `erii/server/app.py` | `export_memory` | 1 | 1443 |
@@ -140,7 +142,7 @@ Tracked call sites: 193 across 31 files; 20 runtime/example/benchmark call sites
 | `tests/test_lifecycle_erasure_coordinator.py` | `import_memory` | 2 | 775, 1129 |
 | `tests/test_lifecycle_memory_pack_import_coordinator.py` | `export_memory` | 1 | 252 |
 | `tests/test_lifecycle_memory_pack_staging_import.py` | `export_memory` | 2 | 129, 185 |
-| `tests/test_memory_pack_analysis.py` | `export_memory` | 1 | 86 |
+| `tests/test_memory_pack_analysis.py` | `export_memory` | 1 | 91 |
 | `tests/test_memory_pack_transfer.py` | `import_memory` | 11 | 2221, 2248, 2296, 2526, 2969, 2989, 3026, 3052, 3107, 3147, 3204 |
 | `tests/test_persona_storage_integrity.py` | `import_memory` | 1 | 162 |
 | `tests/test_relationship_adjudication.py` | `export_memory` | 3 | 137, 168, 646 |
@@ -172,30 +174,26 @@ The broad test surface is intentional evidence: MemoryPack crosses relationship,
 | `DataLifecycleCoordinator` | `erii` | 9 | `benchmarks/run_refactoring_baseline.py`, `examples/lifecycle_backup_restore.py`, `tests/test_golden_continuity_demo.py`, `tests/test_lifecycle_erasure_coordinator.py`, `tests/test_lifecycle_historical_backup_compatibility.py`, `tests/test_lifecycle_memory_pack_import_coordinator.py`, `tests/test_lifecycle_memory_pack_upgrade.py`, `tests/test_lifecycle_sqlite_coordinator.py`, `tests/test_lifecycle_upgrade.py` |
 | `DataLifecycleCoordinator` | `erii.data_lifecycle` | 7 | `erii/__init__.py`, `erii/demo.py`, `erii/evaluation/longitudinal.py`, `scripts/freeze_contracts.py`, `tests/test_lifecycle_backup_restore.py`, `tests/test_lifecycle_plan_v1_compatibility.py`, `tests/test_lifecycle_process_safety.py` |
 | `ERIIEngine` | `erii` | 56 | `benchmarks/run_refactoring_baseline.py`, `examples/01_quickstart_python.py`, `examples/02_custom_llm_callable.py`, `examples/03_sqlite_storage.py`, `examples/04_inner_monologue_and_diary.py`, `examples/05_hybrid_retrieval_and_memory_pack.py`, `examples/06_cost_monitoring.py`, `examples/06_relationship_persona_kernel.py`, `examples/07_performance_optimization.py`, `examples/07_structured_persona_recall.py`, `examples/08_temporal_commitments.py`, `examples/08_turn_lifecycle_integration.py`, `examples/_shared.py`, `scripts/generate_memory_pack_a7_fixture.py`, `tests/test_a3_release_contracts.py`, `tests/test_a8_rest_memorypack_roundtrip_public.py`, `tests/test_archival_evidence_public.py`, `tests/test_archival_lifecycle_public.py`, `tests/test_archival_rest_public.py`, `tests/test_archival_safety_regressions.py`, `tests/test_concurrency.py`, `tests/test_consequence_file_storage.py`, `tests/test_consolidation_memorypack.py`, `tests/test_consolidation_storage_contract.py`, `tests/test_continuity_engine_public.py`, `tests/test_cost_monitoring_example.py`, `tests/test_deprecation_contracts.py`, `tests/test_engine.py`, `tests/test_golden_continuity_demo.py`, `tests/test_lifecycle_erasure_coordinator.py`, `tests/test_lifecycle_memory_pack_import_coordinator.py`, `tests/test_memory_pack_analysis.py`, `tests/test_memory_pack_transfer.py`, `tests/test_monologue_narrative.py`, `tests/test_performance.py`, `tests/test_persona_scope_recall.py`, `tests/test_persona_storage_integrity.py`, `tests/test_pipeline_inspection.py`, `tests/test_recall_authority_public.py`, `tests/test_relationship_adjudication.py`, `tests/test_relationship_evidence_quarantine_public.py`, `tests/test_relationship_kernel.py`, `tests/test_relationship_processing_public.py`, `tests/test_relationship_processing_restart_concurrency.py`, `tests/test_rest_error_contract_public.py`, `tests/test_rfc_full_verification.py`, `tests/test_security_regressions.py`, `tests/test_storage_adapter_compatibility.py`, `tests/test_structured_recall.py`, `tests/test_structured_recall_memory_provenance.py`, `tests/test_temporal_adjudication.py`, `tests/test_temporal_engine.py`, `tests/test_temporal_signals.py`, `tests/test_turn_lifecycle_public.py`, `tests/test_turn_rest_public.py`, `tests/test_v030_enhancements.py` |
-| `ERIIEngine` | `erii.engine` | 16 | `erii/__init__.py`, `erii/data_lifecycle.py`, `erii/demo.py`, `erii/evaluation/longitudinal.py`, `erii/lifecycle_erasure.py`, `erii/lifecycle_memory_pack_import.py`, `erii/server/app.py`, `examples/consequence_example.py`, `tests/deliberation/test_compact_orchestration.py`, `tests/test_consequence_recall.py`, `tests/test_lifecycle_consequence_erasure.py`, `tests/test_lifecycle_erasure.py`, `tests/test_lifecycle_memory_pack_staging_import.py`, `tests/test_relationship_consequence_engine.py`, `tests/test_temporal_recall.py`, `tests/test_v020_features.py` |
+| `ERIIEngine` | `erii.engine` | 15 | `erii/__init__.py`, `erii/demo.py`, `erii/evaluation/longitudinal.py`, `erii/lifecycle_erasure.py`, `erii/lifecycle_memory_pack_import.py`, `erii/server/app.py`, `examples/consequence_example.py`, `tests/deliberation/test_compact_orchestration.py`, `tests/test_consequence_recall.py`, `tests/test_lifecycle_consequence_erasure.py`, `tests/test_lifecycle_erasure.py`, `tests/test_lifecycle_memory_pack_staging_import.py`, `tests/test_relationship_consequence_engine.py`, `tests/test_temporal_recall.py`, `tests/test_v020_features.py` |
+| `LifecycleInspector` | `erii._lifecycle.inspection` | 3 | `erii/_lifecycle/planning.py`, `erii/data_lifecycle.py`, `tests/test_lifecycle_inspection.py` |
 | `LifecycleInspector` | `erii.data_lifecycle` | 2 | `erii/__init__.py`, `tests/test_lifecycle_inspection.py` |
 
 ## Lifecycle Coordinator Shape
 
 | Method | Start line | Span |
 | --- | ---: | ---: |
-| `__init__` | 2050 | 2 |
-| `inspect` | 2053 | 5 |
-| `plan` | 2059 | 15 |
-| `execute` | 2075 | 18 |
-| `_plan_backup` | 2094 | 22 |
-| `_plan_restore` | 2117 | 25 |
-| `_plan_upgrade` | 2143 | 44 |
-| `_plan_erasure` | 2188 | 60 |
-| `_plan_memory_pack_import` | 2249 | 45 |
-| `_ensure_verified_prechange_backup` | 2295 | 93 |
-| `_execute_backup` | 2389 | 93 |
-| `_execute_restore` | 2483 | 69 |
-| `_execute_upgrade` | 2553 | 201 |
-| `_execute_erasure_or_rebuild` | 2755 | 211 |
-| `_execute_memory_pack_import` | 2967 | 162 |
+| `__init__` | 822 | 3 |
+| `inspect` | 826 | 5 |
+| `plan` | 832 | 3 |
+| `execute` | 836 | 18 |
+| `_ensure_verified_prechange_backup` | 855 | 92 |
+| `_execute_backup` | 948 | 92 |
+| `_execute_restore` | 1041 | 69 |
+| `_execute_upgrade` | 1111 | 201 |
+| `_execute_erasure_or_rebuild` | 1313 | 211 |
+| `_execute_memory_pack_import` | 1525 | 162 |
 
-Top-level Lifecycle types/classes: 8. R2 separates contracts and no-write paths before any R3 write-path extraction.
+Top-level Lifecycle types/classes: 5. R2 separates contracts and no-write paths before any R3 write-path extraction.
 
 ## R1 Protected Behavior Matrix
 

@@ -4,6 +4,13 @@
 >
 > 状态：已决定继续完成 R2，不跳过 R3 或稳定检查点进入 R4。
 
+> 2026-08-20 更新：当时依据第 1 项所述的 Contracts 别名状态已由 R2A 解决；代码检查点为
+> `2fc8d74`，文档检查点为 `2047064`。本决策剩余范围现仅为正式 R2B 的 Inspection 与 Planning。
+
+> 2026-08-20 R2B 更新：Inspection/Planning 单一权威实现、Facade 委托、纯格式预演 seam 与
+> 依赖方向门已落地；`utils.py` 已删除。Windows capability smoke 与强制同环境性能门通过，
+> R2 已完成，下一阶段为 R3。
+
 ## 决策
 
 早期草稿所称“R2C”不是总控路线中的正式新阶段。它实际对应 R2 尚未完成的合同收口、
@@ -16,9 +23,9 @@ Inspection 和 Planning。该范围必须继续，正式归入：
 
 ## 依据
 
-1. `contracts.py` 当前只是私有别名，公共合同本体仍由 `erii.data_lifecycle` 定义；
-2. `utils.py` 当前只是权威 helper 的别名，不能视为 Inspection 已迁移；
-3. `DataLifecycleCoordinator.inspect/plan` 尚未委托独立内部 Module；
+1. 决策时 `contracts.py` 只是私有别名，公共合同本体仍由 `erii.data_lifecycle` 定义；
+2. 决策时 `utils.py` 只是权威 helper 的别名，不能视为 Inspection 已迁移；
+3. 决策时 `DataLifecycleCoordinator.inspect/plan` 尚未委托独立内部 Module；
 4. serializer 提取曾引入历史 reader 回归，说明只提取独立 helper 不能替代完整兼容矩阵；
 5. 总控路线要求 R2 -> R3 -> 稳定检查点 -> R4，不能以局部行数减少改变依赖顺序。
 
