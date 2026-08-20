@@ -295,8 +295,10 @@ class SQLiteStagingUpgradeTests(unittest.TestCase):
             _migrate_sqlite_staging_copy(FIXTURE_DATABASE, v11_path)
             _copy_v11_as_schema10(v11_path, v10_path)
             _copy_v11_as_schema9(v11_path, v9_path)
+            from erii._lifecycle import sqlite_image_upgrade
+
             original_migration = (
-                SQLiteStorage._migrate_memory_pack_write_receipts_v11
+                sqlite_image_upgrade._migrate_memory_pack_write_receipts_v11
             )
 
             def fail_after_schema(cursor: sqlite3.Cursor) -> None:
@@ -318,7 +320,7 @@ class SQLiteStagingUpgradeTests(unittest.TestCase):
                         with closing(sqlite3.connect(":memory:")) as connection:
                             source_connection.backup(connection)
                             with mock.patch.object(
-                                SQLiteStorage,
+                                sqlite_image_upgrade,
                                 "_migrate_memory_pack_write_receipts_v11",
                                 side_effect=fail_after_schema,
                             ):

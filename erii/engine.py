@@ -15,9 +15,8 @@ import warnings
 from erii.adapters.base import BaseLLMAdapter
 from erii.adapters.custom_adapter import CallableLLMAdapter
 from erii._engine.memory_pack_analysis import (
-    analyze_relationship_processing_pack_structure,
+    analyze_memory_pack_relationship_processing,
     analyze_relationship_processing_reflection_context,
-    resolve_relationship_processing_profile,
     validate_relationship_processing_reflections,
     validate_relationship_processing_runs,
     validate_memory_pack_persisted_turn_adjudications,
@@ -3618,32 +3617,20 @@ class ERIIEngine:
         """Preflights a7 ledgers before any legacy memory field is written."""
         runs = pack.relationship_processing_runs
         decisions = pack.persona_reflection_decisions
-        relationship = resolve_relationship_processing_profile(pack)
-        if relationship is None:
-            return
-        if (
-            pack.agent_id != target_agent
-            or pack.user_id != target_user
-            or relationship.agent_id != target_agent
-            or relationship.user_id != target_user
-        ):
-            raise ValueError(
-                "MemoryPack relationship processing cannot be copied to another "
-                "Agent x User"
-            )
-        relationship_id = relationship.relationship_id
-        if (
-            existing_profile is not None
-            and existing_profile.relationship_id != relationship_id
-        ):
-            raise ValueError(
-                "MemoryPack relationship processing requires exact relationship restore"
-            )
-
-        structure = analyze_relationship_processing_pack_structure(
+        structure = analyze_memory_pack_relationship_processing(
             pack,
-            relationship_id,
+            target_agent,
+            target_user,
+            (
+                existing_profile.relationship_id
+                if existing_profile is not None
+                else None
+            ),
         )
+        if structure is None:
+            return
+        assert pack.relationship is not None
+        relationship_id = pack.relationship.relationship_id
         events_by_id = structure.events_by_id
         adjudications_by_event = structure.adjudications_by_event
         adjudications_for_reflection_by_event = adjudications_by_event

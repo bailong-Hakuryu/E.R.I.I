@@ -90,7 +90,10 @@ class RegularTreeManifestTests(unittest.TestCase):
 
             tracemalloc.start()
             try:
-                with patch("erii.lifecycle_streaming.os.read", side_effect=observed_read):
+                with patch(
+                    "erii._lifecycle.filesystem.os.read",
+                    side_effect=observed_read,
+                ):
                     manifest = stream_regular_tree_manifest(
                         root,
                         chunk_size=64 * 1024,
@@ -145,7 +148,7 @@ class RegularTreeManifestTests(unittest.TestCase):
                 return chunk
 
             with patch(
-                "erii.lifecycle_streaming.os.read",
+                "erii._lifecycle.filesystem.os.read",
                 side_effect=change_timestamp_after_read,
             ):
                 with self.assertRaisesRegex(StorageIntegrityError, "changed"):
@@ -199,7 +202,10 @@ class ExclusiveStreamingCopyTests(unittest.TestCase):
                     raise OSError("injected copy failure")
                 return real_write(descriptor, content)
 
-            with patch("erii.lifecycle_streaming.os.write", side_effect=fail_during_write):
+            with patch(
+                "erii._lifecycle.filesystem.os.write",
+                side_effect=fail_during_write,
+            ):
                 with self.assertRaisesRegex(StorageWriteError, "could not create"):
                     copy_regular_file_exclusive(source, destination)
 
@@ -257,6 +263,7 @@ class ExclusiveStreamingCopyTests(unittest.TestCase):
                         "st_size",
                         "st_mtime_ns",
                         "st_ctime_ns",
+                        "st_nlink",
                     )
                 }
                 return SimpleNamespace(
@@ -264,7 +271,10 @@ class ExclusiveStreamingCopyTests(unittest.TestCase):
                     st_file_attributes=getattr(info, "st_file_attributes", 0) | 0x400,
                 )
 
-            with patch("erii.lifecycle_streaming.os.lstat", side_effect=reparse_lstat):
+            with patch(
+                "erii._lifecycle.filesystem.os.lstat",
+                side_effect=reparse_lstat,
+            ):
                 with self.assertRaisesRegex(StorageIntegrityError, "link|reparse"):
                     stream_regular_file_identity(source)
 

@@ -9,8 +9,10 @@ import unittest
 
 from erii import ERIIEngine, FileStorage
 import erii._engine.memory_pack_analysis as analysis_module
+import erii._lifecycle.memory_pack_validation as lifecycle_validation_module
 from erii._engine.memory_pack_analysis import (
     analyze_memory_pack,
+    analyze_memory_pack_relationship_processing,
     analyze_relationship_processing_reflection_context,
     analyze_relationship_processing_pack_structure,
     validate_relationship_processing_reflections,
@@ -18,8 +20,11 @@ from erii._engine.memory_pack_analysis import (
     resolve_relationship_processing_profile,
     validate_persisted_turn_adjudication_sources,
     validate_memory_pack_relationship_consequences,
+    validate_memory_pack_relationship_processing,
     validate_memory_pack_turn_records,
 )
+from erii._lifecycle.memory_pack_validation import validate_memory_pack_semantic_graph
+from erii.errors import StorageIntegrityError
 from erii.models.consequence import (
     RelationshipConsequence,
     RelationshipConsequenceKind,
@@ -312,6 +317,91 @@ class MemoryPackAnalysisTests(unittest.TestCase):
             node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
         }
         self.assertNotIn("storage", names)
+
+    def test_relationship_processing_entrypoint_matches_engine_without_storage(self) -> None:
+        pack = self._processing_pack()
+        before = pack.to_dict()
+
+        structure = analyze_memory_pack_relationship_processing(
+            pack,
+            pack.agent_id,
+            pack.user_id,
+        )
+        validate_memory_pack_relationship_processing(
+            pack,
+            pack.agent_id,
+            pack.user_id,
+        )
+        ERIIEngine._validate_relationship_processing_pack(
+            pack,
+            pack.agent_id,
+            pack.user_id,
+            None,
+        )
+
+        self.assertIsNotNone(structure)
+        self.assertEqual(pack.to_dict(), before)
+        self.assertEqual(
+            tuple(
+                inspect.signature(
+                    validate_memory_pack_relationship_processing
+                ).parameters
+            ),
+            ("pack", "target_agent", "target_user", "existing_relationship_id"),
+        )
+
+    def test_lifecycle_semantic_validation_is_pure_and_wraps_processing_failures(self) -> None:
+        source = inspect.getsource(lifecycle_validation_module)
+        tree = ast.parse(source)
+        imported_modules = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        } | {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        forbidden_prefixes = (
+            "erii.data_lifecycle",
+            "erii.engine",
+            "erii.lifecycle_memory_pack_import",
+            "erii._engine.memory_pack_transfer",
+            "erii.storage",
+        )
+        self.assertFalse(
+            any(
+                module == prefix or module.startswith(f"{prefix}.")
+                for module in imported_modules
+                for prefix in forbidden_prefixes
+            )
+        )
+        self.assertEqual(
+            tuple(inspect.signature(validate_memory_pack_semantic_graph).parameters),
+            ("pack",),
+        )
+
+        pack = self._processing_pack()
+        valid_before = pack.to_dict()
+        validate_memory_pack_semantic_graph(pack)
+        self.assertEqual(pack.to_dict(), valid_before)
+
+        pack.relationship_processing_runs = []
+        before = pack.to_dict()
+
+        with self.assertRaisesRegex(
+            StorageIntegrityError,
+            "MemoryPack semantic graph validation failed",
+        ) as raised:
+            validate_memory_pack_semantic_graph(pack)
+
+        self.assertIsInstance(raised.exception.__cause__, ValueError)
+        self.assertIn(
+            "relationship-processing-v1 adjudications require their processing runs",
+            str(raised.exception.__cause__),
+        )
+        self.assertEqual(pack.to_dict(), before)
 
     def test_relationship_processing_structure_preserves_duplicate_turn_failure(self) -> None:
         pack = self._fixture_pack()

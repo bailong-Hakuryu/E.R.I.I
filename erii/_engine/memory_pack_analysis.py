@@ -114,6 +114,44 @@ def resolve_relationship_processing_profile(
     return pack.relationship
 
 
+def analyze_memory_pack_relationship_processing(
+    pack: MemoryPack,
+    target_agent: str,
+    target_user: str,
+    existing_relationship_id: Optional[str] = None,
+) -> Optional[RelationshipProcessingPackStructure]:
+    """Validate portable processing identity and return its frozen structure.
+
+    Target journal reads and conflicts deliberately remain outside this
+    Interface.  Callers can therefore reuse the authoritative portable checks
+    without constructing an Engine or opening Storage.
+    """
+    relationship = resolve_relationship_processing_profile(pack)
+    if relationship is None:
+        return None
+    if (
+        pack.agent_id != target_agent
+        or pack.user_id != target_user
+        or relationship.agent_id != target_agent
+        or relationship.user_id != target_user
+    ):
+        raise ValueError(
+            "MemoryPack relationship processing cannot be copied to another "
+            "Agent x User"
+        )
+    if (
+        existing_relationship_id is not None
+        and existing_relationship_id != relationship.relationship_id
+    ):
+        raise ValueError(
+            "MemoryPack relationship processing requires exact relationship restore"
+        )
+    return analyze_relationship_processing_pack_structure(
+        pack,
+        relationship.relationship_id,
+    )
+
+
 def analyze_relationship_processing_pack_structure(
     pack: MemoryPack,
     relationship_id: str,
@@ -220,6 +258,35 @@ def analyze_relationship_processing_pack_structure(
                 for event_id in direct_event_order
             }
         ),
+    )
+
+
+def validate_memory_pack_relationship_processing(
+    pack: MemoryPack,
+    target_agent: str,
+    target_user: str,
+    existing_relationship_id: Optional[str] = None,
+) -> None:
+    """Validate the complete portable relationship-processing graph."""
+    structure = analyze_memory_pack_relationship_processing(
+        pack,
+        target_agent,
+        target_user,
+        existing_relationship_id,
+    )
+    if structure is None:
+        return
+    reflection_context = analyze_relationship_processing_reflection_context(
+        pack,
+        structure,
+        structure.adjudications_by_event,
+    )
+    run_analysis = validate_relationship_processing_runs(pack, structure)
+    validate_relationship_processing_reflections(
+        pack,
+        structure,
+        run_analysis,
+        reflection_context,
     )
 
 
@@ -1217,9 +1284,11 @@ def _validate_persona_growth_pack(
 __all__ = [
     "MemoryPackAnalysis",
     "analyze_memory_pack",
+    "analyze_memory_pack_relationship_processing",
     "validate_persisted_turn_adjudication_sources",
     "validate_memory_pack_persisted_turn_adjudications",
     "validate_memory_pack_node_types",
     "validate_memory_pack_relationship_consequences",
+    "validate_memory_pack_relationship_processing",
     "validate_memory_pack_turn_records",
 ]

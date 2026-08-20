@@ -76,7 +76,11 @@ from erii.models.turn import (
 from erii.models.turn_context import TurnContextBaseline
 from erii.core.temporal_history import TemporalHistoryValidator
 from erii.compatibility import SQLITE_FORMAT
-from erii.data_lifecycle import read_sqlite_schema_version
+from erii._lifecycle import sqlite_semantics
+from erii._lifecycle.sqlite_image_upgrade import (
+    _migrate_memory_pack_write_receipts_v11 as _migrate_receipts_v11,
+    _migrate_relationship_consequence_v10 as _migrate_consequence_v10,
+)
 from erii.errors import MigrationRequiredError, UnsupportedFormatError
 from erii.security.sanitizer import SecuritySanitizer
 from erii.storage.archival import ArchivalTombstoneValidationSource
@@ -170,7 +174,10 @@ class SQLiteStorage(BaseStorage):
         super().__init__()
         self.db_path = db_path
         self._memory_pack_write_local = threading.local()
-        schema_version = read_sqlite_schema_version(self.db_path, immutable=False)
+        schema_version = sqlite_semantics.read_sqlite_schema_version(
+            self.db_path,
+            immutable=False,
+        )
         if (
             schema_version is not None
             and schema_version < self.CURRENT_SCHEMA_VERSION
@@ -1319,106 +1326,12 @@ class SQLiteStorage(BaseStorage):
             """
         )
 
-    @staticmethod
-    def _migrate_relationship_consequence_v10(cursor: sqlite3.Cursor) -> None:
-        """Adds append-only consequence and Narrative Tension journals."""
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS relationship_consequences (
-                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                consequence_id TEXT NOT NULL UNIQUE,
-                relationship_id TEXT NOT NULL,
-                tension_id TEXT NOT NULL,
-                source_decision_id TEXT NOT NULL,
-                source_event_id TEXT NOT NULL,
-                data JSON NOT NULL,
-                recorded_at TEXT NOT NULL,
-                UNIQUE (
-                    relationship_id, source_decision_id, source_event_id
-                ),
-                FOREIGN KEY (relationship_id)
-                    REFERENCES relationships(relationship_id) ON DELETE CASCADE
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_relationship_consequences_order
-            ON relationship_consequences(relationship_id, sequence)
-            """
-        )
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_relationship_consequences_tension
-            ON relationship_consequences(relationship_id, tension_id, sequence)
-            """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS narrative_tension_links (
-                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                link_id TEXT NOT NULL UNIQUE,
-                relationship_id TEXT NOT NULL,
-                tension_id TEXT NOT NULL,
-                consequence_id TEXT NOT NULL,
-                source_decision_id TEXT NOT NULL,
-                source_event_id TEXT NOT NULL,
-                data JSON NOT NULL,
-                recorded_at TEXT NOT NULL,
-                UNIQUE (tension_id, source_decision_id, source_event_id),
-                FOREIGN KEY (relationship_id)
-                    REFERENCES relationships(relationship_id) ON DELETE CASCADE,
-                FOREIGN KEY (consequence_id)
-                    REFERENCES relationship_consequences(consequence_id)
-                    ON DELETE CASCADE
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_narrative_tension_links_order
-            ON narrative_tension_links(relationship_id, sequence)
-            """
-        )
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_narrative_tension_links_tension
-            ON narrative_tension_links(relationship_id, tension_id, sequence)
-            """
-        )
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_narrative_tension_links_consequence
-            ON narrative_tension_links(consequence_id, sequence)
-            """
-        )
-
-    @staticmethod
-    def _migrate_memory_pack_write_receipts_v11(
-        cursor: sqlite3.Cursor,
-    ) -> None:
-        """Adds content-free exactly-once receipts for whole-pack writes."""
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS memory_pack_write_receipts (
-                operation_id TEXT PRIMARY KEY,
-                receipt_version INTEGER NOT NULL CHECK (receipt_version = 1),
-                target_agent TEXT NOT NULL,
-                target_user TEXT NOT NULL,
-                relationship_id TEXT,
-                result_json JSON NOT NULL,
-                committed_at TEXT NOT NULL
-            )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_memory_pack_write_receipts_scope
-            ON memory_pack_write_receipts(
-                target_agent, target_user, relationship_id
-            )
-            """
-        )
+    _migrate_relationship_consequence_v10 = staticmethod(
+        _migrate_consequence_v10
+    )
+    _migrate_memory_pack_write_receipts_v11 = staticmethod(
+        _migrate_receipts_v11
+    )
 
     @property
     def schema_version(self) -> int:

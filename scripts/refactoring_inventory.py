@@ -88,6 +88,7 @@ def _tracked_python_paths() -> tuple[str, ...]:
             "*.py",
         )
         if path.startswith(SCANNED_PREFIXES)
+        and (ROOT / path).is_file()
     )
 
 

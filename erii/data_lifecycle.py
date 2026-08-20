@@ -2,10 +2,8 @@
 
 from contextlib import ExitStack, closing, contextmanager
 import ctypes
-from dataclasses import dataclass
 import errno
 import hashlib
-import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
@@ -18,11 +16,6 @@ from erii.compatibility import (
     FILE_STORAGE_FORMAT,
     LIFECYCLE_BACKUP_FORMAT,
     LIFECYCLE_PLAN_FORMAT,
-    MEMORY_PACK_FORMAT,
-    SQLITE_FORMAT,
-    FormatCompatibility,
-    decode_memory_pack_json,
-    require_supported_version,
 )
 from erii.errors import (
     LifecycleConflictError,
@@ -37,7 +30,6 @@ from erii.models.pack import MemoryPack
 from erii.lifecycle_erasure_contracts import (
     ErasureInventory,
     ErasureScope,
-    ErasureSelectionError,
     ErasureSelector,
     ErasureTransformResult,
     RelationshipRebuildProof,
@@ -47,28 +39,59 @@ from erii.lifecycle_memory_pack_import_contracts import (
     MemoryPackStagingImportReport,
 )
 from erii._lifecycle.plan_codec import (
-    BACKUP_STRATEGY_ID as _BACKUP_STRATEGY_ID,
-    FILE_STORAGE_UPGRADE_STRATEGIES as _FILE_STORAGE_UPGRADE_STRATEGIES,
-    MEMORY_PACK_STRATEGY_PREFIX as _MEMORY_PACK_STRATEGY_PREFIX,
-    RESTORE_STRATEGY_ID as _RESTORE_STRATEGY_ID,
-    SQLITE_UPGRADE_STRATEGIES as _SQLITE_UPGRADE_STRATEGIES,
     canonical_json as _canonical_json,
     decode_strict_json as _decode_strict_json,
     erasure_storage_kind as _erasure_storage_kind,
-    erasure_strategy_id as _erasure_strategy_id,
-    import_strategy_id as _import_strategy_id,
-    is_sha256 as _is_sha256,
-    sha256_json as _sha256_json,
-    upgrade_strategy_id as _upgrade_strategy_id,
     validate_assessment as _validate_assessment,
 )
-from erii._lifecycle.serializers import (
-    assessment_to_dict as _assessment_to_dict,
-    content_from_backup_manifest as _content_from_backup_manifest,
-    content_to_dict as _content_to_dict,
-    directory_identity_to_dict as _directory_identity_to_dict,
-    selector_to_dict as _selector_to_dict,
+from erii._lifecycle.inspection import (
+    FILE_STORAGE_MANIFEST,
+    LIFECYCLE_BACKUP_MANIFEST,
+    BackupBundle as _BackupBundle,
+    LifecycleInspector,
+    MAX_LIFECYCLE_BACKUP_MANIFEST_BYTES,
+    assessment_matches_content as _assessment_matches_content,
+    read_backup_bundle as _read_backup_bundle,
+    require_complete_bundle as _require_complete_bundle,
 )
+from erii._lifecycle.filesystem import (
+    assert_no_link_or_reparse_ancestors as _assert_no_link_or_reparse_ancestors,
+    copy_regular_file_exclusive,
+    directory_identity as _directory_identity,
+    lexists as _lexists,
+    lstat as _lstat,
+    read_stable_bytes as _read_stable_bytes,
+    require_regular_directory as _require_regular_directory,
+    require_regular_file as _require_regular_file,
+    scan_directory_entries as _scan_directory_entries,
+    stat_is_link_or_reparse as _stat_is_link_or_reparse,
+    stat_object_identity as _stat_object_identity,
+    stat_signature as _stat_signature,
+    validate_relative_payload_path as _validate_relative_payload_path,
+)
+from erii._lifecycle.serializers import (
+    content_to_dict as _content_to_dict,
+)
+from erii._lifecycle.snapshots import (
+    MAX_LIFECYCLE_MEMORY_PACK_BYTES,
+    MAX_LIFECYCLE_TRANSFORM_BYTES,
+    PayloadSnapshot as _PayloadSnapshot,
+    capture_snapshot as _capture_snapshot,
+    materialize_snapshot as _materialize_snapshot,
+    payload_entry_for_kind as _payload_entry_for_kind,
+)
+from erii._lifecycle.sqlite_semantics import (
+    read_sqlite_schema_version as read_sqlite_schema_version,
+)
+from erii._lifecycle.topology import (
+    require_destinations_do_not_overlap as _require_destinations_do_not_overlap,
+    require_safe_destination as _require_safe_destination,
+)
+from erii._lifecycle.memory_pack_validation import (
+    validate_memory_pack_semantic_graph as _validate_memory_pack_semantic_graph,
+)
+from erii._lifecycle.planning import LifecyclePlanner
+from erii._lifecycle.upgrade_preview import upgrade_snapshot as _upgrade_snapshot
 from erii._lifecycle.contracts import (
     BackupRequest, EraseRequest, LifecycleAssessment,
     LifecycleContentIdentity, LifecycleDirectoryIdentity, LifecycleOperation,
@@ -77,722 +100,7 @@ from erii._lifecycle.contracts import (
     MemoryPackImportOptions, MemoryPackImportRequest, RebuildRequest,
     RestoreRequest, UpgradeRequest,
 )
-from erii.lifecycle_streaming import (
-    RegularFileIdentity,
-    copy_regular_file_exclusive,
-    stream_regular_file_identity,
-    stream_regular_tree_manifest,
-)
-
-
-FILE_STORAGE_MANIFEST = ".erii-store.json"
-LIFECYCLE_BACKUP_MANIFEST = "manifest.json"
 LIFECYCLE_PLAN_CONTRACT_VERSION = LIFECYCLE_PLAN_FORMAT.current_version
-MAX_LIFECYCLE_MEMORY_PACK_BYTES = 256 * 1024 * 1024
-MAX_LIFECYCLE_TRANSFORM_BYTES = 512 * 1024 * 1024
-MAX_LIFECYCLE_BACKUP_MANIFEST_BYTES = 16 * 1024 * 1024
-_FILE_STORAGE_MANIFEST_FIELDS = frozenset({"format", "version"})
-_LEGACY_BASENAMES = frozenset(
-    {
-        "nodes.json",
-        "core_memory.json",
-        "timeline.json",
-        "relationship.json",
-        "_relationship_identities.json",
-        "_archival_state.json",
-    }
-)
-_LEGACY_TOP_LEVEL_DIRECTORIES = frozenset(
-    {
-        "_relationship_events",
-        "_relationship_adjudications",
-        "_relationship_consequences",
-        "_narrative_tension_links",
-        "_persona_growth",
-        "_turn_records",
-        "_reply_attempts",
-        "_relationship_processing",
-        "_persona_compilations",
-        "_persona_approval_transactions",
-    }
-)
-_FILE_STORAGE_RUNTIME_LOCK_DIRECTORIES = frozenset(
-    {
-        "_relationship_history_locks",
-        "_relationship_processing_locks",
-        "_turn_locks",
-    }
-)
-
-
-def _make_plan(
-    *,
-    operation: LifecycleOperation,
-    source: LifecycleAssessment,
-    destination: LifecycleAssessment,
-    destination_parent: LifecycleDirectoryIdentity,
-    content: LifecycleContentIdentity,
-    strategy_id: str,
-    backup_destination: LifecycleAssessment | None = None,
-    backup_destination_parent: LifecycleDirectoryIdentity | None = None,
-    selector: LifecyclePlanSelector | None = None,
-) -> LifecyclePlan:
-    intent = {
-        "contract_version": LIFECYCLE_PLAN_CONTRACT_VERSION,
-        "operation": operation.value,
-        "source": _assessment_to_dict(source),
-        "destination": _assessment_to_dict(destination),
-        "destination_parent": _directory_identity_to_dict(destination_parent),
-        "content": _content_to_dict(content),
-        "strategy_id": strategy_id,
-        "backup_destination": (
-            None
-            if backup_destination is None
-            else _assessment_to_dict(backup_destination)
-        ),
-        "backup_destination_parent": (
-            None
-            if backup_destination_parent is None
-            else _directory_identity_to_dict(backup_destination_parent)
-        ),
-        "selector": _selector_to_dict(selector),
-    }
-    operation_id = _sha256_json(intent)
-    plan_digest = _sha256_json({**intent, "operation_id": operation_id})
-    return LifecyclePlan(
-        contract_version=LIFECYCLE_PLAN_CONTRACT_VERSION,
-        operation=operation,
-        operation_id=operation_id,
-        source=source,
-        destination=destination,
-        destination_parent=destination_parent,
-        content=content,
-        strategy_id=strategy_id,
-        backup_destination=backup_destination,
-        backup_destination_parent=backup_destination_parent,
-        selector=selector,
-        plan_digest=plan_digest,
-    )
-
-
-def _missing_assessment(
-    target: LifecycleTarget,
-    compatibility: FormatCompatibility,
-) -> LifecycleAssessment:
-    return LifecycleAssessment(
-        target=target,
-        status=LifecycleStatus.MISSING,
-        format_id=compatibility.format_id,
-        detected_version=None,
-        current_version=compatibility.current_version,
-        fingerprint=None,
-        file_count=0,
-    )
-
-
-def _lexists(path: Path) -> bool:
-    return os.path.lexists(os.fspath(path))
-
-
-def _stat_is_link_or_reparse(info: os.stat_result) -> bool:
-    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
-    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & reparse_flag)
-
-
-def _stat_signature(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    return (
-        stat.S_IFMT(info.st_mode),
-        info.st_dev,
-        info.st_ino,
-        info.st_size,
-        info.st_mtime_ns,
-        info.st_nlink,
-    )
-
-
-def _stat_object_identity(info: os.stat_result) -> tuple[int, int, int]:
-    return (stat.S_IFMT(info.st_mode), info.st_dev, info.st_ino)
-
-
-def _lstat(path: Path, *, label: str) -> os.stat_result:
-    try:
-        return os.lstat(path)
-    except OSError as exc:
-        raise StorageIntegrityError(f"cannot inspect {label}") from exc
-
-
-def _require_regular_file(path: Path, *, label: str) -> os.stat_result:
-    info = _lstat(path, label=label)
-    if _stat_is_link_or_reparse(info) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise StorageIntegrityError(f"{label} must be a regular file without links")
-    return info
-
-
-def _require_regular_directory(path: Path, *, label: str) -> os.stat_result:
-    info = _lstat(path, label=label)
-    if _stat_is_link_or_reparse(info) or not stat.S_ISDIR(info.st_mode):
-        raise StorageIntegrityError(f"{label} must be a regular directory without links")
-    return info
-
-
-def _assert_no_link_or_reparse_ancestors(path: Path, *, label: str) -> None:
-    current = Path(os.path.abspath(path))
-    while True:
-        if _lexists(current):
-            info = _lstat(current, label=label)
-            if _stat_is_link_or_reparse(info):
-                raise StorageIntegrityError(f"{label} cannot use a linked or reparse path")
-        parent = current.parent
-        if parent == current:
-            return
-        current = parent
-
-
-def _resolved_path(path: Path, *, label: str) -> str:
-    _assert_no_link_or_reparse_ancestors(path, label=label)
-    try:
-        resolved = path.resolve(strict=False)
-    except OSError as exc:
-        raise StorageIntegrityError(f"cannot resolve {label}") from exc
-    _assert_no_link_or_reparse_ancestors(path, label=label)
-    return os.path.normcase(os.path.normpath(str(resolved)))
-
-
-def _directory_identity(path: Path) -> LifecycleDirectoryIdentity:
-    _assert_no_link_or_reparse_ancestors(path, label="lifecycle destination parent")
-    info = _require_regular_directory(path, label="lifecycle destination parent")
-    try:
-        resolved = path.resolve(strict=True)
-    except OSError as exc:
-        raise StorageIntegrityError("cannot resolve lifecycle destination parent") from exc
-    final = _require_regular_directory(path, label="lifecycle destination parent")
-    if _stat_signature(info) != _stat_signature(final):
-        raise StorageIntegrityError("lifecycle destination parent changed during inspection")
-    return LifecycleDirectoryIdentity(
-        resolved_path=os.path.normcase(os.path.normpath(str(resolved))),
-        device=final.st_dev,
-        inode=final.st_ino,
-    )
-
-
-def _scan_directory_entries(
-    root: Path,
-    *,
-    label: str,
-) -> tuple[Dict[str, tuple[int, int, int, int, int, int]], set[str]]:
-    _assert_no_link_or_reparse_ancestors(root, label=label)
-    _require_regular_directory(root, label=label)
-    files: Dict[str, tuple[int, int, int, int, int, int]] = {}
-    directories: set[str] = set()
-
-    def walk(
-        directory: Path,
-        relative_parts: tuple[str, ...],
-        expected_identity: tuple[int, int, int],
-    ) -> None:
-        current = _require_regular_directory(directory, label=label)
-        if _stat_object_identity(current) != expected_identity:
-            raise StorageIntegrityError(f"{label} changed during inspection")
-        try:
-            with os.scandir(directory) as iterator:
-                entries = sorted(iterator, key=lambda item: item.name)
-        except OSError as exc:
-            raise StorageIntegrityError(f"{label} cannot be scanned") from exc
-        for entry in entries:
-            relative = PurePosixPath(*relative_parts, entry.name).as_posix()
-            # On Windows/Python 3.11, DirEntry.stat(follow_symlinks=False) can
-            # report (st_dev, st_ino) as (0, 0) while os.lstat reports the real
-            # identity. Use one identity source throughout the scan.
-            info = _lstat(Path(entry.path), label=f"{label} entry")
-            if _stat_is_link_or_reparse(info):
-                raise StorageIntegrityError(f"{label} contains a link or reparse entry")
-            if stat.S_ISDIR(info.st_mode):
-                directories.add(relative)
-                walk(
-                    Path(entry.path),
-                    (*relative_parts, entry.name),
-                    _stat_object_identity(info),
-                )
-            elif stat.S_ISREG(info.st_mode):
-                files[relative] = _stat_signature(info)
-            else:
-                raise StorageIntegrityError(f"{label} contains a non-regular entry")
-        final = _require_regular_directory(directory, label=label)
-        if _stat_object_identity(final) != expected_identity:
-            raise StorageIntegrityError(f"{label} changed during inspection")
-
-    root_info = _require_regular_directory(root, label=label)
-    walk(root, (), _stat_object_identity(root_info))
-    return files, directories
-
-
-def _is_file_storage_runtime_lock(relative_name: str) -> bool:
-    path = PurePosixPath(relative_name)
-    if path.parts == ("_turn_context_snapshot.lock",):
-        return True
-    if len(path.parts) != 2 or path.parts[0] not in _FILE_STORAGE_RUNTIME_LOCK_DIRECTORIES:
-        return False
-    filename = path.parts[1]
-    if not filename.endswith(".lock"):
-        return False
-    digest = filename.removesuffix(".lock")
-    return len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
-
-
-def _read_stable_bytes(
-    path: Path,
-    *,
-    expected_signature: tuple[int, int, int, int, int, int] | None = None,
-    read_limit: int | None = None,
-    size_limit: int | None = None,
-) -> bytes:
-    label = f"lifecycle source file {path.name!r}"
-    _assert_no_link_or_reparse_ancestors(path, label=label)
-    before = _require_regular_file(path, label=label)
-    if size_limit is not None and before.st_size > size_limit:
-        raise StorageIntegrityError(
-            f"{label} exceeds the supported lifecycle size limit"
-        )
-    if expected_signature is not None and _stat_signature(before) != expected_signature:
-        raise StorageIntegrityError("lifecycle source changed before it was read")
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = -1
-    try:
-        descriptor = os.open(path, flags)
-        opened = os.fstat(descriptor)
-        if _stat_is_link_or_reparse(opened) or not stat.S_ISREG(opened.st_mode):
-            raise StorageIntegrityError(f"{label} is not a regular file")
-        if _stat_signature(before) != _stat_signature(opened):
-            raise StorageIntegrityError("lifecycle source changed before it was opened")
-        chunks = bytearray()
-        while True:
-            if read_limit is not None:
-                remaining = read_limit - len(chunks)
-                if remaining <= 0:
-                    break
-                chunk_size = min(1024 * 1024, remaining)
-            else:
-                chunk_size = 1024 * 1024
-            chunk = os.read(descriptor, chunk_size)
-            if not chunk:
-                break
-            chunks.extend(chunk)
-        after_open = os.fstat(descriptor)
-        _assert_no_link_or_reparse_ancestors(path, label=label)
-        after_path = _require_regular_file(path, label=label)
-    except StorageIntegrityError:
-        raise
-    except OSError as exc:
-        raise StorageIntegrityError(f"cannot read {label}") from exc
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-    if not (
-        _stat_signature(before)
-        == _stat_signature(opened)
-        == _stat_signature(after_open)
-        == _stat_signature(after_path)
-    ):
-        raise StorageIntegrityError("lifecycle source changed during inspection")
-    if expected_signature is not None and _stat_signature(after_path) != expected_signature:
-        raise StorageIntegrityError("lifecycle source changed during inspection")
-    return bytes(chunks)
-
-
-def _fingerprint_files(content_by_name: Dict[str, bytes]) -> str:
-    digest = hashlib.sha256()
-    for name in sorted(content_by_name):
-        name_bytes = name.encode("utf-8")
-        content = content_by_name[name]
-        digest.update(len(name_bytes).to_bytes(8, "big"))
-        digest.update(name_bytes)
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
-    return digest.hexdigest()
-
-
-def _sqlite_uri(path: Path, *, immutable: bool) -> str:
-    query = "mode=ro"
-    if immutable:
-        query += "&immutable=1"
-    return f"{path.resolve().as_uri()}?{query}"
-
-
-def read_sqlite_schema_version(path_value: str, *, immutable: bool) -> int | None:
-    """Reads an existing SQLite schema identity without creating the database."""
-    path = Path(path_value)
-    if not _lexists(path):
-        return None
-    _assert_no_link_or_reparse_ancestors(path, label="SQLite lifecycle target")
-    info = _require_regular_file(path, label="SQLite lifecycle target")
-    if info.st_size == 0:
-        return 0
-    try:
-        if _read_stable_bytes(path, read_limit=16) != b"SQLite format 3\x00":
-            raise StorageIntegrityError("SQLite lifecycle target has an invalid header")
-        with closing(
-            sqlite3.connect(_sqlite_uri(path, immutable=immutable), uri=True)
-        ) as connection:
-            connection.execute("PRAGMA query_only=ON")
-            exists = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
-            ).fetchone()
-            if exists is None:
-                return 0
-            rows = connection.execute(
-                "SELECT version FROM schema_migrations ORDER BY version"
-            ).fetchall()
-    except UnsupportedFormatError:
-        raise
-    except StorageIntegrityError:
-        raise
-    except (OSError, sqlite3.Error) as exc:
-        raise StorageIntegrityError("SQLite schema metadata is unreadable or malformed") from exc
-    versions = [row[0] for row in rows]
-    if any(isinstance(version, bool) or not isinstance(version, int) for version in versions):
-        raise StorageIntegrityError("SQLite schema migration versions must be integers")
-    current = max(versions, default=0)
-    if current > int(SQLITE_FORMAT.current_version):
-        raise UnsupportedFormatError(
-            f"unsupported {SQLITE_FORMAT.format_id} version {current!r}; "
-            f"current reader is {SQLITE_FORMAT.current_version!r}"
-        )
-    if versions != list(range(1, current + 1)):
-        raise StorageIntegrityError("SQLite schema migration history is not contiguous")
-    return current
-
-
-class LifecycleInspector:
-    """Inspects supported lifecycle targets without instantiating storage drivers."""
-
-    def inspect(self, target: LifecycleTarget) -> LifecycleAssessment:
-        if not isinstance(target, LifecycleTarget):
-            raise TypeError("inspect() requires a LifecycleTarget")
-        _assert_no_link_or_reparse_ancestors(
-            Path(target.path),
-            label="lifecycle target",
-        )
-        if target.kind is LifecycleTargetKind.FILE_STORAGE:
-            return self._inspect_file_storage(target)
-        if target.kind is LifecycleTargetKind.SQLITE:
-            return self._inspect_sqlite(target)
-        if target.kind is LifecycleTargetKind.MEMORY_PACK:
-            return self._inspect_memory_pack(target)
-        if target.kind is LifecycleTargetKind.BACKUP:
-            return _read_backup_bundle(target).assessment
-        raise ValueError(f"unsupported lifecycle target kind {target.kind!r}")
-
-    @staticmethod
-    def _scan_file_storage(root: Path) -> Dict[str, bytes]:
-        initial_files, _ = _scan_directory_entries(
-            root,
-            label="FileStorage lifecycle target",
-        )
-        if any(PurePosixPath(name).name.endswith(".tmp") for name in initial_files):
-            raise StorageIntegrityError(
-                "FileStorage lifecycle target contains an incomplete temporary file"
-            )
-        initial = {
-            name: signature
-            for name, signature in initial_files.items()
-            if not _is_file_storage_runtime_lock(name)
-        }
-        content_by_name = {
-            name: _read_stable_bytes(
-                root.joinpath(*PurePosixPath(name).parts),
-                expected_signature=initial[name],
-            )
-            for name in sorted(initial)
-        }
-        final_files, _ = _scan_directory_entries(
-            root,
-            label="FileStorage lifecycle target",
-        )
-        if any(PurePosixPath(name).name.endswith(".tmp") for name in final_files):
-            raise StorageIntegrityError("FileStorage lifecycle target changed during inspection")
-        final = {
-            name: signature
-            for name, signature in final_files.items()
-            if not _is_file_storage_runtime_lock(name)
-        }
-        if final != initial:
-            raise StorageIntegrityError("FileStorage lifecycle target changed during inspection")
-        return content_by_name
-
-    @classmethod
-    def _inspect_file_storage(cls, target: LifecycleTarget) -> LifecycleAssessment:
-        root = Path(target.path)
-        if not _lexists(root):
-            return _missing_assessment(target, FILE_STORAGE_FORMAT)
-        _require_regular_directory(root, label="FileStorage lifecycle target")
-        from erii.lifecycle_streaming import stream_regular_tree_manifest
-
-        streamed = stream_regular_tree_manifest(
-            root,
-            exclude_relative_name=_is_file_storage_runtime_lock,
-        )
-        relative_names = tuple(entry.relative_path for entry in streamed.files)
-        if any(PurePosixPath(name).name.endswith(".tmp") for name in relative_names):
-            raise StorageIntegrityError(
-                "FileStorage lifecycle target contains an incomplete temporary file"
-            )
-        manifest_content: bytes | None = None
-        for relative_name in relative_names:
-            if not relative_name.endswith(".json"):
-                continue
-            content = _read_stable_bytes(
-                root.joinpath(*PurePosixPath(relative_name).parts),
-                size_limit=MAX_LIFECYCLE_TRANSFORM_BYTES,
-            )
-            try:
-                json.loads(content.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise StorageIntegrityError(
-                    f"FileStorage JSON document {Path(relative_name).name!r} is malformed"
-                ) from exc
-            if relative_name == FILE_STORAGE_MANIFEST:
-                manifest_content = content
-        final_streamed = stream_regular_tree_manifest(
-            root,
-            exclude_relative_name=_is_file_storage_runtime_lock,
-        )
-        if final_streamed != streamed:
-            raise StorageIntegrityError(
-                "FileStorage lifecycle target changed during inspection"
-            )
-
-        warnings = ()
-        if manifest_content is not None:
-            try:
-                manifest = json.loads(manifest_content.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise StorageIntegrityError("FileStorage manifest is malformed") from exc
-            if not isinstance(manifest, dict) or set(manifest) != _FILE_STORAGE_MANIFEST_FIELDS:
-                raise StorageIntegrityError("FileStorage manifest fields are invalid")
-            if manifest.get("format") != FILE_STORAGE_FORMAT.format_id:
-                raise StorageIntegrityError("FileStorage manifest format identity is invalid")
-            raw_version = manifest.get("version")
-            if isinstance(raw_version, bool) or not isinstance(raw_version, int):
-                raise StorageIntegrityError("FileStorage manifest version must be an integer")
-            detected_version = str(raw_version)
-            require_supported_version(FILE_STORAGE_FORMAT, detected_version)
-            status = (
-                LifecycleStatus.CURRENT
-                if detected_version == FILE_STORAGE_FORMAT.current_version
-                else LifecycleStatus.MIGRATION_REQUIRED
-            )
-        elif not relative_names:
-            detected_version = None
-            status = LifecycleStatus.EMPTY
-        else:
-            recognized = any(
-                Path(name).name in _LEGACY_BASENAMES
-                or Path(name).parts[0] in _LEGACY_TOP_LEVEL_DIRECTORIES
-                for name in relative_names
-            )
-            if not recognized:
-                raise StorageIntegrityError(
-                    "directory does not contain a recognizable E.R.I.I. FileStorage layout"
-                )
-            detected_version = "legacy"
-            status = LifecycleStatus.MIGRATION_REQUIRED
-            if any(not name.endswith(".json") for name in relative_names):
-                warnings = ("unrecognized non-JSON files are included in the fingerprint",)
-
-        return LifecycleAssessment(
-            target=target,
-            status=status,
-            format_id=FILE_STORAGE_FORMAT.format_id,
-            detected_version=detected_version,
-            current_version=FILE_STORAGE_FORMAT.current_version,
-            fingerprint=streamed.tree_fingerprint,
-            file_count=streamed.file_count,
-            warnings=warnings,
-        )
-
-    @staticmethod
-    def _inspect_sqlite(target: LifecycleTarget) -> LifecycleAssessment:
-        path = Path(target.path)
-        if not _lexists(path):
-            return _missing_assessment(target, SQLITE_FORMAT)
-        _require_regular_file(path, label="SQLite lifecycle target")
-        sidecars = {suffix: Path(f"{path}{suffix}") for suffix in ("-wal", "-shm", "-journal")}
-        for suffix, item in sidecars.items():
-            if not _lexists(item):
-                continue
-            sidecar_info = _require_regular_file(item, label="SQLite lifecycle sidecar")
-            if suffix in {"-wal", "-journal"} and sidecar_info.st_size:
-                raise StorageIntegrityError(
-                    "SQLite lifecycle inspection requires a quiescent database without WAL or journal data"
-                )
-        observed = [path] + [
-            Path(f"{path}{suffix}")
-            for suffix in ("-wal", "-shm", "-journal")
-            if _lexists(Path(f"{path}{suffix}"))
-        ]
-        initial_signatures = {
-            item.name: _stat_signature(_require_regular_file(item, label="SQLite lifecycle file"))
-            for item in observed
-        }
-        version = read_sqlite_schema_version(str(path), immutable=True)
-        main_size = initial_signatures[path.name][3]
-        try:
-            with closing(
-                sqlite3.connect(_sqlite_uri(path, immutable=True), uri=True)
-            ) as connection:
-                connection.execute("PRAGMA query_only=ON")
-                quick_check = [row[0] for row in connection.execute("PRAGMA quick_check")]
-        except sqlite3.Error as exc:
-            raise StorageIntegrityError("SQLite integrity check could not be completed") from exc
-        if quick_check != ["ok"]:
-            raise StorageIntegrityError("SQLite quick integrity check failed")
-        semantic_fingerprint = None
-        if main_size:
-            # Imported lazily because the private migration support imports the
-            # public schema reader above.  SQLite identity is semantic: page
-            # layout and migration timestamps must not make a planned upgrade
-            # impossible to verify on a later execution.
-            from erii.lifecycle_sqlite_upgrade import _semantic_digest_from_path
-
-            semantic_fingerprint = _semantic_digest_from_path(path)
-        observed_after = [path] + [
-            Path(f"{path}{suffix}")
-            for suffix in ("-wal", "-shm", "-journal")
-            if _lexists(Path(f"{path}{suffix}"))
-        ]
-        if [item.name for item in observed_after] != [item.name for item in observed]:
-            raise StorageIntegrityError("SQLite lifecycle target changed during inspection")
-        if any(
-            item.name.endswith(("-wal", "-journal"))
-            and _require_regular_file(item, label="SQLite lifecycle sidecar").st_size
-            for item in observed_after
-        ):
-            raise StorageIntegrityError("SQLite lifecycle target changed during inspection")
-        final_signatures = {
-            item.name: _stat_signature(
-                _require_regular_file(item, label="SQLite lifecycle file")
-            )
-            for item in observed_after
-        }
-        if final_signatures != initial_signatures:
-            raise StorageIntegrityError("SQLite lifecycle target changed during inspection")
-        if main_size == 0:
-            return LifecycleAssessment(
-                target=target,
-                status=LifecycleStatus.EMPTY,
-                format_id=SQLITE_FORMAT.format_id,
-                detected_version=None,
-                current_version=SQLITE_FORMAT.current_version,
-                fingerprint=_fingerprint_files({"database.sqlite3": b""}),
-                file_count=1,
-            )
-        detected_version = str(version or 0)
-        return LifecycleAssessment(
-            target=target,
-            status=(
-                LifecycleStatus.CURRENT
-                if detected_version == SQLITE_FORMAT.current_version
-                else LifecycleStatus.MIGRATION_REQUIRED
-            ),
-            format_id=SQLITE_FORMAT.format_id,
-            detected_version=detected_version,
-            current_version=SQLITE_FORMAT.current_version,
-            fingerprint=semantic_fingerprint,
-            file_count=1,
-        )
-
-    @staticmethod
-    def _inspect_memory_pack(target: LifecycleTarget) -> LifecycleAssessment:
-        path = Path(target.path)
-        if not _lexists(path):
-            return _missing_assessment(target, MEMORY_PACK_FORMAT)
-        _require_regular_file(path, label="MemoryPack lifecycle target")
-        content = _read_stable_bytes(
-            path,
-            size_limit=MAX_LIFECYCLE_MEMORY_PACK_BYTES,
-        )
-        try:
-            decoded = decode_memory_pack_json(content.decode("utf-8"))
-        except UnsupportedFormatError:
-            raise
-        except (UnicodeDecodeError, ValueError) as exc:
-            raise StorageIntegrityError("MemoryPack is unreadable or malformed") from exc
-        version = decoded["metadata"]["version"]
-        return LifecycleAssessment(
-            target=target,
-            status=(
-                LifecycleStatus.CURRENT
-                if version == MEMORY_PACK_FORMAT.current_version
-                else LifecycleStatus.MIGRATION_REQUIRED
-            ),
-            format_id=MEMORY_PACK_FORMAT.format_id,
-            detected_version=version,
-            current_version=MEMORY_PACK_FORMAT.current_version,
-            fingerprint=hashlib.sha256(content).hexdigest(),
-            file_count=1,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _PayloadSnapshot:
-    content: LifecycleContentIdentity
-    files: Dict[str, bytes] | None = None
-    source_paths: Dict[str, str] | None = None
-    identities: Dict[str, RegularFileIdentity] | None = None
-
-    def __post_init__(self) -> None:
-        materialized = self.files is not None
-        streamed = self.source_paths is not None or self.identities is not None
-        if materialized == streamed:
-            raise ValueError(
-                "payload snapshot must be exactly one of materialized or streamed"
-            )
-        if streamed:
-            if self.source_paths is None or self.identities is None:
-                raise ValueError("streamed payload snapshot is incomplete")
-            if set(self.source_paths) != set(self.identities):
-                raise ValueError("streamed payload snapshot entries do not match")
-
-
-@dataclass(frozen=True, slots=True)
-class _BackupBundle:
-    assessment: LifecycleAssessment
-    content: LifecycleContentIdentity | None
-    operation_id: str | None
-    plan_digest: str | None
-    snapshot: _PayloadSnapshot | None
-
-
-def _materialize_snapshot(source: _PayloadSnapshot) -> _PayloadSnapshot:
-    if source.files is not None:
-        return source
-    assert source.source_paths is not None and source.identities is not None
-    total_size = sum(identity.size for identity in source.identities.values())
-    limit = (
-        MAX_LIFECYCLE_MEMORY_PACK_BYTES
-        if source.content.kind is LifecycleTargetKind.MEMORY_PACK
-        else MAX_LIFECYCLE_TRANSFORM_BYTES
-    )
-    if total_size > limit:
-        raise StorageIntegrityError(
-            "lifecycle transform input exceeds its bounded materialization limit"
-        )
-    files: Dict[str, bytes] = {}
-    for relative_name in sorted(source.source_paths):
-        content = _read_stable_bytes(
-            Path(source.source_paths[relative_name]),
-            size_limit=limit,
-        )
-        identity = RegularFileIdentity(
-            size=len(content),
-            sha256=hashlib.sha256(content).hexdigest(),
-        )
-        if identity != source.identities[relative_name]:
-            raise StaleLifecyclePlanError(
-                "lifecycle source changed while its transform was materialized"
-            )
-        files[relative_name] = content
-    return _PayloadSnapshot(content=source.content, files=files)
 
 
 def _snapshot_file_manifest(
@@ -849,10 +157,6 @@ def _write_snapshot_files(root: Path, snapshot: _PayloadSnapshot) -> None:
 
 class _LifecycleFormatAdapter:
     kind: LifecycleTargetKind
-    payload_entry: str
-
-    def capture(self, assessment: LifecycleAssessment) -> _PayloadSnapshot:
-        raise NotImplementedError
 
     def restored_target(self, staging_path: Path) -> LifecycleTarget:
         return LifecycleTarget(self.kind, str(staging_path))
@@ -863,36 +167,6 @@ class _LifecycleFormatAdapter:
 
 class _FileLifecycleAdapter(_LifecycleFormatAdapter):
     kind = LifecycleTargetKind.FILE_STORAGE
-    payload_entry = "payload"
-
-    def capture(self, assessment: LifecycleAssessment) -> _PayloadSnapshot:
-        root = Path(assessment.target.path)
-        manifest = stream_regular_tree_manifest(
-            root,
-            exclude_relative_name=_is_file_storage_runtime_lock,
-        )
-        snapshot = _PayloadSnapshot(
-            content=LifecycleContentIdentity.from_assessment(assessment),
-            source_paths={
-                entry.relative_path: str(
-                    root.joinpath(*PurePosixPath(entry.relative_path).parts)
-                )
-                for entry in manifest.files
-            },
-            identities={
-                entry.relative_path: RegularFileIdentity(
-                    size=entry.size,
-                    sha256=entry.sha256,
-                )
-                for entry in manifest.files
-            },
-        )
-        if (
-            manifest.tree_fingerprint != snapshot.content.fingerprint
-            or manifest.file_count != snapshot.content.file_count
-        ):
-            raise StaleLifecyclePlanError("FileStorage changed while it was captured")
-        return snapshot
 
     def write_restored(self, snapshot: _PayloadSnapshot, staging_path: Path) -> None:
         _create_private_directory(staging_path)
@@ -901,29 +175,6 @@ class _FileLifecycleAdapter(_LifecycleFormatAdapter):
 
 class _SQLiteLifecycleAdapter(_LifecycleFormatAdapter):
     kind = LifecycleTargetKind.SQLITE
-    payload_entry = "payload/database.sqlite3"
-
-    def capture(self, assessment: LifecycleAssessment) -> _PayloadSnapshot:
-        source_path = Path(assessment.target.path)
-        identity = stream_regular_file_identity(source_path)
-        snapshot = _PayloadSnapshot(
-            content=LifecycleContentIdentity.from_assessment(assessment),
-            source_paths={"database.sqlite3": str(source_path)},
-            identities={"database.sqlite3": identity},
-        )
-        if assessment.status is LifecycleStatus.EMPTY:
-            if identity.size != 0:
-                raise StaleLifecyclePlanError("SQLite changed while it was captured")
-            actual_fingerprint = _fingerprint_files({"database.sqlite3": b""})
-        else:
-            from erii.lifecycle_sqlite_upgrade import _semantic_digest_from_path
-
-            actual_fingerprint = _semantic_digest_from_path(
-                Path(assessment.target.path)
-            )
-        if actual_fingerprint != snapshot.content.fingerprint:
-            raise StaleLifecyclePlanError("SQLite changed while it was captured")
-        return snapshot
 
     def write_restored(self, snapshot: _PayloadSnapshot, staging_path: Path) -> None:
         _write_snapshot_file(snapshot, "database.sqlite3", staging_path)
@@ -931,23 +182,6 @@ class _SQLiteLifecycleAdapter(_LifecycleFormatAdapter):
 
 class _MemoryPackLifecycleAdapter(_LifecycleFormatAdapter):
     kind = LifecycleTargetKind.MEMORY_PACK
-    payload_entry = "payload/memory-pack.erii"
-
-    def capture(self, assessment: LifecycleAssessment) -> _PayloadSnapshot:
-        source_path = Path(assessment.target.path)
-        identity = stream_regular_file_identity(source_path)
-        if identity.size > MAX_LIFECYCLE_MEMORY_PACK_BYTES:
-            raise StorageIntegrityError(
-                "MemoryPack exceeds the supported lifecycle size limit"
-            )
-        snapshot = _PayloadSnapshot(
-            content=LifecycleContentIdentity.from_assessment(assessment),
-            source_paths={"memory-pack.erii": str(source_path)},
-            identities={"memory-pack.erii": identity},
-        )
-        if identity.sha256 != snapshot.content.fingerprint:
-            raise StaleLifecyclePlanError("MemoryPack changed while it was captured")
-        return snapshot
 
     def write_restored(self, snapshot: _PayloadSnapshot, staging_path: Path) -> None:
         _write_snapshot_file(snapshot, "memory-pack.erii", staging_path)
@@ -965,195 +199,6 @@ def _adapter_for_kind(kind: LifecycleTargetKind) -> _LifecycleFormatAdapter:
         return _FORMAT_ADAPTERS[kind]
     except KeyError as exc:
         raise LifecyclePlanError(f"no live-data lifecycle adapter for {kind.value!r}") from exc
-
-
-def _upgrade_snapshot(
-    strategy_id: str,
-    source: _PayloadSnapshot,
-) -> _PayloadSnapshot:
-    source = _materialize_snapshot(source)
-    assert source.files is not None
-    if strategy_id in _SQLITE_UPGRADE_STRATEGIES.values():
-        return _upgrade_sqlite_snapshot(strategy_id, source)
-    if strategy_id.startswith(_MEMORY_PACK_STRATEGY_PREFIX):
-        return _upgrade_memory_pack_snapshot(strategy_id, source)
-    if strategy_id not in _FILE_STORAGE_UPGRADE_STRATEGIES.values():
-        raise LifecyclePlanError("lifecycle upgrade strategy is unavailable")
-    return _upgrade_file_storage_snapshot(strategy_id, source)
-
-
-def _upgrade_file_storage_snapshot(
-    strategy_id: str,
-    source: _PayloadSnapshot,
-) -> _PayloadSnapshot:
-    assert source.files is not None
-    expected_strategy = _FILE_STORAGE_UPGRADE_STRATEGIES.get(
-        source.content.detected_version
-    )
-    if (
-        strategy_id != expected_strategy
-        or source.content.kind is not LifecycleTargetKind.FILE_STORAGE
-        or source.content.status is not LifecycleStatus.MIGRATION_REQUIRED
-        or source.content.current_version != FILE_STORAGE_FORMAT.current_version
-    ):
-        raise LifecyclePlanError("FileStorage upgrade source identity is invalid")
-
-    files = dict(source.files)
-    if source.content.detected_version == "legacy":
-        if FILE_STORAGE_MANIFEST in files:
-            raise StorageIntegrityError(
-                "legacy FileStorage unexpectedly contains a manifest"
-            )
-    else:
-        manifest_bytes = files.get(FILE_STORAGE_MANIFEST)
-        if manifest_bytes is None:
-            raise StorageIntegrityError("versioned FileStorage is missing its manifest")
-        try:
-            manifest = json.loads(manifest_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise StorageIntegrityError("FileStorage manifest is malformed") from exc
-        if manifest != {
-            "format": FILE_STORAGE_FORMAT.format_id,
-            "version": 1,
-        }:
-            raise StorageIntegrityError("FileStorage v1 manifest identity is invalid")
-
-    files[FILE_STORAGE_MANIFEST] = _canonical_json(
-        {
-            "format": FILE_STORAGE_FORMAT.format_id,
-            "version": int(FILE_STORAGE_FORMAT.current_version),
-        }
-    )
-    return _PayloadSnapshot(
-        content=LifecycleContentIdentity(
-            kind=LifecycleTargetKind.FILE_STORAGE,
-            status=LifecycleStatus.CURRENT,
-            format_id=FILE_STORAGE_FORMAT.format_id,
-            detected_version=FILE_STORAGE_FORMAT.current_version,
-            current_version=FILE_STORAGE_FORMAT.current_version,
-            fingerprint=_fingerprint_files(files),
-            file_count=len(files),
-        ),
-        files=files,
-    )
-
-
-def _upgrade_sqlite_snapshot(
-    strategy_id: str,
-    source: _PayloadSnapshot,
-) -> _PayloadSnapshot:
-    expected_strategy = _SQLITE_UPGRADE_STRATEGIES.get(
-        source.content.detected_version
-    )
-    if (
-        strategy_id != expected_strategy
-        or source.content.kind is not LifecycleTargetKind.SQLITE
-        or source.content.status is not LifecycleStatus.MIGRATION_REQUIRED
-        or source.content.current_version != SQLITE_FORMAT.current_version
-        or set(source.files) != {"database.sqlite3"}
-    ):
-        raise LifecyclePlanError("SQLite upgrade source identity is invalid")
-
-    from erii.lifecycle_sqlite_upgrade import _migrate_sqlite_bytes
-
-    migrated, result = _migrate_sqlite_bytes(source.files["database.sqlite3"])
-    if (
-        str(result.source_version) != source.content.detected_version
-        or str(result.target_version) != source.content.current_version
-    ):
-        raise StorageIntegrityError("SQLite upgrade result has the wrong schema")
-    return _PayloadSnapshot(
-        content=LifecycleContentIdentity(
-            kind=LifecycleTargetKind.SQLITE,
-            status=LifecycleStatus.CURRENT,
-            format_id=SQLITE_FORMAT.format_id,
-            detected_version=SQLITE_FORMAT.current_version,
-            current_version=SQLITE_FORMAT.current_version,
-            fingerprint=result.semantic_digest,
-            file_count=1,
-        ),
-        files={"database.sqlite3": migrated},
-    )
-
-
-def _upgrade_memory_pack_snapshot(
-    strategy_id: str,
-    source: _PayloadSnapshot,
-) -> _PayloadSnapshot:
-    expected_strategy = (
-        f"{_MEMORY_PACK_STRATEGY_PREFIX}{source.content.detected_version}"
-        f"-to-{MEMORY_PACK_FORMAT.current_version}"
-    )
-    if (
-        strategy_id != expected_strategy
-        or source.content.kind is not LifecycleTargetKind.MEMORY_PACK
-        or source.content.status is not LifecycleStatus.MIGRATION_REQUIRED
-        or source.content.current_version != MEMORY_PACK_FORMAT.current_version
-        or set(source.files) != {"memory-pack.erii"}
-    ):
-        raise LifecyclePlanError("MemoryPack upgrade source identity is invalid")
-    try:
-        pack = MemoryPack.from_json(source.files["memory-pack.erii"].decode("utf-8"))
-    except (UnicodeDecodeError, TypeError, ValueError) as exc:
-        raise StorageIntegrityError("MemoryPack upgrade source is malformed") from exc
-    if pack.version != source.content.detected_version:
-        raise StorageIntegrityError("MemoryPack upgrade version changed during capture")
-    _validate_memory_pack_semantic_graph(pack)
-
-    pack.version = MEMORY_PACK_FORMAT.current_version
-    upgraded_content = pack.to_json().encode("utf-8")
-    try:
-        verified = MemoryPack.from_json(upgraded_content.decode("utf-8"))
-    except (UnicodeDecodeError, TypeError, ValueError) as exc:
-        raise StorageIntegrityError("MemoryPack upgrade result is malformed") from exc
-    if verified.version != MEMORY_PACK_FORMAT.current_version:
-        raise StorageIntegrityError("MemoryPack upgrade result has the wrong version")
-    _validate_memory_pack_semantic_graph(verified)
-
-    return _PayloadSnapshot(
-        content=LifecycleContentIdentity(
-            kind=LifecycleTargetKind.MEMORY_PACK,
-            status=LifecycleStatus.CURRENT,
-            format_id=MEMORY_PACK_FORMAT.format_id,
-            detected_version=MEMORY_PACK_FORMAT.current_version,
-            current_version=MEMORY_PACK_FORMAT.current_version,
-            fingerprint=hashlib.sha256(upgraded_content).hexdigest(),
-            file_count=1,
-        ),
-        files={"memory-pack.erii": upgraded_content},
-    )
-
-
-def _validate_memory_pack_semantic_graph(pack: MemoryPack) -> None:
-    """Runs the production import graph checks without opening any Storage."""
-    from erii._engine.memory_pack_analysis import (
-        analyze_memory_pack,
-        validate_memory_pack_persisted_turn_adjudications,
-        validate_memory_pack_turn_records,
-    )
-    from erii.core.memory_pack_evidence import validate_memory_pack_archival_evidence
-    from erii.engine import ERIIEngine
-
-    try:
-        analyze_memory_pack(pack)
-        validate_memory_pack_turn_records(pack)
-        validate_memory_pack_archival_evidence(pack)
-        validate_memory_pack_persisted_turn_adjudications(
-            pack,
-            pack.agent_id,
-            pack.user_id,
-            None,
-        )
-        ERIIEngine._validate_relationship_processing_pack(
-            pack,
-            pack.agent_id,
-            pack.user_id,
-            None,
-        )
-    except ValueError as exc:
-        raise StorageIntegrityError(
-            "MemoryPack semantic graph validation failed"
-        ) from exc
 
 
 def _write_durable_file(path: Path, content: bytes) -> None:
@@ -1311,20 +356,6 @@ def _rename_no_replace(source: Path, destination: Path) -> None:
     raise OSError(error_number, os.strerror(error_number), os.fspath(destination))
 
 
-def _validate_relative_payload_path(value: object) -> str:
-    if not isinstance(value, str) or not value:
-        raise StorageIntegrityError("backup payload path must be a non-empty string")
-    path = PurePosixPath(value)
-    if (
-        path.is_absolute()
-        or value != path.as_posix()
-        or any(part in {"", ".", ".."} for part in path.parts)
-        or "\\" in value
-    ):
-        raise StorageIntegrityError("backup payload contains an unsafe relative path")
-    return value
-
-
 def _fsync_directory(path: Path) -> None:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     try:
@@ -1371,7 +402,6 @@ def _payload_file_manifest(files: Dict[str, bytes]) -> list[Dict[str, object]]:
 
 
 def _backup_manifest(plan: LifecyclePlan, snapshot: _PayloadSnapshot) -> Dict[str, object]:
-    adapter = _adapter_for_kind(snapshot.content.kind)
     return {
         "format": LIFECYCLE_BACKUP_FORMAT.format_id,
         "version": LIFECYCLE_BACKUP_FORMAT.current_version,
@@ -1379,257 +409,11 @@ def _backup_manifest(plan: LifecyclePlan, snapshot: _PayloadSnapshot) -> Dict[st
         "plan_digest": plan.plan_digest,
         "source": _content_to_dict(snapshot.content),
         "payload": {
-            "entry": adapter.payload_entry,
+            "entry": _payload_entry_for_kind(snapshot.content.kind),
             "files": _snapshot_file_manifest(snapshot),
             "tree_fingerprint": snapshot.content.fingerprint,
         },
     }
-
-
-def _assessment_matches_content(
-    assessment: LifecycleAssessment,
-    content: LifecycleContentIdentity,
-) -> bool:
-    return (
-        assessment.target.kind is content.kind
-        and assessment.status is content.status
-        and assessment.format_id == content.format_id
-        and assessment.detected_version == content.detected_version
-        and assessment.current_version == content.current_version
-        and assessment.fingerprint == content.fingerprint
-        and assessment.file_count == content.file_count
-    )
-
-
-def _read_backup_bundle(target: LifecycleTarget) -> _BackupBundle:
-    if target.kind is not LifecycleTargetKind.BACKUP:
-        raise TypeError("backup inspection requires a backup lifecycle target")
-    root = Path(target.path)
-    if not _lexists(root):
-        return _BackupBundle(
-            assessment=_missing_assessment(target, LIFECYCLE_BACKUP_FORMAT),
-            content=None,
-            operation_id=None,
-            plan_digest=None,
-            snapshot=None,
-        )
-    _require_regular_directory(root, label="backup lifecycle target")
-    try:
-        direct_children = {child.name: child for child in root.iterdir()}
-    except OSError as exc:
-        raise StorageIntegrityError("backup lifecycle target cannot be read") from exc
-    if not direct_children:
-        empty_fingerprint = _fingerprint_files({})
-        return _BackupBundle(
-            assessment=LifecycleAssessment(
-                target=target,
-                status=LifecycleStatus.EMPTY,
-                format_id=LIFECYCLE_BACKUP_FORMAT.format_id,
-                detected_version=None,
-                current_version=LIFECYCLE_BACKUP_FORMAT.current_version,
-                fingerprint=empty_fingerprint,
-                file_count=0,
-            ),
-            content=None,
-            operation_id=None,
-            plan_digest=None,
-            snapshot=None,
-        )
-    if set(direct_children) != {LIFECYCLE_BACKUP_MANIFEST, "payload"}:
-        raise StorageIntegrityError("backup bundle root entries are invalid")
-    manifest_path = direct_children[LIFECYCLE_BACKUP_MANIFEST]
-    payload_root = direct_children["payload"]
-    _require_regular_file(manifest_path, label="backup manifest")
-    _require_regular_directory(payload_root, label="backup payload")
-
-    initial_files, initial_directories = _scan_directory_entries(
-        root,
-        label="backup lifecycle target",
-    )
-    streamed = stream_regular_tree_manifest(root)
-    streamed_entries = {entry.relative_path: entry for entry in streamed.files}
-    if set(streamed_entries) != set(initial_files):
-        raise StorageIntegrityError("backup lifecycle target changed during inspection")
-    for directory in initial_directories:
-        if directory == "payload":
-            continue
-        prefix = f"{directory}/"
-        if not any(name.startswith(prefix) for name in initial_files):
-            raise StorageIntegrityError(
-                "backup lifecycle target contains an undeclared empty directory"
-            )
-    manifest_bytes = _read_stable_bytes(
-        manifest_path,
-        expected_signature=initial_files[LIFECYCLE_BACKUP_MANIFEST],
-        size_limit=MAX_LIFECYCLE_BACKUP_MANIFEST_BYTES,
-    )
-    try:
-        manifest = _decode_strict_json(
-            manifest_bytes.decode("utf-8"),
-            label="backup manifest",
-        )
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise StorageIntegrityError("backup manifest is unreadable or malformed") from exc
-    manifest_fields = {
-        "format",
-        "version",
-        "operation_id",
-        "plan_digest",
-        "source",
-        "payload",
-    }
-    if not isinstance(manifest, dict) or set(manifest) != manifest_fields:
-        raise StorageIntegrityError("backup manifest fields are invalid")
-    if manifest["format"] != LIFECYCLE_BACKUP_FORMAT.format_id:
-        raise StorageIntegrityError("backup manifest format identity is invalid")
-    require_supported_version(LIFECYCLE_BACKUP_FORMAT, manifest["version"])
-    operation_id = manifest["operation_id"]
-    plan_digest = manifest["plan_digest"]
-    if not _is_sha256(operation_id) or not _is_sha256(plan_digest):
-        raise StorageIntegrityError("backup operation identity is invalid")
-    try:
-        source_content = _content_from_backup_manifest(manifest["source"])
-    except UnsupportedFormatError:
-        raise
-    except (LifecyclePlanError, TypeError, ValueError) as exc:
-        raise StorageIntegrityError("backup source identity is invalid") from exc
-
-    payload = manifest["payload"]
-    if not isinstance(payload, dict) or set(payload) != {
-        "entry",
-        "files",
-        "tree_fingerprint",
-    }:
-        raise StorageIntegrityError("backup payload manifest fields are invalid")
-    adapter = _adapter_for_kind(source_content.kind)
-    if payload["entry"] != adapter.payload_entry:
-        raise StorageIntegrityError("backup payload entry does not match its storage kind")
-    if payload["tree_fingerprint"] != source_content.fingerprint:
-        raise StorageIntegrityError("backup payload fingerprint does not match its source")
-    listed_files = payload["files"]
-    if not isinstance(listed_files, list):
-        raise StorageIntegrityError("backup payload file manifest must be an array")
-    expected_files: Dict[str, tuple[int, str]] = {}
-    casefold_names: set[str] = set()
-    for item in listed_files:
-        if not isinstance(item, dict) or set(item) != {"path", "size", "sha256"}:
-            raise StorageIntegrityError("backup payload file entry is invalid")
-        relative_name = _validate_relative_payload_path(item["path"])
-        folded = relative_name.casefold()
-        if relative_name in expected_files or folded in casefold_names:
-            raise StorageIntegrityError("backup payload file paths are duplicated")
-        size = item["size"]
-        digest = item["sha256"]
-        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
-            raise StorageIntegrityError("backup payload file size is invalid")
-        if not _is_sha256(digest):
-            raise StorageIntegrityError("backup payload file digest is invalid")
-        expected_files[relative_name] = (size, digest)
-        casefold_names.add(folded)
-    if [item["path"] for item in listed_files] != sorted(expected_files):
-        raise StorageIntegrityError("backup payload file manifest is not canonical")
-
-    actual_entries = {
-        relative_name.removeprefix("payload/"): entry
-        for relative_name, entry in streamed_entries.items()
-        if relative_name.startswith("payload/")
-    }
-    if set(actual_entries) != set(expected_files):
-        raise StorageIntegrityError("backup payload files do not match the manifest")
-    for relative_name, entry in actual_entries.items():
-        size, digest = expected_files[relative_name]
-        if entry.size != size or entry.sha256 != digest:
-            raise StorageIntegrityError("backup payload file verification failed")
-    if source_content.file_count != len(actual_entries):
-        raise StorageIntegrityError("backup source file count does not match its payload")
-
-    payload_target = adapter.restored_target(
-        root.joinpath(*PurePosixPath(adapter.payload_entry).parts)
-    )
-    payload_assessment = LifecycleInspector().inspect(payload_target)
-    if not _assessment_matches_content(payload_assessment, source_content):
-        raise StorageIntegrityError("backup payload does not match its source identity")
-
-    final_files, final_directories = _scan_directory_entries(
-        root,
-        label="backup lifecycle target",
-    )
-    if final_files != initial_files or final_directories != initial_directories:
-        raise StorageIntegrityError("backup lifecycle target changed during inspection")
-
-    assessment = LifecycleAssessment(
-        target=target,
-        status=LifecycleStatus.CURRENT,
-        format_id=LIFECYCLE_BACKUP_FORMAT.format_id,
-        detected_version=LIFECYCLE_BACKUP_FORMAT.current_version,
-        current_version=LIFECYCLE_BACKUP_FORMAT.current_version,
-        fingerprint=streamed.tree_fingerprint,
-        file_count=streamed.file_count,
-    )
-    return _BackupBundle(
-        assessment=assessment,
-        content=source_content,
-        operation_id=operation_id,
-        plan_digest=plan_digest,
-        snapshot=_PayloadSnapshot(
-            content=source_content,
-            source_paths={
-                relative_name: str(
-                    payload_root.joinpath(*PurePosixPath(relative_name).parts)
-                )
-                for relative_name in actual_entries
-            },
-            identities={
-                relative_name: RegularFileIdentity(
-                    size=entry.size,
-                    sha256=entry.sha256,
-                )
-                for relative_name, entry in actual_entries.items()
-            },
-        ),
-    )
-
-
-def _paths_overlap(first_value: str, second_value: str) -> bool:
-    first = _resolved_path(Path(first_value), label="lifecycle source")
-    second = _resolved_path(Path(second_value), label="lifecycle destination")
-    try:
-        common = os.path.commonpath((first, second))
-    except ValueError:
-        return False
-    return common == first or common == second
-
-
-def _require_safe_destination(
-    *,
-    source: LifecycleTarget,
-    destination: LifecycleTarget,
-) -> LifecycleDirectoryIdentity:
-    try:
-        overlaps = _paths_overlap(source.path, destination.path)
-    except StorageIntegrityError as exc:
-        raise LifecyclePlanError("lifecycle source or destination path is unsafe") from exc
-    if overlaps:
-        raise LifecyclePlanError("lifecycle source and destination cannot overlap")
-    parent = Path(destination.path).parent
-    try:
-        return _directory_identity(parent)
-    except StorageIntegrityError as exc:
-        raise LifecyclePlanError(
-            "lifecycle destination parent must be an existing regular directory"
-        ) from exc
-
-
-def _require_destinations_do_not_overlap(
-    first: LifecycleTarget,
-    second: LifecycleTarget,
-) -> None:
-    try:
-        overlaps = _paths_overlap(first.path, second.path)
-    except StorageIntegrityError as exc:
-        raise LifecyclePlanError("lifecycle destination paths are unsafe") from exc
-    if overlaps:
-        raise LifecyclePlanError("lifecycle destinations cannot overlap")
 
 
 def _assert_plan_destination_topology(plan: LifecyclePlan) -> None:
@@ -1991,18 +775,6 @@ def _same_assessment(
     return expected == actual
 
 
-def _require_complete_bundle(bundle: _BackupBundle) -> _BackupBundle:
-    if (
-        bundle.assessment.status is not LifecycleStatus.CURRENT
-        or bundle.content is None
-        or bundle.operation_id is None
-        or bundle.plan_digest is None
-        or bundle.snapshot is None
-    ):
-        raise LifecyclePlanError("restore requires a complete verified backup bundle")
-    return bundle
-
-
 def _matching_backup_for_plan(bundle: _BackupBundle, plan: LifecyclePlan) -> bool:
     expected_content = (
         LifecycleContentIdentity.from_assessment(plan.source)
@@ -2049,6 +821,7 @@ class DataLifecycleCoordinator:
 
     def __init__(self) -> None:
         self._inspector = LifecycleInspector()
+        self._planner = LifecyclePlanner(self._inspector)
 
     def inspect(self, target: LifecycleTarget) -> LifecycleAssessment:
         """Inspects a live target or backup bundle without writing to it."""
@@ -2058,19 +831,7 @@ class DataLifecycleCoordinator:
 
     def plan(self, request: LifecycleRequest) -> LifecyclePlan:
         """Freezes a zero-write, strictly serializable lifecycle plan."""
-        if isinstance(request, BackupRequest):
-            return self._plan_backup(request)
-        if isinstance(request, RestoreRequest):
-            return self._plan_restore(request)
-        if isinstance(request, UpgradeRequest):
-            return self._plan_upgrade(request)
-        if isinstance(request, EraseRequest):
-            return self._plan_erasure(request, LifecycleOperation.ERASE)
-        if isinstance(request, RebuildRequest):
-            return self._plan_erasure(request, LifecycleOperation.REBUILD)
-        if isinstance(request, MemoryPackImportRequest):
-            return self._plan_memory_pack_import(request)
-        raise TypeError("plan() requires a supported lifecycle request")
+        return self._planner.plan(request)
 
     def execute(self, plan: LifecyclePlan) -> LifecycleReport:
         """Executes and terminally verifies an immutable lifecycle plan."""
@@ -2090,207 +851,6 @@ class DataLifecycleCoordinator:
         if plan.operation is LifecycleOperation.IMPORT:
             return self._execute_memory_pack_import(plan)
         raise LifecyclePlanError("lifecycle plan operation is unsupported")
-
-    def _plan_backup(self, request: BackupRequest) -> LifecyclePlan:
-        _validate_assessment(request.source)
-        current_source = self.inspect(request.source.target)
-        if not _same_assessment(request.source, current_source):
-            raise StaleLifecyclePlanError("backup source changed before planning")
-        if current_source.status is LifecycleStatus.MISSING:
-            raise LifecyclePlanError("missing lifecycle data cannot be backed up")
-        destination = self.inspect(request.destination)
-        if destination.status is not LifecycleStatus.MISSING:
-            raise LifecycleConflictError("backup destination must not already exist")
-        destination_parent = _require_safe_destination(
-            source=current_source.target,
-            destination=destination.target,
-        )
-        return _make_plan(
-            operation=LifecycleOperation.BACKUP,
-            source=current_source,
-            destination=destination,
-            destination_parent=destination_parent,
-            content=LifecycleContentIdentity.from_assessment(current_source),
-            strategy_id=_BACKUP_STRATEGY_ID,
-        )
-
-    def _plan_restore(self, request: RestoreRequest) -> LifecyclePlan:
-        _validate_assessment(request.backup)
-        current_bundle = _require_complete_bundle(_read_backup_bundle(request.backup.target))
-        if not _same_assessment(request.backup, current_bundle.assessment):
-            raise StaleLifecyclePlanError("backup bundle changed before planning")
-        destination = self.inspect(request.destination)
-        if destination.status is not LifecycleStatus.MISSING:
-            raise LifecycleConflictError(
-                "this restore slice only publishes to a missing destination"
-            )
-        assert current_bundle.content is not None
-        if destination.target.kind is not current_bundle.content.kind:
-            raise LifecyclePlanError("restore destination kind does not match backup content")
-        destination_parent = _require_safe_destination(
-            source=current_bundle.assessment.target,
-            destination=destination.target,
-        )
-        return _make_plan(
-            operation=LifecycleOperation.RESTORE,
-            source=current_bundle.assessment,
-            destination=destination,
-            destination_parent=destination_parent,
-            content=current_bundle.content,
-            strategy_id=_RESTORE_STRATEGY_ID,
-        )
-
-    def _plan_upgrade(self, request: UpgradeRequest) -> LifecyclePlan:
-        _validate_assessment(request.source)
-        current_source = self.inspect(request.source.target)
-        if not _same_assessment(request.source, current_source):
-            raise StaleLifecyclePlanError("upgrade source changed before planning")
-        if current_source.status is not LifecycleStatus.MIGRATION_REQUIRED:
-            raise LifecyclePlanError("upgrade source does not require migration")
-        strategy_id = _upgrade_strategy_id(current_source)
-
-        destination = self.inspect(request.destination)
-        if destination.status is not LifecycleStatus.MISSING:
-            raise LifecycleConflictError("upgrade destination must not already exist")
-        backup_destination = self.inspect(request.backup_destination)
-        if backup_destination.status is not LifecycleStatus.MISSING:
-            raise LifecycleConflictError("upgrade backup destination must not already exist")
-        destination_parent = _require_safe_destination(
-            source=current_source.target,
-            destination=destination.target,
-        )
-        backup_destination_parent = _require_safe_destination(
-            source=current_source.target,
-            destination=backup_destination.target,
-        )
-        _require_destinations_do_not_overlap(
-            destination.target,
-            backup_destination.target,
-        )
-
-        adapter = _adapter_for_kind(current_source.target.kind)
-        source_snapshot = adapter.capture(current_source)
-        final_source = self.inspect(current_source.target)
-        if not _same_assessment(current_source, final_source):
-            raise StaleLifecyclePlanError("upgrade source changed during planning")
-        upgraded = _upgrade_snapshot(strategy_id, source_snapshot)
-        return _make_plan(
-            operation=LifecycleOperation.UPGRADE,
-            source=current_source,
-            destination=destination,
-            destination_parent=destination_parent,
-            content=upgraded.content,
-            strategy_id=strategy_id,
-            backup_destination=backup_destination,
-            backup_destination_parent=backup_destination_parent,
-        )
-
-    def _plan_erasure(
-        self,
-        request: EraseRequest | RebuildRequest,
-        operation: LifecycleOperation,
-    ) -> LifecyclePlan:
-        _validate_assessment(request.source)
-        current_source = self.inspect(request.source.target)
-        if not _same_assessment(request.source, current_source):
-            raise StaleLifecyclePlanError("lifecycle mutation source changed before planning")
-        if current_source.status is not LifecycleStatus.CURRENT:
-            raise LifecyclePlanError("erase and rebuild require current live storage")
-        storage_kind = _erasure_storage_kind(current_source.target.kind)
-        if (
-            operation is LifecycleOperation.REBUILD
-            and request.selector.scope is not ErasureScope.RELATIONSHIP
-        ):
-            raise LifecyclePlanError(
-                "deterministic rebuild currently requires a relationship selector"
-            )
-
-        from erii.lifecycle_erasure import inspect_erasure_scope
-
-        try:
-            inspect_erasure_scope(
-                current_source.target.path,
-                storage_kind,
-                request.selector,
-            )
-        except ErasureSelectionError as exc:
-            raise LifecyclePlanError("erasure selector does not match live storage") from exc
-        final_source = self.inspect(current_source.target)
-        if not _same_assessment(current_source, final_source):
-            raise StaleLifecyclePlanError("lifecycle mutation source changed during planning")
-
-        backup_destination = self.inspect(request.backup_destination)
-        if backup_destination.status is not LifecycleStatus.MISSING:
-            raise LifecycleConflictError(
-                "erase and rebuild backup destination must not already exist"
-            )
-        try:
-            destination_parent = _directory_identity(
-                Path(current_source.target.path).parent
-            )
-        except StorageIntegrityError as exc:
-            raise LifecyclePlanError("lifecycle source parent is unsafe") from exc
-        backup_destination_parent = _require_safe_destination(
-            source=current_source.target,
-            destination=backup_destination.target,
-        )
-        return _make_plan(
-            operation=operation,
-            source=current_source,
-            destination=current_source,
-            destination_parent=destination_parent,
-            content=LifecycleContentIdentity.from_assessment(current_source),
-            strategy_id=_erasure_strategy_id(operation, current_source.target.kind),
-            backup_destination=backup_destination,
-            backup_destination_parent=backup_destination_parent,
-            selector=request.selector,
-        )
-
-    def _plan_memory_pack_import(
-        self,
-        request: MemoryPackImportRequest,
-    ) -> LifecyclePlan:
-        _validate_assessment(request.source)
-        current_source = self.inspect(request.source.target)
-        if not _same_assessment(request.source, current_source):
-            raise StaleLifecyclePlanError("MemoryPack source changed before planning")
-        if current_source.status not in {
-            LifecycleStatus.CURRENT,
-            LifecycleStatus.MIGRATION_REQUIRED,
-        }:
-            raise LifecyclePlanError("MemoryPack import source must be readable")
-        destination = self.inspect(request.destination)
-        if destination.status is not LifecycleStatus.MISSING:
-            raise LifecycleConflictError("MemoryPack import destination must not exist")
-        destination_parent = _require_safe_destination(
-            source=current_source.target,
-            destination=destination.target,
-        )
-        snapshot = _materialize_snapshot(
-            _MemoryPackLifecycleAdapter().capture(current_source)
-        )
-        assert snapshot.files is not None
-        try:
-            pack = MemoryPack.from_json(snapshot.files["memory-pack.erii"].decode("utf-8"))
-        except (UnicodeDecodeError, TypeError, ValueError) as exc:
-            raise StorageIntegrityError("MemoryPack import source is malformed") from exc
-        _validate_memory_pack_semantic_graph(pack)
-        final_source = self.inspect(current_source.target)
-        if not _same_assessment(current_source, final_source):
-            raise StaleLifecyclePlanError("MemoryPack source changed during planning")
-        options = MemoryPackImportOptions(
-            target_agent_id=request.target_agent_id,
-            target_user_id=request.target_user_id,
-        )
-        return _make_plan(
-            operation=LifecycleOperation.IMPORT,
-            source=current_source,
-            destination=destination,
-            destination_parent=destination_parent,
-            content=LifecycleContentIdentity.from_assessment(current_source),
-            strategy_id=_import_strategy_id(destination.target.kind),
-            selector=options,
-        )
 
     def _ensure_verified_prechange_backup(
         self,
@@ -2328,8 +888,7 @@ class DataLifecycleCoordinator:
             raise StaleLifecyclePlanError(
                 "lifecycle source changed before its required backup"
             )
-        adapter = _adapter_for_kind(plan.source.target.kind)
-        source_snapshot = adapter.capture(current_source)
+        source_snapshot = _capture_snapshot(current_source)
         final_source = self.inspect(plan.source.target)
         if not _same_assessment(plan.source, final_source):
             raise StaleLifecyclePlanError(
@@ -2414,8 +973,7 @@ class DataLifecycleCoordinator:
             current_source = self.inspect(plan.source.target)
             if not _same_assessment(plan.source, current_source):
                 raise StaleLifecyclePlanError("backup source changed after planning")
-            adapter = _adapter_for_kind(plan.content.kind)
-            snapshot = adapter.capture(current_source)
+            snapshot = _capture_snapshot(current_source)
             if snapshot.content != plan.content:
                 raise StaleLifecyclePlanError("captured backup no longer matches its plan")
             final_source = self.inspect(plan.source.target)
@@ -2615,7 +1173,7 @@ class DataLifecycleCoordinator:
                     )
                 _cleanup_staging(plan, backup_staging, backup_owner)
             else:
-                source_snapshot = adapter.capture(current_source)
+                source_snapshot = _capture_snapshot(current_source)
                 final_source = self.inspect(plan.source.target)
                 if not _same_assessment(plan.source, final_source):
                     raise StaleLifecyclePlanError("upgrade source changed during backup capture")
@@ -2977,7 +1535,7 @@ class DataLifecycleCoordinator:
             if not _same_assessment(plan.source, current_source):
                 raise StaleLifecyclePlanError("MemoryPack source changed after planning")
             source_snapshot = _materialize_snapshot(
-                _MemoryPackLifecycleAdapter().capture(current_source)
+                _capture_snapshot(current_source)
             )
             assert source_snapshot.files is not None
             if source_snapshot.content != plan.content:

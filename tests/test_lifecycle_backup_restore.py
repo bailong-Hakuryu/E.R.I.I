@@ -10,8 +10,9 @@ import unittest
 from unittest import mock
 
 import erii
+import erii._lifecycle.filesystem as filesystem_module
+import erii._lifecycle.sqlite_semantics as sqlite_semantics_module
 import erii.data_lifecycle as lifecycle_module
-import erii.lifecycle_streaming as lifecycle_streaming_module
 from erii import FileStorage, MemoryPack, SQLiteStorage
 from erii.data_lifecycle import (
     BackupRequest,
@@ -534,15 +535,16 @@ class LifecycleBackupRestoreTests(unittest.TestCase):
             database = root / "empty.db"
             database.write_bytes(b"")
             target = self.target(LifecycleTargetKind.SQLITE, database)
-            real_read_version = lifecycle_module.read_sqlite_schema_version
+            real_read_version = sqlite_semantics_module.read_sqlite_schema_version
 
             def inject_wal(path_value, *, immutable):
                 version = real_read_version(path_value, immutable=immutable)
                 Path(f"{database}-wal").write_bytes(b"appeared during inspection")
                 return version
 
-            with mock.patch(
-                "erii.data_lifecycle.read_sqlite_schema_version",
+            with mock.patch.object(
+                sqlite_semantics_module,
+                "read_sqlite_schema_version",
                 side_effect=inject_wal,
             ):
                 with self.assertRaises(StorageIntegrityError):
@@ -559,7 +561,7 @@ class LifecycleBackupRestoreTests(unittest.TestCase):
             original_bytes = source_file.read_bytes()
             original_stat = source_file.stat()
             displaced = root / "displaced-core-memory.json"
-            real_scan = lifecycle_streaming_module._scan_tree_entries
+            real_scan = filesystem_module._scan_tree_entries
             replaced = False
 
             def replace_after_first_scan(scan_root, *, exclude_relative_name):
@@ -579,7 +581,7 @@ class LifecycleBackupRestoreTests(unittest.TestCase):
                 return result
 
             with mock.patch(
-                "erii.lifecycle_streaming._scan_tree_entries",
+                "erii._lifecycle.filesystem._scan_tree_entries",
                 side_effect=replace_after_first_scan,
             ):
                 with self.assertRaises(StorageIntegrityError):
